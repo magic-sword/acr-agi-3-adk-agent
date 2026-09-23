@@ -1,0 +1,42 @@
+name: arc-agi-3
+
+services:
+  dev:
+    build:
+      context: .
+      args:
+        KAGGLE_BASE: ${KAGGLE_BASE:-gcr.io/kaggle-gpu-images/python}
+    init: true
+    working_dir: /kaggle/working
+    ports:
+      # Bind only to the SSH host loopback interface.
+      # Client side: ssh LocalForward localhost:8889 localhost:8889
+      - "127.0.0.1:8889:8888"
+    volumes:
+      - .:/kaggle/working
+      - ./data:/kaggle/input:ro
+      - model-cache:/root/.cache
+    environment:
+      HF_HOME: /root/.cache/huggingface
+      JUPYTER_TOKEN: ${JUPYTER_TOKEN:-arc-local}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - bash
+      - -lc
+      - >-
+        exec jupyter lab
+        --ip=0.0.0.0
+        --port=8888
+        --no-browser
+        --allow-root
+        --ServerApp.root_dir=/kaggle/working
+        --ServerApp.token="$${JUPYTER_TOKEN}"
+
+volumes:
+  model-cache:
