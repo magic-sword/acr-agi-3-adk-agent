@@ -1,0 +1,7 @@
+# Intentionally minimal.
+# Kaggle's official GPU image already includes JupyterLab, PyTorch,
+# Transformers, Kaggle CLI and Google ADK.
+#
+# Add ONLY packages that your project needs but Kaggle does not provide.
+# Pin versions when reproducibility matters, for example:
+# some-package==1.2.3
