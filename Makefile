@@ -3,7 +3,7 @@ RUN := $(DC) run --rm --no-deps dev
 GAME ?=
 STEPS ?= 200
 
-.PHONY: help build lab down logs shell gpu check eval verify notebook push status clean
+.PHONY: help build lab down logs shell gpu check auth eval verify notebook push status clean
 
 help:
 	@printf '%s\n' \
@@ -11,7 +11,8 @@ help:
 	  'make lab                   Start JupyterLab on server localhost:8889' \
 	  'make shell                 Open a shell in the dev container' \
 	  'make gpu                   Verify NVIDIA GPU visibility' \
-	  'make check                 Verify Kaggle/Jupyter/ADK/PyTorch imports' \
+	  'make check                 Verify local Python/Jupyter/ADK/GPU environment' \
+	  'make auth                  Verify Kaggle API authentication' \
 	  'make eval [GAME=ls20]      Run local ARC simulation' \
 	  'make verify                Short local smoke test' \
 	  'make notebook              Build submission.ipynb if script exists' \
@@ -41,6 +42,9 @@ gpu:
 
 check:
 	$(RUN) python scripts/check_env.py
+
+auth:
+	$(RUN) bash -lc 'test -s .kaggle/access_token || { echo ".kaggle/access_token is missing or empty"; exit 2; }; export KAGGLE_API_TOKEN="$(tr -d "\\r\\n" < .kaggle/access_token)"; kaggle kernels list --mine --page-size 1 >/dev/null && echo "Kaggle authentication: OK"'
 
 # Compatible with the official ARC-AGI-3 Kaggle Starter layout.
 eval:
