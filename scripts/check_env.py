@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import importlib
+import importlib.metadata
 import platform
 import sys
 
 
-def check(module: str, label: str | None = None) -> None:
+def check_import(module: str, label: str | None = None) -> None:
     label = label or module
     try:
         mod = importlib.import_module(module)
@@ -16,14 +17,29 @@ def check(module: str, label: str | None = None) -> None:
         raise
 
 
+def check_distribution(distribution: str, label: str | None = None) -> None:
+    """Check package installation without importing it.
+
+    The Kaggle package authenticates during import in some releases, so importing
+    it would make a local environment check depend on API credentials.
+    """
+    label = label or distribution
+    try:
+        version = importlib.metadata.version(distribution)
+        print(f"[OK] {label}: {version}")
+    except Exception as exc:
+        print(f"[NG] {label}: {exc}")
+        raise
+
+
 print(f"Python: {sys.version.split()[0]}")
 print(f"Platform: {platform.platform()}")
 
-check("jupyterlab", "JupyterLab")
-check("google.adk", "Google ADK")
-check("torch", "PyTorch")
-check("transformers", "Transformers")
-check("kaggle", "Kaggle CLI Python package")
+check_import("jupyterlab", "JupyterLab")
+check_import("google.adk", "Google ADK")
+check_import("torch", "PyTorch")
+check_import("transformers", "Transformers")
+check_distribution("kaggle", "Kaggle CLI Python package")
 
 import torch
 
