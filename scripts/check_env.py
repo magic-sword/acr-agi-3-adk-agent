@@ -37,6 +37,7 @@ print(f"Platform: {platform.platform()}")
 
 check_import("jupyterlab", "JupyterLab")
 check_import("google.adk", "Google ADK")
+check_import("arc_agi", "ARC-AGI game engine")
 check_import("torch", "PyTorch")
 check_import("transformers", "Transformers")
 check_distribution("kaggle", "Kaggle CLI Python package")

@@ -19,6 +19,11 @@ services:
     environment:
       HF_HOME: /root/.cache/huggingface
       JUPYTER_TOKEN: ${JUPYTER_TOKEN:-arc-local}
+      ADK_MODEL: ${ADK_MODEL:-}
+      OPENAI_API_BASE: ${OPENAI_API_BASE:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     deploy:
       resources:
         reservations:

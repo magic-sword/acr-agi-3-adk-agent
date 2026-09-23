@@ -7,3 +7,6 @@ __pycache__/
 notebooks/submission.ipynb
 environment_files/
 outputs/
+vendor/
+recordings/
+logs.log

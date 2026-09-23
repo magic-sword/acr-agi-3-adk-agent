@@ -1,100 +1,52 @@
-# acr-agi-3-adk-agent
+# ARC-AGI-3 Google ADK starter
 
-Kaggle-compatible local development environment for ARC Prize 2026 / ARC-AGI-3 using Google ADK.
+Develop locally in JupyterLab, play ARC-AGI-3 games with a Google ADK agent, and build a Kaggle Notebook from the same Python source. The default ADK `BaseAgent` policy is a deterministic offline baseline. It proves the connection to the game framework; it does not solve the games. Set `ADK_MODEL` to test a local OpenAI-compatible model with frame images.
 
-The environment intentionally uses Kaggle's official GPU runtime image instead of rebuilding CUDA, PyTorch, JupyterLab, Transformers, Kaggle CLI, or Google ADK from scratch.
+## Server setup
 
-## Architecture
-
-- Base image: `gcr.io/kaggle-gpu-images/python`
-- One Docker Compose service: `dev`
-- JupyterLab is provided by the Kaggle image
-- Jupyter is exposed only on the SSH server loopback: `127.0.0.1:8889`
-- Project root is mounted at `/kaggle/working`
-- Local input data is mounted read-only at `/kaggle/input`
-- Hugging Face/model cache persists in a Docker volume
-- Kaggle credentials stay outside the image under `.kaggle/`
-
-## Server prerequisites
-
-The SSH server needs:
-
-1. Docker Engine
-2. Docker Compose plugin
-3. NVIDIA driver
-4. NVIDIA Container Toolkit
-
-Your SSH client can forward JupyterLab with:
-
-```sshconfig
-LocalForward localhost:8889 localhost:8889
-```
-
-## First start
+Requires Docker Compose, NVIDIA Container Toolkit, and SSH port forwarding for JupyterLab. The Kaggle GPU image provides JupyterLab and Google ADK. The local build installs `arc-agi` and `python-dotenv` from `requirements.local.txt`; `arc-agi` requires Python 3.12 or later.
 
 ```bash
-cp .env.example .env
-# Edit .env and change JUPYTER_TOKEN
-
+cp .env.example .env             # keep your existing .env if already configured
 make build
-make gpu
+make setup                     # clone official ARC-AGI-3-Agents under ignored vendor/
 make check
-make lab
+make lab                       # JupyterLab at http://localhost:8889 via SSH tunnel
 ```
 
-Then open `http://localhost:8889` on your local machine through the SSH tunnel.
+`make setup` downloads the official framework once and narrows its registry imports to the random agent. First local play may download and cache game environments; later runs can reuse the cache. The Docker build needs PyPI access, and setup needs GitHub access. The Kaggle competition rerun uses the competition's offline wheel and framework dataset instead.
 
-## Daily commands
+## Local agent loop
 
 ```bash
-make lab
-make shell
-make gpu
-make check
-make down
+make eval GAME=ls20 STEPS=50
+make verify                    # ls20 and vc33, 50 actions each
+make eval                      # all available games
 ```
 
-The Makefile also reserves the intended competition workflow:
+`agent/my_agent.py` adapts the ARC framework's synchronous API. `agent/adk_policy.py` runs a Google ADK `Runner` for each observation. The default `OfflinePolicy` returns a repeatable action without a model or internet. `make eval` prints the local aggregate score and never accesses Kaggle's hidden competition set.
+
+For a local vision model with an OpenAI-compatible `/v1` endpoint, add these values to `.env` and rebuild the container when installing optional LiteLLM dependencies:
+
+```env
+ADK_MODEL=openai/your-vision-model
+OPENAI_API_BASE=http://host.docker.internal:8000/v1
+OPENAI_API_KEY=local-only
+```
+
+The optional backend requires `litellm` installed in the development image and a running vision-capable server. The adapter sends a PNG of the latest frame and action/state metadata to ADK `LlmAgent`. This path has not been validated against a specific model server; malformed action responses raise an error. The generated Kaggle Notebook explicitly uses the offline baseline regardless of local `ADK_MODEL`, because the competition rerun has no external model server. To run a VLM on Kaggle later, provide its weights through `model_sources`/`dataset_sources`, start an in-process inference server, and revise that Notebook path.
+
+## Kaggle Notebook
+
+Keep your existing `notebooks/kernel-metadata.json` with your Kaggle username and the competition source. Put the personal API token in `.kaggle/access_token` (one line, chmod 600). These secrets stay outside Git.
 
 ```bash
-make eval
-make eval GAME=ls20
-make verify
-make notebook
-make push
-make status
+make notebook                  # inspect notebooks/submission.ipynb before upload
+make auth                      # validate token
+make push                      # Kaggle Save & Run; uploads the generated notebook
+make status                    # inspect the Kaggle run
 ```
 
-`make eval` expects `scripts/play_local.py`, and `make notebook` expects `scripts/build_notebook.py`. Those agent/submission scripts are intentionally not fabricated here; they should come from the ARC-AGI-3 agent implementation or an adapted official starter workflow.
+`make push` uploads a Notebook version. After its Save & Run completes, manually select `submission.parquet` in Kaggle's **Submit to Competition** UI to trigger the hidden rerun. The Notebook is generated from both files in `agent/` and uses the same policy as `make eval`. It writes a placeholder parquet only during Save & Run; the gateway produces the real output during the competition rerun. Generated `notebooks/submission.ipynb`, credentials, caches, and the vendored framework are ignored by Git.
 
-## Kaggle API token
-
-Create a project-local token file and do not commit it:
-
-```bash
-mkdir -p .kaggle
-printf '%s\n' 'YOUR_KAGGLE_TOKEN' > .kaggle/access_token
-chmod 600 .kaggle/access_token
-```
-
-Prepare notebook metadata:
-
-```bash
-cp notebooks/kernel-metadata.example.json notebooks/kernel-metadata.json
-```
-
-Then edit the `id`, dataset sources, and model sources for your Kaggle account.
-
-## Reproducibility
-
-During exploration the moving Kaggle image tag is convenient:
-
-```text
-gcr.io/kaggle-gpu-images/python
-```
-
-For a validated competition environment, pin `KAGGLE_BASE` in `.env` to the exact image digest you tested.
-
-## Why there is no SSH daemon in the container
-
-SSH terminates on the host server. Docker is only the reproducible execution environment. This avoids a second SSH daemon, duplicated credentials, and unnecessary network exposure.
+If the Kaggle runtime changes its installed Google ADK version or competition dataset paths, rerun `make notebook` and inspect the generated cells before pushing. This repository follows the official [ARC-AGI-3 Kaggle Starter](https://github.com/arcprize/ARC-AGI-3-Kaggle-Starter) execution contract and uses the [Google ADK](https://adk.dev/) runtime.

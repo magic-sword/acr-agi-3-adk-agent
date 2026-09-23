@@ -7,3 +7,5 @@ __pycache__
 data
 model-cache
 notebooks/submission.ipynb
+vendor
+recordings
