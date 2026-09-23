@@ -44,7 +44,7 @@ check:
 	$(RUN) python scripts/check_env.py
 
 auth:
-	$(RUN) bash -lc 'test -s .kaggle/access_token || { echo ".kaggle/access_token is missing or empty"; exit 2; }; export KAGGLE_API_TOKEN="$(tr -d "\\r\\n" < .kaggle/access_token)"; kaggle kernels list --mine --page-size 1 >/dev/null && echo "Kaggle authentication: OK"'
+	$(RUN) bash -lc 'test -s .kaggle/access_token || { echo ".kaggle/access_token is missing or empty"; exit 2; }; IFS= read -r KAGGLE_API_TOKEN < .kaggle/access_token; export KAGGLE_API_TOKEN; test -n "$KAGGLE_API_TOKEN" || { echo ".kaggle/access_token resolved to an empty token"; exit 2; }; kaggle kernels list --mine --page-size 1 >/dev/null && echo "Kaggle authentication: OK"'
 
 # Compatible with the official ARC-AGI-3 Kaggle Starter layout.
 eval:
@@ -57,10 +57,10 @@ notebook:
 	$(RUN) bash -lc 'test -f scripts/build_notebook.py && python scripts/build_notebook.py'
 
 push: notebook
-	$(RUN) bash -lc 'test -f notebooks/kernel-metadata.json || { echo "notebooks/kernel-metadata.json not found"; exit 2; }; test -f .kaggle/access_token || { echo ".kaggle/access_token not found"; exit 2; }; KAGGLE_API_TOKEN="$$(cat .kaggle/access_token)" kaggle kernels push -p notebooks/'
+	$(RUN) bash -lc 'test -f notebooks/kernel-metadata.json || { echo "notebooks/kernel-metadata.json not found"; exit 2; }; test -s .kaggle/access_token || { echo ".kaggle/access_token is missing or empty"; exit 2; }; IFS= read -r KAGGLE_API_TOKEN < .kaggle/access_token; export KAGGLE_API_TOKEN; kaggle kernels push -p notebooks/'
 
 status:
-	$(RUN) bash -lc 'test -f notebooks/kernel-metadata.json || { echo "notebooks/kernel-metadata.json not found"; exit 2; }; test -f .kaggle/access_token || { echo ".kaggle/access_token not found"; exit 2; }; KERNEL_ID="$$(python -c '\''import json; print(json.load(open("notebooks/kernel-metadata.json"))["id"])'\'')"; KAGGLE_API_TOKEN="$$(cat .kaggle/access_token)" kaggle kernels status "$$KERNEL_ID"'
+	$(RUN) bash -lc 'test -f notebooks/kernel-metadata.json || { echo "notebooks/kernel-metadata.json not found"; exit 2; }; test -s .kaggle/access_token || { echo ".kaggle/access_token is missing or empty"; exit 2; }; IFS= read -r KAGGLE_API_TOKEN < .kaggle/access_token; export KAGGLE_API_TOKEN; KERNEL_ID="$(python -c '\''import json; print(json.load(open("notebooks/kernel-metadata.json"))["id"])'\'')"; kaggle kernels status "$KERNEL_ID"'
 
 clean:
 	$(DC) down --remove-orphans
