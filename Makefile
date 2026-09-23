@@ -8,7 +8,7 @@ STEPS ?= 80
 FRAMEWORK_REPO := https://github.com/arcprize/ARC-AGI-3-Agents.git
 FRAMEWORK_DIR := vendor/ARC-AGI-3-Agents
 
-.PHONY: help build cache-dir repair-perms setup lab down logs shell gpu check auth eval verify notebook push status clean
+.PHONY: help build cache-dir repair-perms setup lab down logs shell gpu check auth eval verify notebook push status clean model-download model-up model-check eval-model model-runtime
 
 help:
 	@printf '%s\n' \
@@ -19,6 +19,10 @@ help:
 	  'make check                 Inspect local Python/Jupyter/ADK/GPU environment' \
 	  'make auth                  Verify Kaggle API authentication' \
 	  'make eval [GAME=ls20]      Play local ARC games with the ADK agent' \
+	  'make model-download         Download Qwen3-VL GGUF + vision projector' \
+	  'make model-up               Start the local GPU vision model' \
+	  'make eval-model GAME=ls20   Play locally using Qwen3-VL and ADK' \
+	  'make model-runtime          Build portable llama-server for Kaggle bundle' \
 	  'make verify                Short two-game smoke test' \
 	  'make notebook              Build Kaggle submission.ipynb locally' \
 	  'make push                  Build and push a Kaggle Notebook version' \
@@ -61,6 +65,21 @@ auth: cache-dir
 
 eval: cache-dir
 	$(RUN) python scripts/play_local.py $(if $(GAME),--game $(GAME)) --max-steps $(STEPS)
+
+model-download: cache-dir
+	python3 scripts/download_model.py
+
+model-up: cache-dir
+	$(DC) --profile vlm up -d vlm
+
+model-check: cache-dir
+	python3 scripts/wait_model.py --url http://127.0.0.1:8080
+
+eval-model: model-check
+	ADK_MODEL=local/qwen3-vl-4b-instruct $(RUN) python scripts/play_local.py $(if $(GAME),--game $(GAME)) --max-steps $(STEPS)
+
+model-runtime: cache-dir
+	bash scripts/build_model_runtime.sh
 
 verify: cache-dir
 	$(RUN) python scripts/play_local.py --game ls20,vc33 --max-steps 50

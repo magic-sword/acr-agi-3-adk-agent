@@ -1,0 +1,11 @@
+# Build against an older glibc than Kaggle's Debian runtime.
+# The CUDA toolkit is used at build time; the Kaggle GPU image supplies its runtime.
+FROM nvidia/cuda:12.8.1-devel-ubuntu22.04
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    build-essential cmake git ca-certificates && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY . .
+RUN cmake -S . -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=75 \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF && \
+    cmake --build build --target llama-server -j 4

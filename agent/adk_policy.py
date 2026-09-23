@@ -1,8 +1,8 @@
-"""An offline Google ADK policy with an optional local model backend.
+"""Google ADK policy: deterministic fallback or a local vision model.
 
 The default policy uses ADK's BaseAgent and Runner without making model calls.
-Set ADK_MODEL to a LiteLLM model identifier to try a locally served model.
-No external API calls are needed for the default Kaggle submission.
+Set ADK_MODEL=local/qwen3-vl-4b-instruct to use the local vision server.
+The competition notebook starts its own server and never calls an outside API.
 """
 from __future__ import annotations
 
@@ -18,6 +18,8 @@ from google.adk.events import Event
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
+
+from agent.local_vlm import LocalVisionLlm
 
 APP_NAME = "arc_agi_3_adk"
 _USER = "player"
@@ -51,17 +53,22 @@ class OfflinePolicy(BaseAgent):
 
 
 def _model_agent(model: str) -> LlmAgent:
-    # Keep imports optional: the offline ADK baseline does not require LiteLLM.
-    from google.adk.models.lite_llm import LiteLlm
-
+    if model != "local/qwen3-vl-4b-instruct":
+        raise ValueError(f"Unsupported ADK_MODEL: {model}. Use local/qwen3-vl-4b-instruct")
     return LlmAgent(
         name="arc_model_policy",
-        model=LiteLlm(model=model),
+        model=LocalVisionLlm(
+            model="qwen3-vl-4b-instruct",
+            api_base=os.getenv("VLM_API_BASE", "http://vlm:8080/v1"),
+        ),
         instruction=(
-            "You select ARC-AGI-3 game actions. Read the user message's JSON "
-            "observation. Reply with exactly one JSON object containing "
+            "You play an unknown visual puzzle game. Compare the image with "
+            "the recent action history and look for the game's goal, objects, "
+            "and controls. Explore when the goal is unclear. Read the JSON "
+            "observation for legal actions and progress. Reply with exactly "
+            "one short JSON object containing "
             "action (an allowed ACTION1..ACTION5 or RESET) and reason. "
-            "On NOT_PLAYED or GAME_OVER choose RESET. Never invent action names."
+            "Never invent action names. Avoid repeating actions without progress."
         ),
     )
 
@@ -80,8 +87,8 @@ def _parse_model_answer(text: str, observation: dict[str, Any]) -> dict[str, Any
 
 
 async def _decide_async(observation: dict[str, Any], model: str | None) -> dict[str, Any]:
-    if model and not os.getenv("OPENAI_API_BASE") and model.startswith("openai/"):
-        raise ValueError("Set OPENAI_API_BASE to your locally served model URL")
+    if observation["state"] in ("NOT_PLAYED", "GAME_OVER"):
+        return baseline_action(observation)
     agent = _model_agent(model) if model else OfflinePolicy(name="arc_offline_policy")
     service = InMemorySessionService()
     session_id = "single_step"

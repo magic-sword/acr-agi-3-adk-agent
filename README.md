@@ -1,6 +1,6 @@
 # ARC-AGI-3 Google ADK starter
 
-Develop locally in JupyterLab, play ARC-AGI-3 games with a Google ADK agent, and build a Kaggle Notebook from the same Python source. The default ADK `BaseAgent` policy is a deterministic offline baseline. It proves the connection to the game framework; it does not solve the games. Set `ADK_MODEL` to test a local OpenAI-compatible model with frame images.
+Develop locally in JupyterLab, play ARC-AGI-3 games with a Google ADK agent, and build a Kaggle Notebook from the same Python source. The default ADK `BaseAgent` policy is a deterministic baseline; `make eval-model` selects Qwen3-VL-4B-Instruct (Q4_K_M GGUF plus Q8_0 vision projector) through ADK's `LlmAgent`. This is a working inference path, not a trained game solver.
 
 ## Server setup
 
@@ -41,15 +41,36 @@ make eval                      # all available games
 
 Edit `agent/*.py` as the source of the agent. The generated `notebooks/submission.ipynb` can be opened and executed in local JupyterLab: its wheel installation runs only when the Kaggle competition wheels exist, and its gateway and placeholder submission steps run only in the appropriate Kaggle environment. For local gameplay, use `make eval`; running the notebook locally prepares the submission code but does not play a game. `make notebook` regenerates the notebook from `agent/*.py` and overwrites edits made directly in the generated notebook. Jupyter's `.virtual_documents/` and the generated notebook are ignored by Git.
 
-For a local vision model with an OpenAI-compatible `/v1` endpoint, add these values to `.env` and rebuild the container when installing optional LiteLLM dependencies:
+## Local vision model
 
-```env
-ADK_MODEL=openai/your-vision-model
-OPENAI_API_BASE=http://host.docker.internal:8000/v1
-OPENAI_API_KEY=local-only
+Download the [official Qwen3-VL-4B-Instruct GGUF weights](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF) (~3 GB), then start llama.cpp with an NVIDIA GPU:
+
+```bash
+make model-download
+make model-up
+make model-check                 # sends a real image request
+make eval-model GAME=ls20 STEPS=50
 ```
 
-The optional backend requires `litellm` installed in the development image and a running vision-capable server. The adapter sends a PNG of the latest frame and action/state metadata to ADK `LlmAgent`. This path has not been validated against a specific model server; malformed action responses raise an error. The generated Kaggle Notebook explicitly uses the offline baseline regardless of local `ADK_MODEL`, because the competition rerun has no external model server. To run a VLM on Kaggle later, provide its weights through `model_sources`/`dataset_sources`, start an in-process inference server, and revise that Notebook path.
+The GGUF files are stored in ignored `.cache/model-cache/qwen3-vl-4b/`; they are never committed. Docker Compose exposes the model on the server's loopback port 8080. `agent/local_vlm.py` implements Google ADK's `BaseLlm` protocol and passes PNG frames with action history to `LlmAgent`; the `Runner` returns one validated legal action. No API key, LiteLLM installation, or internet connection is used during inference. `make model-up` needs access to GHCR for its first image pull. `make eval-model` sets `ADK_MODEL` for that run only; plain `make eval` remains the deterministic baseline.
+
+To use an existing compatible server, set `VLM_API_BASE=http://host.docker.internal:8080/v1` in `.env` and run `ADK_MODEL=local/qwen3-vl-4b-instruct make eval GAME=ls20`; the server must present the `qwen3-vl-4b-instruct` alias and support OpenAI vision chat completions. JupyterLab may use the same endpoint through its Compose network.
+
+## Offline Kaggle model bundle
+
+The competition rerun cannot download models or a server binary. Build a **separate Kaggle Dataset** containing the two GGUF files and a CUDA llama.cpp runtime. This build uses Docker and checks out a pinned llama.cpp revision; the CUDA 12.8 build image may need a compatible host driver. The bundle is about 3 GB plus runtime libraries:
+
+```bash
+make model-download
+make model-runtime
+# Inspect the bundle: both GGUF files, llama-server, lib*.so, dataset-metadata.json.
+ls -lh .cache/model-cache/qwen3-vl-4b/
+make auth
+# Upload once (or use "kaggle datasets version -p ... -m ..." when updating).
+docker compose run --rm --no-deps dev bash -ec 'IFS= read -r KAGGLE_API_TOKEN < .kaggle/access_token; export KAGGLE_API_TOKEN; kaggle datasets create -p .cache/model-cache/qwen3-vl-4b'
+```
+
+The dataset slug in `.cache/model-cache/qwen3-vl-4b/dataset-metadata.json` and `notebooks/kernel-metadata.json` is `magicsword001/arc-agi-3-qwen3-vl-4b`; update **both** if your Kaggle username differs. Attach that dataset to the notebook before `make push`. The notebook checks for both GGUF files and the runtime, starts the server on `127.0.0.1:8080`, and sends an image request during Save & Run; in the competition rerun, ADK uses this same server. Errors are visible in `/kaggle/working/llama-server.log`. This full GPU path requires an actual Kaggle Save & Run check; Docker images, driver versions, and inference speed can change.
 
 ## Kaggle Notebook
 
@@ -62,6 +83,6 @@ make push                      # Kaggle Save & Run; uploads the generated notebo
 make status                    # inspect the Kaggle run
 ```
 
-`make push` uploads a Notebook version. After its Save & Run completes, manually select `submission.parquet` in Kaggle's **Submit to Competition** UI to trigger the hidden rerun. The Notebook is generated from both files in `agent/` and uses the same policy as `make eval`. It writes a placeholder parquet only during Save & Run; the gateway produces the real output during the competition rerun. Generated `notebooks/submission.ipynb`, credentials, caches, and the vendored framework are ignored by Git.
+`make push` uploads a Notebook version after the model dataset exists under the configured slug. After its Save & Run completes, manually select `submission.parquet` in Kaggle's **Submit to Competition** UI to trigger the hidden rerun. The Notebook is generated from the agent sources, writes a placeholder parquet only during Save & Run, and uses Qwen3-VL during the competition rerun. Generated `notebooks/submission.ipynb`, credentials, caches, and the vendored framework are ignored by Git.
 
 If the Kaggle runtime changes its installed Google ADK version or competition dataset paths, rerun `make notebook` and inspect the generated cells before pushing. This repository follows the official [ARC-AGI-3 Kaggle Starter](https://github.com/arcprize/ARC-AGI-3-Kaggle-Starter) execution contract and uses the [Google ADK](https://adk.dev/) runtime.

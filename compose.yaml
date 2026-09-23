@@ -26,6 +26,7 @@ services:
       JUPYTER_RUNTIME_DIR: /tmp/model-cache/jupyter/runtime
       JUPYTER_TOKEN: ${JUPYTER_TOKEN:-arc-local}
       ADK_MODEL: ${ADK_MODEL:-}
+      VLM_API_BASE: ${VLM_API_BASE:-http://vlm:8080/v1}
       OPENAI_API_BASE: ${OPENAI_API_BASE:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     extra_hosts:
@@ -47,3 +48,35 @@ services:
         --no-browser
         --ServerApp.root_dir=/kaggle/working
         --ServerApp.token="$${JUPYTER_TOKEN}"
+  vlm:
+    profiles: [vlm]
+    image: ${LLAMA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    init: true
+    volumes:
+      - ./.cache/model-cache/qwen3-vl-4b:/models:ro
+    ports:
+      - "127.0.0.1:8080:8080"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command:
+      - --model
+      - /models/Qwen3VL-4B-Instruct-Q4_K_M.gguf
+      - --mmproj
+      - /models/mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf
+      - --alias
+      - qwen3-vl-4b-instruct
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --n-gpu-layers
+      - "99"
+      - --ctx-size
+      - "4096"
+      - --parallel
+      - "1"

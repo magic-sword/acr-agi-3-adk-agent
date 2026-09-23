@@ -18,6 +18,7 @@ class MyAgent(Agent):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
+        self._recent_actions: list[dict[str, Any]] = []
 
     def is_done(self, frames: list[FrameData], latest_frame: FrameData) -> bool:
         return latest_frame.state is GameState.WIN
@@ -31,6 +32,7 @@ class MyAgent(Agent):
             "available_actions": [
                 getattr(a, "name", str(a)) for a in (latest_frame.available_actions or [])
             ],
+            "recent_actions": self._recent_actions[-6:],
         }
         if os.getenv("ADK_MODEL") and latest_frame.frame:
             # A local vision model can receive the rendered observation.
@@ -44,11 +46,16 @@ class MyAgent(Agent):
                 image = Image.fromarray(pixels)
             else:
                 raise ValueError(f"Unsupported frame shape: {pixels.shape}")
-            image = image.resize((512, 512), resample=Image.Resampling.NEAREST)
+            image.thumbnail((512, 512), resample=Image.Resampling.NEAREST)
             buffer = io.BytesIO()
             image.save(buffer, format="PNG")
             observation["image_png_base64"] = base64.b64encode(buffer.getvalue()).decode("ascii")
         result = decide(observation)
+        self._recent_actions.append({
+            "step": self.action_counter,
+            "action": result["action"],
+            "levels_completed_before": latest_frame.levels_completed,
+        })
         action = GameAction[result["action"]]
         action.reasoning = {"policy": "adk", "reason": result["reason"]}
         return action
