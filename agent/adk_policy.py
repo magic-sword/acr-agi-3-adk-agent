@@ -67,7 +67,9 @@ def _model_agent(model: str) -> LlmAgent:
             "and controls. Explore when the goal is unclear. Read the JSON "
             "observation for legal actions and progress. Reply with exactly "
             "one short JSON object containing "
-            "action (an allowed ACTION1..ACTION5 or RESET) and reason. "
+            "action (one of the available ACTION1..ACTION7, or RESET only to restart) "
+            "and reason. For ACTION6 (point/click), include integer x and y "
+            "coordinates in [0,63]. Use the exact ACTION name, not its numeric ID. "
             "Never invent action names. Avoid repeating actions without progress."
         ),
     )
@@ -81,9 +83,24 @@ def _parse_model_answer(text: str, observation: dict[str, Any]) -> dict[str, Any
     answer = json.loads(match.group())
     allowed = set(observation.get("available_actions") or _ACTIONS)
     allowed.add("RESET")
-    if answer.get("action") not in allowed:
-        raise ValueError(f"Invalid model action: {answer.get('action')!r}")
-    return {"action": answer["action"], "reason": str(answer.get("reason", "model"))[:200]}
+    raw = answer.get("action")
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        raw = str(raw)
+    if not isinstance(raw, str):
+        raise ValueError(f"Invalid model action: {raw!r}; allowed: {sorted(allowed)}")
+    name = raw.strip().upper()
+    if name.isdecimal():
+        name = "RESET" if int(name) == 0 else f"ACTION{int(name)}"
+    if name not in allowed:
+        raise ValueError(f"Invalid model action: {raw!r}; allowed: {sorted(allowed)}")
+    result = {"action": name, "reason": str(answer.get("reason", "model"))[:200]}
+    if name == "ACTION6":
+        for coordinate in ("x", "y"):
+            value = answer.get(coordinate)
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 63:
+                raise ValueError(f"ACTION6 requires integer {coordinate} in [0,63]: {value!r}")
+            result[coordinate] = value
+    return result
 
 
 async def _decide_async(observation: dict[str, Any], model: str | None) -> dict[str, Any]:

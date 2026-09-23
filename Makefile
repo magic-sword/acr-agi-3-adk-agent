@@ -8,7 +8,7 @@ STEPS ?= 80
 FRAMEWORK_REPO := https://github.com/arcprize/ARC-AGI-3-Agents.git
 FRAMEWORK_DIR := vendor/ARC-AGI-3-Agents
 
-.PHONY: help build cache-dir repair-perms setup lab down logs shell gpu check auth eval verify notebook push status clean model-download model-up model-check eval-model model-runtime
+.PHONY: help build cache-dir repair-perms setup lab down logs shell gpu check auth eval verify notebook push status clean model-download model-up model-check eval-model model-runtime test
 
 help:
 	@printf '%s\n' \
@@ -22,6 +22,7 @@ help:
 	  'make model-download         Download Qwen3-VL GGUF + vision projector' \
 	  'make model-up               Start the local GPU vision model' \
 	  'make eval-model GAME=ls20   Play locally using Qwen3-VL and ADK' \
+	  'make test                   Check ARC action IDs and ADK model replies' \
 	  'make model-runtime          Build portable llama-server for Kaggle bundle' \
 	  'make verify                Short two-game smoke test' \
 	  'make notebook              Build Kaggle submission.ipynb locally' \
@@ -77,6 +78,9 @@ model-check: cache-dir
 
 eval-model: model-check
 	ADK_MODEL=local/qwen3-vl-4b-instruct $(RUN) python scripts/play_local.py $(if $(GAME),--game $(GAME)) --max-steps $(STEPS)
+
+test: cache-dir
+	$(RUN) python -m unittest discover -s tests -v
 
 model-runtime: cache-dir
 	bash scripts/build_model_runtime.sh

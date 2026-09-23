@@ -49,10 +49,11 @@ Download the [official Qwen3-VL-4B-Instruct GGUF weights](https://huggingface.co
 make model-download
 make model-up
 make model-check                 # sends a real image request
+make test                        # checks ARC integer action IDs and ADK responses
 make eval-model GAME=ls20 STEPS=50
 ```
 
-The GGUF files are stored in ignored `.cache/model-cache/qwen3-vl-4b/`; they are never committed. Docker Compose exposes the model on the server's loopback port 8080. `agent/local_vlm.py` implements Google ADK's `BaseLlm` protocol and passes PNG frames with action history to `LlmAgent`; the `Runner` returns one validated legal action. No API key, LiteLLM installation, or internet connection is used during inference. `make model-up` needs access to GHCR for its first image pull. `make eval-model` sets `ADK_MODEL` for that run only; plain `make eval` remains the deterministic baseline.
+The GGUF files are stored in ignored `.cache/model-cache/qwen3-vl-4b/`; they are never committed. Docker Compose exposes the model on the server's loopback port 8080. `agent/local_vlm.py` implements Google ADK's `BaseLlm` protocol and passes PNG frames with action history to `LlmAgent`; the `Runner` returns one validated legal action. ARC reports available actions as integer IDs; the adapter presents `ACTION1` etc. to the model and accepts either names or integer IDs in the reply. For `ACTION6`, the reply also needs `x` and `y` integer coordinates in `[0,63]`. No API key, LiteLLM installation, or internet connection is used during inference. `make model-up` needs access to GHCR for its first image pull. `make eval-model` sets `ADK_MODEL` for that run only; plain `make eval` remains the deterministic baseline.
 
 To use an existing compatible server, set `VLM_API_BASE=http://host.docker.internal:8080/v1` in `.env` and run `ADK_MODEL=local/qwen3-vl-4b-instruct make eval GAME=ls20`; the server must present the `qwen3-vl-4b-instruct` alias and support OpenAI vision chat completions. JupyterLab may use the same endpoint through its Compose network.
 

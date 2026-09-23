@@ -12,6 +12,22 @@ from agents.agent import Agent
 from agent.adk_policy import decide
 
 
+def available_action_names(actions: list[Any] | None) -> list[str]:
+    """ARC reports integer action IDs; give the policy enum names instead."""
+    names: list[str] = []
+    for raw in actions or []:
+        if isinstance(raw, GameAction):
+            action = raw
+        elif isinstance(raw, int) and not isinstance(raw, bool):
+            action = GameAction.from_id(raw)
+        elif isinstance(raw, str) and raw.strip().isdigit():
+            action = GameAction.from_id(int(raw.strip()))
+        else:
+            action = GameAction[str(raw).strip().upper()]
+        names.append(action.name)
+    return names
+
+
 class MyAgent(Agent):
     # The upstream loop uses <=, so this produces at most 80 actions.
     MAX_ACTIONS = 79
@@ -29,9 +45,7 @@ class MyAgent(Agent):
             "state": latest_frame.state.name,
             "step": self.action_counter,
             "levels_completed": latest_frame.levels_completed,
-            "available_actions": [
-                getattr(a, "name", str(a)) for a in (latest_frame.available_actions or [])
-            ],
+            "available_actions": available_action_names(latest_frame.available_actions),
             "recent_actions": self._recent_actions[-6:],
         }
         if os.getenv("ADK_MODEL") and latest_frame.frame:
@@ -51,11 +65,13 @@ class MyAgent(Agent):
             image.save(buffer, format="PNG")
             observation["image_png_base64"] = base64.b64encode(buffer.getvalue()).decode("ascii")
         result = decide(observation)
+        action = GameAction[result["action"]]
+        if action is GameAction.ACTION6:
+            action.set_data({"game_id": self.game_id, "x": result["x"], "y": result["y"]})
         self._recent_actions.append({
             "step": self.action_counter,
-            "action": result["action"],
+            "action": action.name,
             "levels_completed_before": latest_frame.levels_completed,
         })
-        action = GameAction[result["action"]]
         action.reasoning = {"policy": "adk", "reason": result["reason"]}
         return action
