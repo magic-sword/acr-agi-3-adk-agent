@@ -12,7 +12,7 @@ import urllib.request
 from PIL import Image
 
 pixel_buffer = io.BytesIO()
-Image.new("RGB", (2, 2), (255, 0, 0)).save(pixel_buffer, format="PNG")
+Image.new("RGB", (64, 64), (255, 0, 0)).save(pixel_buffer, format="PNG")
 PIXEL = base64.b64encode(pixel_buffer.getvalue()).decode("ascii")
 
 
