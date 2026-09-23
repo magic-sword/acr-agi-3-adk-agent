@@ -1,10 +1,13 @@
 .env
 .kaggle/
 .venv/
+.cache/
 __pycache__/
 *.py[cod]
 .ipynb_checkpoints/
+.virtual_documents/
 notebooks/submission.ipynb
+/submission.parquet
 environment_files/
 outputs/
 vendor/

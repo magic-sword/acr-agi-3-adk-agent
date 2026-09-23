@@ -7,6 +7,8 @@ services:
       args:
         KAGGLE_BASE: ${KAGGLE_BASE:-gcr.io/kaggle-gpu-images/python}
     init: true
+    # Keep bind-mounted files owned by the SSH user running make.
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
     working_dir: /kaggle/working
     ports:
       # Bind only to the SSH host loopback interface.
@@ -15,9 +17,13 @@ services:
     volumes:
       - .:/kaggle/working
       - ./data:/kaggle/input:ro
-      - model-cache:/root/.cache
+      - ./.cache/model-cache:/tmp/model-cache
     environment:
-      HF_HOME: /root/.cache/huggingface
+      HOME: /tmp
+      XDG_CACHE_HOME: /tmp/model-cache
+      HF_HOME: /tmp/model-cache/huggingface
+      JUPYTER_CONFIG_DIR: /tmp/model-cache/jupyter
+      JUPYTER_RUNTIME_DIR: /tmp/model-cache/jupyter/runtime
       JUPYTER_TOKEN: ${JUPYTER_TOKEN:-arc-local}
       ADK_MODEL: ${ADK_MODEL:-}
       OPENAI_API_BASE: ${OPENAI_API_BASE:-}
@@ -33,15 +39,11 @@ services:
               capabilities: [gpu]
     command:
       - bash
-      - -lc
+      - -c
       - >-
         exec jupyter lab
         --ip=0.0.0.0
         --port=8888
         --no-browser
-        --allow-root
         --ServerApp.root_dir=/kaggle/working
         --ServerApp.token="$${JUPYTER_TOKEN}"
-
-volumes:
-  model-cache:

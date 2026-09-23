@@ -1,17 +1,21 @@
 DC := docker compose
 RUN := $(DC) run --rm --no-deps dev
+LOCAL_UID := $(shell id -u)
+LOCAL_GID := $(shell id -g)
+export LOCAL_UID LOCAL_GID
 GAME ?=
 STEPS ?= 80
 FRAMEWORK_REPO := https://github.com/arcprize/ARC-AGI-3-Agents.git
 FRAMEWORK_DIR := vendor/ARC-AGI-3-Agents
 
-.PHONY: help build setup lab down logs shell gpu check auth eval verify notebook push status clean
+.PHONY: help build cache-dir repair-perms setup lab down logs shell gpu check auth eval verify notebook push status clean
 
 help:
 	@printf '%s\n' \
 	  'make build                 Build the Kaggle-compatible image' \
 	  'make setup                 Clone and prepare the ARC framework' \
 	  'make lab                   Start JupyterLab on localhost:8889' \
+	  'make repair-perms          Fix files created by the previous root container' \
 	  'make check                 Inspect local Python/Jupyter/ADK/GPU environment' \
 	  'make auth                  Verify Kaggle API authentication' \
 	  'make eval [GAME=ls20]      Play local ARC games with the ADK agent' \
@@ -24,10 +28,16 @@ help:
 build:
 	$(DC) build
 
-setup:
+cache-dir:
+	mkdir -p .cache/model-cache
+
+repair-perms: cache-dir
+	$(DC) run --rm --no-deps --user 0 dev sh -ec 'for p in .virtual_documents notebooks/submission.ipynb vendor environment_files outputs recordings logs.log submission.parquet; do if [ -e "$$p" ]; then chown -R "$(LOCAL_UID):$(LOCAL_GID)" "$$p"; fi; done'
+
+setup: cache-dir
 	$(RUN) bash -ec 'if [ ! -d $(FRAMEWORK_DIR)/.git ]; then mkdir -p vendor; git clone --depth 1 $(FRAMEWORK_REPO) $(FRAMEWORK_DIR); fi; python scripts/setup_framework.py'
 
-lab:
+lab: cache-dir
 	$(DC) up -d --build dev
 	@echo 'JupyterLab: http://localhost:8889 (through your SSH LocalForward)'
 
@@ -37,31 +47,31 @@ logs:
 down:
 	$(DC) down
 
-shell:
+shell: cache-dir
 	$(RUN) bash
 
-gpu:
+gpu: cache-dir
 	$(RUN) nvidia-smi
 
-check:
+check: cache-dir
 	$(RUN) python scripts/check_env.py
 
-auth:
+auth: cache-dir
 	$(RUN) bash -ec 'test -s .kaggle/access_token || { echo ".kaggle/access_token missing"; exit 2; }; IFS= read -r KAGGLE_API_TOKEN < .kaggle/access_token || true; test -n "$$KAGGLE_API_TOKEN"; export KAGGLE_API_TOKEN; kaggle kernels list --mine --page-size 1 >/dev/null && echo "Kaggle authentication: OK"'
 
-eval:
+eval: cache-dir
 	$(RUN) python scripts/play_local.py $(if $(GAME),--game $(GAME)) --max-steps $(STEPS)
 
-verify:
+verify: cache-dir
 	$(RUN) python scripts/play_local.py --game ls20,vc33 --max-steps 50
 
-notebook:
+notebook: cache-dir
 	$(RUN) python scripts/build_notebook.py
 
 push: notebook
 	$(RUN) bash -ec 'test -s .kaggle/access_token || { echo ".kaggle/access_token missing"; exit 2; }; IFS= read -r KAGGLE_API_TOKEN < .kaggle/access_token || true; test -n "$$KAGGLE_API_TOKEN"; export KAGGLE_API_TOKEN; kaggle kernels push -p notebooks/'
 
-status:
+status: cache-dir
 	$(RUN) bash -ec 'IFS= read -r KAGGLE_API_TOKEN < .kaggle/access_token || true; test -n "$$KAGGLE_API_TOKEN"; export KAGGLE_API_TOKEN; KERNEL_ID=$$(python -c '\''import json; print(json.load(open("notebooks/kernel-metadata.json"))["id"])'\''); kaggle kernels status "$$KERNEL_ID"'
 
 clean:

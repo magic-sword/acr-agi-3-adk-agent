@@ -6,6 +6,8 @@ Develop locally in JupyterLab, play ARC-AGI-3 games with a Google ADK agent, and
 
 Requires Docker Compose, NVIDIA Container Toolkit, and SSH port forwarding for JupyterLab. The Kaggle GPU image provides JupyterLab and Google ADK. The local build installs pinned ARC packages from `third_party/wheels/` without accessing PyPI; `arc-agi` requires Python 3.12 or later.
 
+Run the `make` commands as the same SSH user that edits this repository (for example, `prog`). Compose then runs JupyterLab and one-off containers with that user's UID and GID, so files written through the bind mount are editable in both JupyterLab and the remote IDE. Cache files go under the ignored `.cache/model-cache/` directory.
+
 ```bash
 cp .env.example .env             # keep your existing .env if already configured
 make build
@@ -13,6 +15,17 @@ make setup                     # clone official ARC-AGI-3-Agents under ignored v
 make check
 make lab                       # JupyterLab at http://localhost:8889 via SSH tunnel
 ```
+
+If you previously ran JupyterLab as root inside the container, repair the existing files once after pulling this change:
+
+```bash
+make down
+make repair-perms              # fixes generated notebook, .virtual_documents, vendor, and outputs
+make notebook                  # regenerates the local/Kaggle compatible notebook
+make lab
+```
+
+`make repair-perms` runs a one-off root container solely to transfer ownership of known generated paths to your SSH user. It does not change the ownership of the whole repository. Open the notebook again after restarting JupyterLab.
 
 `make setup` downloads the official framework once and narrows its registry imports to the random agent. First local play may download and cache game environments; later runs can reuse the cache. Setup needs GitHub access. The Kaggle competition rerun uses the competition's offline wheel and framework dataset instead. If the base image lacks an underlying scientific dependency, the build's import check names the missing module; the wheel set assumes the current Kaggle GPU image.
 
@@ -25,6 +38,8 @@ make eval                      # all available games
 ```
 
 `agent/my_agent.py` adapts the ARC framework's synchronous API. `agent/adk_policy.py` runs a Google ADK `Runner` for each observation. The default `OfflinePolicy` returns a repeatable action without a model or internet. `make eval` prints the local aggregate score and never accesses Kaggle's hidden competition set.
+
+Edit `agent/*.py` as the source of the agent. The generated `notebooks/submission.ipynb` can be opened and executed in local JupyterLab: its wheel installation runs only when the Kaggle competition wheels exist, and its gateway and placeholder submission steps run only in the appropriate Kaggle environment. For local gameplay, use `make eval`; running the notebook locally prepares the submission code but does not play a game. `make notebook` regenerates the notebook from `agent/*.py` and overwrites edits made directly in the generated notebook. Jupyter's `.virtual_documents/` and the generated notebook are ignored by Git.
 
 For a local vision model with an OpenAI-compatible `/v1` endpoint, add these values to `.env` and rebuild the container when installing optional LiteLLM dependencies:
 
