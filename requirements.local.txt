@@ -1,5 +1,7 @@
-# Local ARC game engine (Kaggle competition supplies its offline wheel).
-arc-agi>=0.9.6,<1
-python-dotenv
+# Pinned local wheels under third_party/wheels/ (no PyPI access during build).
+arc-agi==0.9.9
+arcengine==0.9.3
+Flask>=3.1.0,<4
+python-dotenv>=1.0,<2
 # Google ADK ships in the Kaggle GPU base image. ADK_MODEL requires
 # google-adk[extensions] or litellm if the image lacks the optional backend.

@@ -7,12 +7,13 @@ FROM ${KAGGLE_BASE}
 
 WORKDIR /kaggle/working
 
-# Keep the image intentionally thin. Kaggle's image already contains
-# JupyterLab, PyTorch, Transformers, Kaggle CLI and Google ADK.
-# Install only project-specific packages when requirements.local.txt is non-empty.
+# Kaggle's image provides JupyterLab, Google ADK and the common scientific
+# dependencies. Install the small ARC packages from pinned local wheels so
+# Docker builds do not depend on DNS or PyPI access.
 COPY requirements.local.txt /tmp/requirements.local.txt
-RUN if [ -s /tmp/requirements.local.txt ]; then \
-      python -m pip install --no-cache-dir -r /tmp/requirements.local.txt; \
-    fi
+COPY third_party/wheels/ /tmp/arc-wheels/
+RUN python -m pip install --no-index --no-deps --find-links=/tmp/arc-wheels \
+      -r /tmp/requirements.local.txt && \
+    python -c 'import arc_agi, arcengine, dotenv, flask; print("ARC packages: OK")'
 
 CMD ["bash"]

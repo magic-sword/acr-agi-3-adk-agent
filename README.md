@@ -4,7 +4,7 @@ Develop locally in JupyterLab, play ARC-AGI-3 games with a Google ADK agent, and
 
 ## Server setup
 
-Requires Docker Compose, NVIDIA Container Toolkit, and SSH port forwarding for JupyterLab. The Kaggle GPU image provides JupyterLab and Google ADK. The local build installs `arc-agi` and `python-dotenv` from `requirements.local.txt`; `arc-agi` requires Python 3.12 or later.
+Requires Docker Compose, NVIDIA Container Toolkit, and SSH port forwarding for JupyterLab. The Kaggle GPU image provides JupyterLab and Google ADK. The local build installs pinned ARC packages from `third_party/wheels/` without accessing PyPI; `arc-agi` requires Python 3.12 or later.
 
 ```bash
 cp .env.example .env             # keep your existing .env if already configured
@@ -14,7 +14,7 @@ make check
 make lab                       # JupyterLab at http://localhost:8889 via SSH tunnel
 ```
 
-`make setup` downloads the official framework once and narrows its registry imports to the random agent. First local play may download and cache game environments; later runs can reuse the cache. The Docker build needs PyPI access, and setup needs GitHub access. The Kaggle competition rerun uses the competition's offline wheel and framework dataset instead.
+`make setup` downloads the official framework once and narrows its registry imports to the random agent. First local play may download and cache game environments; later runs can reuse the cache. Setup needs GitHub access. The Kaggle competition rerun uses the competition's offline wheel and framework dataset instead. If the base image lacks an underlying scientific dependency, the build's import check names the missing module; the wheel set assumes the current Kaggle GPU image.
 
 ## Local agent loop
 
