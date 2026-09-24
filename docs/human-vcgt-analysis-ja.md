@@ -17,6 +17,8 @@
 
 参照資料:
 
+- [分析から導いたADK認知ステートマシンの設計](adk-cognitive-state-machine-ja.md)
+- [各状態で必要なスキルの仕様](adk-cognitive-skills-ja.md)
 - [25環境別の具体例・時刻・記録ID](human-vcgt-environment-evidence-ja.md)
 - [全340記録の一覧と定性分析対象](vcgt-record-inventory.csv)
 - [機械集計結果・取得条件](vcgt-analysis-metadata.json)
