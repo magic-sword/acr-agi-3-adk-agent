@@ -21,6 +21,50 @@ from scripts.build_notebook import SOURCES
 
 
 class SkillAdapterTests(unittest.TestCase):
+    def test_state_toolsets_expose_only_relevant_skills(self):
+        from agent.cognition.workflow import CognitiveRuntime
+        runtime = CognitiveRuntime('test', 'local/qwen3-vl-4b-instruct')
+        try:
+            observe = {'visual-observation', 'occlusion-memory', 'prediction-verification',
+                       'hypothesis-maintenance', 'goal-inference'}
+            probe = {'discriminating-experiment', 'temporal-reasoning', 'action-grounding', 'budget-recovery'}
+            plan = {'backward-planning', 'plan-repair', 'temporal-reasoning',
+                    'effect-revaluation', 'action-grounding', 'procedure-reuse'}
+            revision = {'hypothesis-maintenance', 'goal-inference', 'cause-diagnosis',
+                        'plan-repair', 'effect-revaluation'}
+            expected = {
+                ('OBSERVE', None): observe,
+                ('PROBE', None): probe,
+                ('PLAN', None): plan,
+                ('REVISE', 'PROBE'): revision | probe,
+                ('REVISE', 'PLAN'): revision | plan,
+            }
+            for (state, destination), names in expected.items():
+                agent = runtime._agent(state, destination)
+                registered = [s.name for s in agent.tools[0]._list_skills()]
+                self.assertEqual(set(registered), names)
+                self.assertEqual(len(registered), len(names))
+            from agent.cognition.skills import SKILL_NAMES
+            self.assertEqual(set().union(*expected.values()),
+                             set(SKILL_NAMES.values()) - {'decision-commit'})
+            self.assertIsNot(runtime._agent('REVISE', 'PROBE'), runtime._agent('REVISE', 'PLAN'))
+            self.assertIs(runtime._agent('REVISE', 'PROBE'), runtime._agent('REVISE', 'PROBE'))
+        finally:
+            runtime.close()
+
+    def test_host_states_cannot_create_model_agents(self):
+        from agent.cognition.workflow import CognitiveRuntime
+        runtime = CognitiveRuntime('test', 'local/qwen3-vl-4b-instruct')
+        try:
+            for state in ('VERIFY', 'UPDATE', 'ACT', 'COMMIT', 'CONSOLIDATE', 'RECOVER'):
+                with self.subTest(state=state), self.assertRaisesRegex(ValueError, 'host-only'):
+                    runtime._agent(state)
+            with self.assertRaisesRegex(ValueError, 'destination'):
+                runtime._agent('REVISE')
+            self.assertFalse(runtime.agents)
+        finally:
+            runtime.close()
+
     def test_adk_three_stage_loading_and_tool_results(self):
         received = []
         names = ['list_skills', 'load_skill', 'load_skill_resource']

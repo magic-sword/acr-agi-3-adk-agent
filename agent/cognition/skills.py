@@ -24,14 +24,28 @@ SKILL_NAMES = {
 }
 
 STATE_SKILLS = {
+    # OBSERVE also proposes hypotheses and a goal in the current Perception contract.
     "OBSERVE": ("S01", "S02", "S03", "S04", "S05"),
-    "REVISE": ("S06", "S04", "S05", "S07", "S08", "S09", "S10", "S11", "S12"),
     "PROBE": ("S07", "S10", "S12", "S15"),
     "PLAN": ("S08", "S09", "S10", "S11", "S12", "S14"),
-    "VERIFY": ("S03", "S10"), "UPDATE": ("S02", "S04"),
-    "ACT": ("S12",), "COMMIT": ("S13",),
-    "CONSOLIDATE": ("S14",), "RECOVER": ("S15",),
+    # Reinterpretation supplements the destination's experiment/planning skills.
+    "REVISE": ("S04", "S05", "S06", "S09", "S11"),
+    "VERIFY": (), "UPDATE": (), "ACT": (), "COMMIT": (),
+    "CONSOLIDATE": (), "RECOVER": (),
 }
+
+
+def selected_skills(state: str, proposal_state: str | None = None) -> tuple[str, ...]:
+    selected = STATE_SKILLS[state]
+    if state == "REVISE":
+        if proposal_state not in ("PROBE", "PLAN"):
+            raise ValueError("REVISE requires its PROBE or PLAN destination")
+        selected += STATE_SKILLS[proposal_state]
+    elif proposal_state is not None:
+        raise ValueError("Only REVISE accepts a proposal destination")
+    if not selected:
+        raise ValueError(f"{state} is host-only and must not create a model skill toolset")
+    return tuple(dict.fromkeys(selected))
 
 
 def instruction(state: str, schema: dict) -> str:
@@ -60,6 +74,7 @@ def instruction(state: str, schema: dict) -> str:
     )
 
 
-def skill_toolset(state: str) -> SkillToolset:
+def skill_toolset(state: str, proposal_state: str | None = None) -> SkillToolset:
     root = Path(__file__).resolve().parents[1] / "skills"
-    return SkillToolset(skills=[load_skill_from_dir(root / SKILL_NAMES[s]) for s in STATE_SKILLS[state]])
+    return SkillToolset(skills=[load_skill_from_dir(root / SKILL_NAMES[s])
+                               for s in selected_skills(state, proposal_state)])

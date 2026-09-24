@@ -19,7 +19,7 @@ from google.genai import types
 
 from agent.local_vlm import LocalVisionLlm, MAX_REQUESTS_PER_INVOCATION
 from .engine import CognitiveTurn, new_memory
-from .skills import instruction, skill_toolset
+from .skills import instruction, skill_toolset, selected_skills
 from .state import Memory, Perception, Proposal
 from .validation import parse_json
 
@@ -55,19 +55,20 @@ class CognitiveRuntime:
         self.workflow = self._build_graph()
         self.runner = Runner(agent=self.workflow, app_name=APP_NAME, session_service=self.service)
 
-    def _agent(self, state: str):
-        if state not in self.agents:
+    def _agent(self, state: str, proposal_state: str | None = None):
+        key = state if proposal_state is None else f"{state}_{proposal_state}"
+        if key not in self.agents:
             schema = Perception if state == "OBSERVE" else Proposal
-            self.agents[state] = LlmAgent(
-                name=f"skill_{state.lower()}", include_contents="none",
+            self.agents[key] = LlmAgent(
+                name=f"skill_{key.lower()}", include_contents="none",
                 model=LocalVisionLlm(model="qwen3-vl-4b-instruct",
                                      api_base=os.getenv("VLM_API_BASE", "http://vlm:8080/v1"),
                                      max_output_tokens=1600 if state == "OBSERVE" else 2400,
                                      timeout_seconds=90),
                 instruction=instruction(state, schema.model_json_schema()),
-                tools=[skill_toolset(state)],
+                tools=[skill_toolset(state, proposal_state)],
             )
-        return self.agents[state]
+        return self.agents[key]
 
     def _context(self):
         t, m = self.turn, self.turn.memory
@@ -90,7 +91,7 @@ class CognitiveRuntime:
             raise ValueError("structured context exceeds budget")
         return context
 
-    async def _ask(self, ctx: Context, state: str):
+    async def _ask(self, ctx: Context, state: str, proposal_state: str | None = None):
         t = self.turn
         if t.calls >= t.max_calls or t.time_left() <= 0:
             raise ValueError("reasoning budget exhausted")
@@ -101,12 +102,15 @@ class CognitiveRuntime:
             parts.append(types.Part.from_bytes(data=base64.b64decode(t.obs["image_png_base64"]), mime_type="image/png"))
         elif t.obs.get("grid") is not None:
             parts.append(types.Part(text="Current color-ID grid: " + json.dumps(t.obs["grid"], separators=(",", ":"))))
-        agent = self._agent(state)
+        agent = self._agent(state, proposal_state)
         agent.model.begin_invocation()
         agent.model.timeout_seconds = max(1, min(90, int(t.time_left())))
         started = time.monotonic()
         record = {"observation_id": t.obs["observation_id"], "step": t.obs["step"],
-                  "state": state, "call_index": t.calls, "context": context}
+                  "state": state, "call_index": t.calls, "context": context,
+                  "available_skills": selected_skills(state, proposal_state)}
+        if proposal_state:
+            record["proposal_state"] = proposal_state
         try:
             async with asyncio.timeout(min(92, t.time_left())):
                 answer = await ctx.run_node(agent, node_input=types.Content(role="user", parts=parts))
@@ -203,7 +207,10 @@ class CognitiveRuntime:
                     return Event(route="COMMIT")
             while t.calls < t.max_calls and t.time_left() > 0:
                 try:
-                    p = await self._ask(ctx, "REVISE" if t.revise else state)
+                    if t.revise:
+                        p = await self._ask(ctx, "REVISE", state)
+                    else:
+                        p = await self._ask(ctx, state)
                     t.accept(p)
                     return Event(route="ACT")
                 except Exception as exc:
