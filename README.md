@@ -1,10 +1,10 @@
 # ARC-AGI-3 Google ADK starter
 
-Develop locally in JupyterLab, play ARC-AGI-3 games with a Google ADK agent, and build a Kaggle Notebook from the same Python source. The default ADK `BaseAgent` policy is a deterministic baseline; `make eval-model` selects Qwen3-VL-4B-Instruct (Q4_K_M GGUF plus Q8_0 vision projector) through ADK's `LlmAgent`. This is a working inference path, not a trained game solver.
+Develop locally in JupyterLab, play ARC-AGI-3 games with a Google ADK agent, and build a Kaggle Notebook from the same Python source. The agent uses an ADK 2.0 cognitive `Workflow` with persistent game memory, prediction checks, hypothesis revision, experiments and dependency plans. Without a model it runs deterministic control probes; `make eval-model` selects Qwen3-VL-4B-Instruct through ADK's `LlmAgent`. This is an initial adaptive workflow, not a trained or benchmarked game solver. See the [implementation guide](docs/adk-cognitive-implementation-ja.md) for behavior, limits and validation.
 
 ## Server setup
 
-Requires Docker Compose, NVIDIA Container Toolkit, and SSH port forwarding for JupyterLab. The Kaggle GPU image provides JupyterLab and Google ADK. The local build installs pinned ARC packages from `third_party/wheels/` without accessing PyPI; `arc-agi` requires Python 3.12 or later.
+Requires Docker Compose, NVIDIA Container Toolkit, and SSH port forwarding for JupyterLab. The Kaggle GPU image provides JupyterLab and common dependencies. Local wheels pin Google ADK 2.0.0, Google Gen AI 1.72.0 and Google Auth 2.49.2. The local build installs pinned ARC packages from `third_party/wheels/` without accessing PyPI; `arc-agi` requires Python 3.12 or later.
 
 Run the `make` commands as the same SSH user that edits this repository (for example, `prog`). Compose then runs JupyterLab and one-off containers with that user's UID and GID, so files written through the bind mount are editable in both JupyterLab and the remote IDE. Cache files go under the ignored `.cache/model-cache/` directory.
 
@@ -37,9 +37,9 @@ make verify                    # ls20 and vc33, 50 actions each
 make eval                      # all available games
 ```
 
-`agent/my_agent.py` adapts the ARC framework's synchronous API. `agent/adk_policy.py` runs a Google ADK `Runner` for each observation. The default `OfflinePolicy` returns a repeatable action without a model or internet. `make eval` prints the local aggregate score and never accesses Kaggle's hidden competition set.
+`agent/my_agent.py` owns the ARC execution boundary and stops without sending a synthetic action at WIN, budget exhaustion or unrecoverable errors. Each game owns one `CognitiveRuntime`, ADK `Runner`, session and event loop. `agent/cognition/` implements the state machine and skill contracts. Without a model, it issues deterministic legal control probes. `make eval` prints the local aggregate score and never accesses Kaggle's hidden competition set.
 
-Edit `agent/*.py` as the source of the agent. The generated `notebooks/submission.ipynb` can be opened and executed in local JupyterLab: its wheel installation runs only when the Kaggle competition wheels exist, and its gateway and placeholder submission steps run only in the appropriate Kaggle environment. For local gameplay, use `make eval`; running the notebook locally prepares the submission code but does not play a game. `make notebook` regenerates the notebook from `agent/*.py` and overwrites edits made directly in the generated notebook. Jupyter's `.virtual_documents/` and the generated notebook are ignored by Git.
+Edit `agent/**/*.py` as the source of the agent. The generated `notebooks/submission.ipynb` can be opened and executed in local JupyterLab: its wheel installation runs only when the Kaggle competition wheels exist, and its gateway and placeholder submission steps run only in the appropriate Kaggle environment. For local gameplay, use `make eval`; running the notebook locally prepares the submission code but does not play a game. `make notebook` bundles the pinned ADK-related wheels for offline installation and regenerates the notebook from all `agent/**/*.py` modules and overwrites edits made directly in the generated notebook. Jupyter's `.virtual_documents/` and the generated notebook are ignored by Git.
 
 ## Local vision model
 
@@ -49,13 +49,21 @@ Download the [official Qwen3-VL-4B-Instruct GGUF weights](https://huggingface.co
 make model-download
 make model-up
 make model-check                 # sends a real image request
-make test                        # checks ARC integer action IDs and ADK responses
+make test                        # cognition, ARC boundary, model contract and packaging tests
 make eval-model GAME=ls20 STEPS=50
 ```
 
-The GGUF files are stored in ignored `.cache/model-cache/qwen3-vl-4b/`; they are never committed. Docker Compose exposes the model on the server's loopback port 8080. `agent/local_vlm.py` implements Google ADK's `BaseLlm` protocol and passes PNG frames with action history to `LlmAgent`; the `Runner` returns one validated legal action. ARC reports available actions as integer IDs; the adapter presents `ACTION1` etc. to the model and accepts either names or integer IDs in the reply. For `ACTION6`, the reply also needs `x` and `y` integer coordinates in `[0,63]`. No API key, LiteLLM installation, or internet connection is used during inference. `make model-up` needs access to GHCR for its first image pull. `make eval-model` sets `ADK_MODEL` for that run only; plain `make eval` remains the deterministic baseline.
+The GGUF files are stored in ignored `.cache/model-cache/qwen3-vl-4b/`; they are never committed. Docker Compose exposes the model on the server's loopback port 8080. `agent/local_vlm.py` implements Google ADK's `BaseLlm` protocol and passes PNG frames with action history to `LlmAgent`; the workflow returns one validated legal action or a stop decision. Model proposals are parsed as typed observations, experiments and dependency plans; action names and click coordinates are checked again before execution. ARC reports available actions as integer IDs; the adapter presents `ACTION1` etc. to the model. Structured cognitive proposals use these canonical names. For `ACTION6`, the reply also needs `x` and `y` integer coordinates in `[0,63]`. No API key, LiteLLM installation, or internet connection is used during inference. `make model-up` needs access to GHCR for its first image pull. `make eval-model` sets `ADK_MODEL` for that run only; plain `make eval` remains the deterministic baseline.
 
 To use an existing compatible server, set `VLM_API_BASE=http://host.docker.internal:8080/v1` in `.env` and run `ADK_MODEL=local/qwen3-vl-4b-instruct make eval GAME=ls20`; the server must present the `qwen3-vl-4b-instruct` alias and support OpenAI vision chat completions. JupyterLab may use the same endpoint through its Compose network.
+
+## Cognitive workflow settings
+
+```bash
+COGNITION_LOG_DIR=outputs/cognition make eval-model GAME=ls20 STEPS=20
+```
+
+`COGNITION_MAX_CALLS=3` bounds model calls per observation, `COGNITION_MAX_RESETS=2` bounds retries after GAME_OVER, and `COGNITION_SECONDS=600` bounds each game's reasoning time. Optional JSONL traces and memory snapshots include predictions, results and transition reasons. They do not automatically restore an external game after a crash. The VLM context size is 16,384 tokens; restart it with `make model-up` after updating. An already-running JupyterLab container needs `make lab` after saving work to use the rebuilt ADK image.
 
 ## Offline Kaggle model bundle
 

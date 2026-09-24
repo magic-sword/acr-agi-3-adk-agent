@@ -21,7 +21,7 @@ from google.genai import types
 class LocalVisionLlm(BaseLlm):
     api_base: str
     timeout_seconds: int = 180
-    max_output_tokens: int = 96
+    max_output_tokens: int = 1600
 
     def _complete(self, messages: list[dict]) -> str:
         payload = json.dumps({

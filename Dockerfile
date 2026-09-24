@@ -7,13 +7,13 @@ FROM ${KAGGLE_BASE}
 
 WORKDIR /kaggle/working
 
-# Kaggle's image provides JupyterLab, Google ADK and the common scientific
-# dependencies. Install the small ARC packages from pinned local wheels so
+# Kaggle's image provides JupyterLab, the common scientific
+# dependencies. Install the pinned ARC and ADK packages from pinned local wheels so
 # Docker builds do not depend on DNS or PyPI access.
 COPY requirements.local.txt /tmp/requirements.local.txt
 COPY third_party/wheels/ /tmp/arc-wheels/
 RUN python -m pip install --no-index --no-deps --find-links=/tmp/arc-wheels \
       -r /tmp/requirements.local.txt && \
-    python -c 'import arc_agi, arcengine, dotenv, flask; print("ARC packages: OK")'
+    python -c 'import arc_agi, arcengine, dotenv, flask; from google.adk import Workflow; print("ARC packages: OK")'
 
 CMD ["bash"]

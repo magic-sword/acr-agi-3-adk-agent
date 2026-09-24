@@ -37,6 +37,8 @@ print(f"Platform: {platform.platform()}")
 
 check_import("jupyterlab", "JupyterLab")
 check_import("google.adk", "Google ADK")
+from google.adk import Workflow
+assert importlib.metadata.version("google-adk") == "2.0.0", "Rebuild the pinned ADK image"
 check_import("arc_agi", "ARC-AGI game engine")
 check_import("torch", "PyTorch")
 check_import("transformers", "Transformers")
