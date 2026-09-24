@@ -1,0 +1,143 @@
+{
+  "source_url": "https://www.kaggle.com/datasets/magicsword001/acr-agi-3-human-vcgt",
+  "download_url": "https://www.kaggle.com/api/v1/datasets/download/magicsword001/acr-agi-3-human-vcgt/results.csv",
+  "retrieved_date": "2026-09-24",
+  "source_csv_bytes": 6848597285,
+  "records": 340,
+  "environments": 25,
+  "annotation_elements": 1649,
+  "annotation_characters": 9400827,
+  "invalid_annotation_json": 0,
+  "duplicate_env_guid": 0,
+  "qualitative_selected_records": 50,
+  "qualitative_method": "Per environment: representative record plus comparison. Reviewed headings, introductory and final passages, and selected full evidence intervals; not full manual coding of every narrative. Comparison prefers opposite won flag, closest serialized annotation length to 18000 characters. r11l has no won=0 records.",
+  "source_record_definition": "1-based logical CSV record including header; first data record is 2. Not a physical line number.",
+  "extracted_annotations_sha256": "4ebec70003fa1e13fa3cf8fe211f88a5aad5d4b29e29c3abf3473c5529107390",
+  "environment_counts": {
+    "sk48": {
+      "records": 14,
+      "won_1": 7,
+      "annotation_elements": 81
+    },
+    "tn36": {
+      "records": 14,
+      "won_1": 6,
+      "annotation_elements": 60
+    },
+    "m0r0": {
+      "records": 11,
+      "won_1": 7,
+      "annotation_elements": 53
+    },
+    "bp35": {
+      "records": 14,
+      "won_1": 2,
+      "annotation_elements": 85
+    },
+    "cn04": {
+      "records": 12,
+      "won_1": 6,
+      "annotation_elements": 47
+    },
+    "dc22": {
+      "records": 11,
+      "won_1": 4,
+      "annotation_elements": 50
+    },
+    "tu93": {
+      "records": 13,
+      "won_1": 9,
+      "annotation_elements": 95
+    },
+    "lp85": {
+      "records": 54,
+      "won_1": 15,
+      "annotation_elements": 218
+    },
+    "ka59": {
+      "records": 10,
+      "won_1": 3,
+      "annotation_elements": 37
+    },
+    "wa30": {
+      "records": 14,
+      "won_1": 5,
+      "annotation_elements": 85
+    },
+    "vc33": {
+      "records": 10,
+      "won_1": 6,
+      "annotation_elements": 54
+    },
+    "lf52": {
+      "records": 11,
+      "won_1": 4,
+      "annotation_elements": 79
+    },
+    "r11l": {
+      "records": 10,
+      "won_1": 10,
+      "annotation_elements": 60
+    },
+    "sc25": {
+      "records": 15,
+      "won_1": 10,
+      "annotation_elements": 75
+    },
+    "sp80": {
+      "records": 12,
+      "won_1": 2,
+      "annotation_elements": 34
+    },
+    "ar25": {
+      "records": 10,
+      "won_1": 5,
+      "annotation_elements": 65
+    },
+    "sb26": {
+      "records": 12,
+      "won_1": 5,
+      "annotation_elements": 67
+    },
+    "cd82": {
+      "records": 11,
+      "won_1": 8,
+      "annotation_elements": 53
+    },
+    "re86": {
+      "records": 11,
+      "won_1": 5,
+      "annotation_elements": 64
+    },
+    "s5i5": {
+      "records": 11,
+      "won_1": 4,
+      "annotation_elements": 54
+    },
+    "ls20": {
+      "records": 13,
+      "won_1": 6,
+      "annotation_elements": 58
+    },
+    "ft09": {
+      "records": 10,
+      "won_1": 4,
+      "annotation_elements": 34
+    },
+    "su15": {
+      "records": 13,
+      "won_1": 3,
+      "annotation_elements": 50
+    },
+    "tr87": {
+      "records": 12,
+      "won_1": 6,
+      "annotation_elements": 59
+    },
+    "g50t": {
+      "records": 12,
+      "won_1": 2,
+      "annotation_elements": 32
+    }
+  }
+}
