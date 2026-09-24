@@ -72,7 +72,7 @@ class LocalVisionLlm(BaseLlm):
             messages.append({'role': 'system', 'content': str(instruction)})
         pending = {}
         for content in request.contents:
-            parts, calls, responses = [], [], []
+            parts, calls, responses, visual_results = [], [], [], []
             for part in content.parts or []:
                 if part.function_call:
                     call = part.function_call
@@ -93,8 +93,15 @@ class LocalVisionLlm(BaseLlm):
                     del pending[call_id]
                     if response.parts:
                         raise ValueError('Multimodal function responses are not supported')
+                    result = dict(response.response or {})
+                    if response.name in {'observe_current', 'move_observation_cursor', 'observe_animation'}:
+                        encoded = result.pop('_image_png_base64', None)
+                        if encoded:
+                            visual_results.extend([
+                                {'type': 'text', 'text': 'Visual tool result: ' + response.name + ' ' + json.dumps(result)},
+                                {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,' + encoded}}])
                     responses.append({'role': 'tool', 'tool_call_id': call_id,
-                                      'content': json.dumps(response.response, ensure_ascii=False)})
+                                      'content': json.dumps(result, ensure_ascii=False)})
                 elif part.text:
                     parts.append({'type': 'text', 'text': part.text})
                 elif part.inline_data:
@@ -108,6 +115,8 @@ class LocalVisionLlm(BaseLlm):
                     raise ValueError('Unsupported ADK part in local vision model input')
             # Tool results must immediately follow the corresponding assistant call.
             messages.extend(responses)
+            if visual_results:
+                messages.append({'role': 'user', 'content': visual_results})
             if parts or calls:
                 message = {'role': 'assistant' if content.role == 'model' else 'user',
                            'content': parts or None}

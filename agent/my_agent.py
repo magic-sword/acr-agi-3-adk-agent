@@ -1,8 +1,7 @@
 """ARC adapter: actual observations and exactly one grounded action per iteration."""
 from __future__ import annotations
 
-import base64
-import io
+import hashlib
 import logging
 import os
 import time
@@ -13,6 +12,7 @@ from agents.agent import Agent
 from agents.tracing import trace_agent_session
 
 from agent.adk_policy import create_runtime
+from agent.observation import attach_visuals, frame_image
 
 
 class PolicyStopped(RuntimeError):
@@ -35,7 +35,7 @@ def available_action_names(actions: list[Any] | None) -> list[str]:
 
 
 def frame_observation(game_id: str, frame: FrameData, step: int, remaining: int,
-                      *, with_image: bool) -> dict:
+                      *, with_image: bool, cursor: dict | None = None, source_action: dict | None = None) -> dict:
     observation = {
         "game_id": game_id, "state": frame.state.name, "step": step,
         "levels_completed": frame.levels_completed,
@@ -44,28 +44,15 @@ def frame_observation(game_id: str, frame: FrameData, step: int, remaining: int,
     }
     if frame.frame:
         import numpy as np
-        from PIL import Image
-        from arc_agi.rendering import COLOR_MAP, hex_to_rgb
-
-        # An action can produce multiple animation frames; use the final real frame.
         pixels = np.asarray(frame.frame[-1])
+        image = frame_image(pixels)
         if pixels.ndim == 2:
-            if not np.issubdtype(pixels.dtype, np.integer) or pixels.min() < 0 or pixels.max() > 15:
-                raise ValueError("invalid color IDs")
             observation["grid"] = pixels.tolist()
-            palette = np.asarray([hex_to_rgb(COLOR_MAP[i]) for i in range(16)], dtype=np.uint8)
-            image = Image.fromarray(palette[pixels])
-        elif pixels.ndim == 3 and pixels.shape[-1] in (3, 4):
-            image = Image.fromarray(pixels.astype(np.uint8))
-        else:
-            raise ValueError(f"Unsupported frame shape: {pixels.shape}")
         observation["width"], observation["height"] = image.size
+        # UI/cursor changes never count as game changes, including RGB inputs.
+        observation["frame_hash"] = hashlib.sha256(image.tobytes() + str(image.size).encode()).hexdigest()
         if with_image:
-            # Palette colors are faithfully rendered; action coordinates stay in original pixels.
-            image = image.resize((image.width * 4, image.height * 4), Image.Resampling.NEAREST)
-            buffer = io.BytesIO()
-            image.save(buffer, format="PNG")
-            observation["image_png_base64"] = base64.b64encode(buffer.getvalue()).decode("ascii")
+            attach_visuals(observation, [np.asarray(f).tolist() for f in frame.frame], cursor, source_action)
     return observation
 
 
@@ -79,6 +66,7 @@ class MyAgent(Agent):
         self._runtime = create_runtime(self.game_id)
         self._sent_decisions: set[str] = set()
         self._stopped = False
+        self._last_action = None
 
     def is_done(self, frames: list[FrameData], latest_frame: FrameData) -> bool:
         return self._stopped or latest_frame.state is GameState.WIN
@@ -86,7 +74,8 @@ class MyAgent(Agent):
     def _observation(self, frame):
         observation = frame_observation(self.game_id, frame, self.action_counter,
                                         max(0, self.MAX_ACTIONS + 1 - self.action_counter),
-                                        with_image=bool(os.getenv("ADK_MODEL")))
+                                        with_image=bool(os.getenv("ADK_MODEL")),
+                                        cursor=self._runtime.cursor, source_action=self._last_action)
         if self.evaluation_max_levels is not None and frame.levels_completed >= self.evaluation_max_levels:
             observation["evaluation_stop_reason"] = "level_limit"
         return observation
@@ -104,6 +93,11 @@ class MyAgent(Agent):
         data = {"game_id": self.game_id}
         if action is GameAction.ACTION6:
             data.update(x=result["x"], y=result["y"])
+        self._last_action = {"action": action.name, **{k: v for k, v in data.items() if k in ("x", "y")}}
+        if action is GameAction.ACTION6:
+            self._runtime.cursor = {"x": result["x"], "y": result["y"]}
+        elif action is GameAction.RESET:
+            self._runtime.cursor = None
         action.set_data(data)
         action.reasoning = {"policy": "adk-cognition", "reason": result["reason"],
                             "decision_id": result["decision_id"]}

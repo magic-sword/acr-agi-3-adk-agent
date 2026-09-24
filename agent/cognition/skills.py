@@ -57,7 +57,10 @@ def instruction(state: str, schema: dict) -> str:
         "Keep output concise and omit optional empty fields. Keep the existing goal text unchanged unless evidence requires a different goal. Empty goal means retain it. Use skill tools before the final JSON answer.\n"
         + "\nDiscover skills with list_skills, then load the relevant skill with load_skill before reasoning. "
         "Load references with load_skill_resource only when needed. Do not repeatedly load unchanged resources. "
-        "Only the final answer must be JSON; intermediate function calls are allowed."
+        "Only the final answer must be JSON; intermediate function calls are allowed. "
+        "The attached image is the current final frame with a host cursor/controller. "
+        "observe_current re-reads it; move_observation_cursor previews original x,y without clicking. "
+        "observe_animation retrieves explicitly labeled historical frames only when needed; replay never advances time. "
         + "\nRequired JSON shape examples (replace IDs with input IDs; infer your own facts/actions): "
         + ('{"observation_id":"COPY_INPUT_ID","memory_revision":0,"facts":[],"unknowns":["control mapping"],"goal":"","hypotheses":[]}'
            if state == "OBSERVE" else

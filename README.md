@@ -57,6 +57,18 @@ The GGUF files are stored in ignored `.cache/model-cache/qwen3-vl-4b/`; they are
 
 To use an existing compatible server, set `VLM_API_BASE=http://host.docker.internal:8080/v1` in `.env` and run `ADK_MODEL=local/qwen3-vl-4b-instruct make eval GAME=ls20`; the server must present the `qwen3-vl-4b-instruct` alias and support OpenAI vision chat completions. JupyterLab may use the same endpoint through its Compose network.
 
+## Visual observation and recorded animation
+
+The visual-observation skill renders the final received frame with an input controller, coordinate rulers, and a host cursor. `observe_current` reads this screen; `move_observation_cursor(x, y)` previews a position in original game pixels without clicking or spending an external action. ACTION6 proposals still supply explicit x/y, so the action skill can use the visually verified cursor position.
+
+Intermediate frames are **not automatically replayed** on each observation. `animation.event_id` identifies the completed transition and its source action. `observe_animation(event_id, start_frame)` retrieves four consecutive historical frames at a time, explicitly labeled as replay, without advancing game time. The local vision transport uses ordered PNG sheets, not animated GIF input. With `COGNITION_LOG_DIR` enabled, each source batch is saved as `frames/<run>-<step>.json`; explicit single-play GIF export is available with:
+
+```bash
+python agent/skills/visual-observation/scripts/render_observation.py replay EVENT.json history.gif
+```
+
+Playback uses synthetic timing because the frame data has no duration information. Replaying a recorded lava flow does not mean lava is flowing again. Only the next external action returns new game evidence.
+
 ## Bounded local evaluation
 
 ```bash

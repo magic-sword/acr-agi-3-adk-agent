@@ -17,6 +17,7 @@ from google.adk.sessions import InMemorySessionService
 from google.adk.workflow import node
 from google.genai import types
 
+from agent.observation import VISUAL_PAYLOAD_KEYS, render_current, render_animation_page, png_base64, validate_cursor
 from agent.local_vlm import LocalVisionLlm, MAX_REQUESTS_PER_INVOCATION
 from .engine import CognitiveTurn, new_memory
 from .skills import instruction, skill_toolset, selected_skills
@@ -52,6 +53,7 @@ class CognitiveRuntime:
         self.initialized = False
         self.closed = False
         self.agents = {}
+        self.cursor = None
         self.workflow = self._build_graph()
         self.runner = Runner(agent=self.workflow, app_name=APP_NAME, session_service=self.service)
 
@@ -66,13 +68,53 @@ class CognitiveRuntime:
                                      max_output_tokens=1600 if state == "OBSERVE" else 2400,
                                      timeout_seconds=90),
                 instruction=instruction(state, schema.model_json_schema()),
-                tools=[skill_toolset(state, proposal_state)],
+                tools=[skill_toolset(state, proposal_state), self.observe_current,
+                       self.move_observation_cursor, self.observe_animation],
             )
         return self.agents[key]
 
+    def observe_current(self) -> dict:
+        """Read the final received game frame with cursor/controller. Never replay history or advance time."""
+        o = self.turn.obs
+        return {"observation_id": o["observation_id"], "view": "current_final_frame",
+                "cursor": o.get("cursor"), "animation": o.get("animation"),
+                "_image_png_base64": o.get("image_png_base64")}
+
+    def move_observation_cursor(self, x: int, y: int) -> dict:
+        """Preview a host cursor at original game pixel x,y; does NOT click or advance the game."""
+        o = self.turn.obs
+        if not o.get("_visual_frames"):
+            return {"error": "No source frame available for cursor preview"}
+        try:
+            cursor = validate_cursor({"x": x, "y": y}, o["width"], o["height"])
+        except ValueError as exc:
+            return {"error": str(exc)}
+        self.cursor = o["cursor"] = cursor
+        o["image_png_base64"] = png_base64(render_current(o["_visual_frames"][-1], o["available_actions"], cursor))
+        return self.observe_current()
+
+    def observe_animation(self, event_id: str, start_frame: int = 0) -> dict:
+        """Read up to four ordered HISTORICAL frames for this recorded event; never a live observation.
+
+        Follow next_start_frame to inspect the remainder. Re-reading an event is the same evidence.
+        """
+        o = self.turn.obs
+        event = o.get("animation", {})
+        if event_id != event.get("event_id") or not o.get("_visual_frames"):
+            return {"error": "Recorded event unavailable; use the current observation's animation.event_id"}
+        try:
+            sheet, next_frame = render_animation_page(o["_visual_frames"], o["available_actions"],
+                                                     o["cursor"], event_id, start_frame)
+        except ValueError as exc:
+            return {"error": str(exc)}
+        return {"observation_id": o["observation_id"], "view": "historical_replay_not_live",
+                "event": event, "start_frame": start_frame, "next_start_frame": next_frame,
+                "cursor_is_present_day_overlay": True, "time_advanced": False,
+                "_image_png_base64": png_base64(sheet)}
+
     def _context(self):
         t, m = self.turn, self.turn.memory
-        o = {k: v for k, v in t.obs.items() if k not in ("image_png_base64", "grid", "recent_actions")}
+        o = {k: v for k, v in t.obs.items() if k not in VISUAL_PAYLOAD_KEYS | {"grid", "recent_actions"}}
         context = {"observation": o, "observation_id": t.obs["observation_id"], "memory_revision": m.revision,
                 "attempt": m.attempt, "model_revision": m.model_revision,
                 "goal": m.goal, "facts": [f.model_dump() for f in m.facts.values()][-24:],
@@ -260,13 +302,19 @@ class CognitiveRuntime:
             self.initialized = True
         if self.log_dir:
             self.log_dir.mkdir(parents=True, exist_ok=True)
-            record = {k: v for k, v in obs.items() if k != "image_png_base64"}
+            record = {k: v for k, v in obs.items() if k not in VISUAL_PAYLOAD_KEYS}
             if obs.get("image_png_base64"):
                 frames_dir = self.log_dir / "frames"
                 frames_dir.mkdir(exist_ok=True)
                 frame_name = f"{self.session_id}-{obs['step']:05d}.png"
                 (frames_dir / frame_name).write_bytes(base64.b64decode(obs["image_png_base64"]))
                 record["image_path"] = "frames/" + frame_name
+            if obs.get("_visual_frames"):
+                archive_name = f"{self.session_id}-{obs['step']:05d}.json"
+                archive = {"frames": obs["_visual_frames"], "available_actions": obs["available_actions"],
+                           "cursor": obs["cursor"], **obs["animation"]}
+                (frames_dir / archive_name).write_text(json.dumps(archive))
+                record["animation_archive_path"] = "frames/" + archive_name
             with (self.log_dir / f"{self.session_id}.observations.jsonl").open("a") as log:
                 log.write(json.dumps(record) + "\n")
         self.turn = CognitiveTurn(self.memory, obs, max_calls=self.max_calls,

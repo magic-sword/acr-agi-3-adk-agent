@@ -24,8 +24,8 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(obs["grid"], [[8, 9]])
         self.assertEqual((obs["width"], obs["height"]), (2, 1))
         image = Image.open(io.BytesIO(base64.b64decode(obs["image_png_base64"])))
-        self.assertEqual(image.getpixel((0, 0)), (249, 60, 49))
-        self.assertEqual(image.getpixel((4, 0)), (30, 147, 255))
+        self.assertEqual(image.getpixel((32, 44)), (249, 60, 49))
+        self.assertEqual(image.getpixel((38, 44)), (30, 147, 255))
 
     def test_driver_budget_stops_without_extra_action(self):
         f = FrameDataRaw(frame=[np.asarray([[0]], dtype=np.int8)], state=GameState.NOT_FINISHED, available_actions=[1])

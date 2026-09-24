@@ -7,6 +7,8 @@ import json
 import time
 import uuid
 
+from agent.observation import VISUAL_PAYLOAD_KEYS
+
 from .state import Action, Memory, Pending, Perception, Proposal
 from .validation import all_true, evaluate, validate_action, validate_proposal
 
@@ -388,7 +390,7 @@ class CognitiveTurn:
                  "frame_hash": o.get("frame_hash"), "changed_cell_count": o.get("changed_cell_count"),
                  "levels_completed": o.get("levels_completed"), "game_state": o.get("state")}
         m.history = (m.history + [entry])[-64:]
-        m.last_observation = {k: v for k, v in o.items() if k not in ("image_png_base64", "recent_actions")}
+        m.last_observation = {k: v for k, v in o.items() if k not in VISUAL_PAYLOAD_KEYS | {"recent_actions"}}
         m.last_result = deepcopy(self.result)
         return self.result
 
