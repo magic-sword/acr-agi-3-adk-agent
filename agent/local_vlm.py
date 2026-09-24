@@ -167,7 +167,7 @@ class LocalVisionLlm(BaseLlm):
             budget_instruction = (f'{remaining} HTTP requests remain in this reasoning state. '
                 + ('Submit the completed result using the completion tool now. No further evidence lookups.'
                    if remaining == 1 and self.completion_tools else
-                   'Load at most two relevant skills; preserve requests for evidence and task completion.'))
+                   'Load specialist guidance only if needed; preserve requests for evidence and task completion.'))
             # Qwen's template reads only the first system message. Keep the full state contract there.
             if payload['messages'][0]['role'] == 'system':
                 payload['messages'][0]['content'] += '\n' + budget_instruction

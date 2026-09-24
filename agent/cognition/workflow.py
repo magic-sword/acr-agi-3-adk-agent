@@ -22,9 +22,11 @@ from agent.observation import VISUAL_PAYLOAD_KEYS, render_current, render_animat
 from agent.local_vlm import LocalVisionLlm, MAX_REQUESTS_PER_INVOCATION
 from .engine import CognitiveTurn, new_memory
 from .evidence import EvidenceStore
-from .skills import instruction, skill_toolset, selected_skills
+from .instructions import instruction
+from .skills import skill_toolset, selected_skills
 from .state import Memory, Interpretation, Proposal
 from .completion import CompletionTool, COMPLETION_TOOLS, submission_schema
+from .planning import PlanOrderTool
 
 APP_NAME = "arc_cognition"
 
@@ -67,14 +69,15 @@ class CognitiveRuntime:
         key = state
         if key not in self.agents:
             self.agents[key] = LlmAgent(
-                name=f"skill_{key.lower()}", include_contents="none",
+                name=f"reasoner_{key.lower()}", include_contents="none",
                 model=LocalVisionLlm(model="qwen3-vl-4b-instruct",
                                      api_base=os.getenv("VLM_API_BASE", "http://vlm:8080/v1"),
                                      max_output_tokens=1600 if state == "VERIFY" else 2400,
                                      timeout_seconds=90, completion_tools=(COMPLETION_TOOLS[state],)),
                 instruction=instruction(state, submission_schema(state)),
                 tools=[CompletionTool(self, state), skill_toolset(state), self.observe_current, self.list_observations,
-                       self.get_observation, self.compare_observations, self.move_cursor, self.observe_animation],
+                       self.get_observation, self.compare_observations, self.move_cursor, self.observe_animation,
+                       *([PlanOrderTool()] if state in ('PLAN', 'REVISE') else [])],
             )
         return self.agents[key]
 

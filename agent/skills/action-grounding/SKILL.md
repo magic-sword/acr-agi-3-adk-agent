@@ -1,23 +1,17 @@
 ---
 name: action-grounding
-description: "Operate the pictured controller using UP/DOWN/LEFT/RIGHT/ACT/UNDO, move the host cursor, and propose CLICK at its current position without specifying click coordinates."
+description: "Ground a planned input in the displayed controller, especially pixel CLICK targets and ambiguous directional controls; check that target selection matches the intended action."
 ---
-# Action Grounding (S12)
+# Grounding an intended action
 
-Use the button names printed in the current image and listed in `observation.available_actions`: `UP`, `DOWN`, `LEFT`, `RIGHT`, `ACT`, `CLICK`, `UNDO`. Dim buttons are unavailable. Directions identify controller inputs; actual game effects must be observed. RESET remains host-managed recovery.
+Use when choosing an input requires resolving a target or control interpretation.
 
-## Button presses
+1. Match the intended intervention to `observation.available_actions`. UP/DOWN/LEFT/RIGHT identify buttons, not proven object directions. ACT and UNDO effects also require evidence. Inspect earlier action/result pairs if the mapping is uncertain.
+2. For CLICK, locate the target in original board pixels: x is column, y is row, zero-based. Convert from the displayed board using `viewport.origin` and `viewport.scale`; padding and controller graphics are outside the game.
+3. Call `move_cursor(x, y)` to preview the target. Inspect the reticle and printed coordinates; adjust it if it covers the wrong region. Previewing does not click or produce an external observation.
+4. Use the nested action `{"action":"CLICK","reason":"..."}` without x/y. The host freezes the current cursor at action selection. A future CLICK node targets the cursor at execution, so do not queue clicks meant for several different targets. Reposition from a new observation for each target.
+5. For any input, state its predicted effect or the competing predictions being tested. Legal input alone is not a sufficient reason to choose it. An uncertain mapping may justify an experiment rather than a plan.
 
-The following is a NESTED action field, never the complete submission. In the completion tool arguments, use an action such as `{"action":"UP","reason":"test the up button"}`. Use the same shape in a plan node. Choose one legal external action per decision, with the required predicted effects or distinguishing experiment. Do not send internal ACTION numbers. `scripts/controls.py` maps displayed names to the engine at the validated execution boundary.
+A complete submission still uses the calling state's schema. The action shown here is only a nested field. Historical executed clicks contain x/y as evidence; those coordinates must not be copied as arguments into a new CLICK.
 
-## Move, inspect, click
-
-1. Call `move_cursor(x, y)` with integer **original game pixel** coordinates (x=column, y=row; zero-based). This moves only the host cursor and returns the current screen. It does not click, step the game, spend an external action, or create new evidence.
-2. Inspect the reticle and its printed coordinates. Adjust with `move_cursor` if necessary. `observe_current` reads the current frame and cursor again without replaying animation.
-3. Propose `{"action":"CLICK","reason":"click the visually checked target"}` within the requested contract. **Omit x and y.** The host resolves CLICK to the current cursor at action selection and records the concrete coordinates in the executed action. Missing/out-of-range cursors or unavailable CLICK are errors; no default target is invented.
-
-A planned CLICK means "click wherever the cursor is when this node executes". It does not remember a future target. Do not queue clicks intended for different targets; obtain a new observation and position the cursor for each target. Host history can contain concrete x/y for already executed clicks; those fields are evidence, not arguments for a new CLICK. Once selected, an external click's coordinates are fixed for that decision and are not changed by later cursor movement.
-
-Observation tools return views only. Submit the complete Proposal (observation_id, memory_revision, purpose, and experiment or plan) through the current completion tool, such as submit_experiment in PROBE; the host checks legality, preconditions and budgets before executing it once. If evidence is insufficient, report the specific unknown instead of choosing an arbitrary action.
-
-Read `references/evidence-contract.md` with `load_skill_resource` for evidence and prediction semantics.
+Example: a board is enlarged 6x with origin (32,44). A displayed center at (95,107) corresponds to original pixel (10,10), not (95,107). Preview the original coordinates before using the target.

@@ -14,7 +14,7 @@ from pathlib import Path
 
 # Support both packaged imports and direct CLI execution from any directory.
 if __package__ in (None, ''):
-    sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from agent.controls import ACTION_TO_BUTTON
 
 import numpy as np

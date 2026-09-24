@@ -64,7 +64,7 @@ The visual-observation skill renders the final received frame with an input cont
 Intermediate frames are **not automatically replayed** on each observation. `animation.event_id` identifies the completed transition and its source action. `list_observations` and `get_observation` retrieve retained evidence; `compare_observations` returns labeled before/after images and paginated pixel differences. The latest 128 observations are retained independently of logging. Cross-level/RESET comparisons are rejected. `observe_animation(event_id, start_frame)` retrieves four consecutive historical frames at a time from retained events, explicitly labeled as replay, without advancing game time. The local vision transport uses ordered PNG sheets, not animated GIF input. With `COGNITION_LOG_DIR` enabled, each source batch is saved as `frames/<run>-<step>.json`; explicit single-play GIF export is available with:
 
 ```bash
-python agent/skills/visual-observation/scripts/render_observation.py replay EVENT.json history.gif
+python agent/rendering.py replay EVENT.json history.gif
 ```
 
 Playback uses synthetic timing because the frame data has no duration information. Replaying a recorded lava flow does not mean lava is flowing again. Only the next external action returns new game evidence.
@@ -143,6 +143,6 @@ make status                    # inspect the Kaggle run
 
 If the Kaggle runtime changes its installed Google ADK version or competition dataset paths, rerun `make notebook` and inspect the generated cells before pushing. This repository follows the official [ARC-AGI-3 Kaggle Starter](https://github.com/arcprize/ARC-AGI-3-Kaggle-Starter) execution contract and uses the [Google ADK](https://adk.dev/) runtime.
 
-Native ADK skills now use `agent/skills/*/SKILL.md` and on-demand references through the local Qwen tool-call adapter. See [skill connection and checks](docs/adk-native-skills-ja.md).
+Thirteen optional reasoning skills use native ADK loaders with an inline name/description catalog and on-demand bodies/references. State instructions live in `agent/cognition/instructions.py`; commit, budgets, rendering and control translation belong to host code. See [skill connection and checks](docs/adk-native-skills-ja.md).
 
 Reasoning states finish through validated submission tools (`submit_plan`, `submit_revision`, `submit_experiment`, `submit_interpretation`). ADK can perform multiple evidence lookups before submission; Workflow retains routing and action execution. No separate final JSON response is required. `make visualize` also shows the state-to-completion-tool mapping.

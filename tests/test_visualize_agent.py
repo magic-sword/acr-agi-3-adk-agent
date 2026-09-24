@@ -34,11 +34,11 @@ class VisualizeAgentTests(unittest.TestCase):
             path = root / 'agent/cognition/workflow.py'
             path.write_text(path.read_text().replace('(recover, commit)', '(recover, verify, commit)'))
             path = root / 'agent/cognition/skills.py'
-            path.write_text(path.read_text().replace('"COMMIT": (),', '"COMMIT": ("S13",),'))
+            path.write_text(path.read_text().replace('"COMMIT": (),', '"COMMIT": ("S01",),'))
             data = extract(root)
             self.assertIn({'from': 'RECOVER', 'to': 'VERIFY', 'label': ''}, data['edges'])
             self.assertNotIn({'from': 'RECOVER', 'to': 'COMMIT', 'label': ''}, data['edges'])
-            self.assertEqual(data['effective_skills']['COMMIT'], ['S13'])
+            self.assertEqual(data['effective_skills']['COMMIT'], ['S01'])
 
     def test_unsupported_edges_fail_explicitly(self):
         with tempfile.TemporaryDirectory() as temp:

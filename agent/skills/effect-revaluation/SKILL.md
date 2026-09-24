@@ -1,13 +1,16 @@
 ---
 name: effect-revaluation
-description: "Keep causal effect separate from usefulness: an effect harmful earlier can now achieve the goal."
+description: "Reassess the usefulness of an established effect after the goal or layout changes, without confusing changed utility with changed physical dynamics."
 ---
-# Effect Revaluation (S11)
+# Revaluing a known effect
 
-1. Inspect the current observation and supplied memory. Identify evidence relevant to this skill.
-2. Keep causal effect separate from usefulness: an effect harmful earlier can now achieve the goal.
-3. Separate visible facts from hypotheses. Refer only to observation IDs supplied in the input.
-4. If evidence is insufficient, report a specific unknown or a distinguishing experiment; do not invent a fact.
-5. Call the current state's completion tool with the requested structured arguments. A skill must not directly execute game actions or modify budgets.
+Use when an operation that was avoided may now help, or a previously useful operation threatens a newly required condition.
 
-Read `references/evidence-contract.md` with `load_skill_resource` when checking evidence, coordinates or prediction semantics.
+1. State the established causal effect and its conditions independently of the goal. Check that the control/mode still matches the evidence; utility cannot rescue an unsupported causal claim.
+2. Compare that effect against the current goal, prerequisites and invariants. Identify which conditions it establishes and which it destroys, including effects on access and staging space.
+3. Compare alternatives that preserve more future options. An immediate gain can be worse if it makes a remaining prerequisite impossible. Include irreversibility and the evidence for any claimed recovery path.
+4. Change the plan when usefulness changes; revise a dynamics hypothesis only if the observed effect itself changed. Explain which goal/condition makes the old effect useful or harmful now.
+
+Example: pushing a block into a corridor previously obstructed travel. If the new subgoal is to stop a moving hazard, the same obstruction might become useful. This changes the planned use of the block, not the rule describing its motion. First verify that the obstruction affects the hazard as hypothesized.
+
+If the beneficial effect has never been observed, treat it as a new causal hypothesis and test it; do not promote desired usefulness into evidence.

@@ -1,23 +1,17 @@
 ---
 name: goal-inference
-description: "Treat success conditions as hypotheses. Visual completion is not WIN; consider missing or simultaneous conditions."
+description: "Infer or revise uncertain success conditions from outcome evidence, including relational, sequential and simultaneous goals when a plausible visual solution does not win."
 ---
-# Goal Inference (S05)
+# Inferring success conditions
 
-1. Inspect the current observation and supplied memory. Identify evidence relevant to this skill.
-2. Treat success conditions as hypotheses. Visual completion is not WIN; consider missing or simultaneous conditions.
-3. Separate visible facts from hypotheses. Refer only to observation IDs supplied in the input.
-4. If evidence is insufficient, report a specific unknown or a distinguishing experiment; do not invent a fact.
-5. Call the current state's completion tool with the requested structured arguments. A skill must not directly execute game actions or modify budgets.
+Use when the objective is unknown, several objectives fit the scene, or a seemingly completed objective has not produced success.
 
-Read `references/evidence-contract.md` with `load_skill_resource` when checking evidence, coordinates or prediction semantics.
+1. List plausible conditions suggested by evidence: occupancy of a region, alignment, a relation between objects, a sequence, or several conditions simultaneously. Visual salience or resemblance alone supplies a candidate, not a confirmed goal.
+2. Check past actions and level/outcome signals. Ask which candidate predicts an observation that another does not. Separate learning a control from learning the goal; unknown goals do not prevent a useful control experiment.
+3. If a plausible condition is visibly satisfied without WIN, consider a missing conjunct, wrong object identity, unobserved region or delayed completion. Do not immediately discard established dynamics.
+4. Choose a short plan if its next step is justified across remaining candidates. Otherwise formulate an inquiry or experiment targeting the condition that changes the next decision.
+5. Store a proposed condition in `interpretation.goal` with evidence. Omit goal to retain it; an empty goal with evidence withdraws it. A changed goal does not erase causal knowledge, although plans may become inappropriate.
 
-## Goal ownership
+Example: placing a token on a pad does not win. Candidate A requires any token; candidate B requires the matching token; candidate C also requires the exit to remain open. Inspect matching attributes and exit state before treating the pad as irrelevant.
 
-PLAN and REVISE consider goals as success conditions, which may be relations,
-configurations, sequences or simultaneous constraints rather than an object. OBSERVE
-never has to discover a goal. An unknown goal is valid: formulate an inquiry for PROBE
-if evidence is needed. Retrieve past screens/comparisons before revising an assumption.
-Store a proposed goal and its evidence_refs in Proposal.interpretation; use goal=""
-with evidence to withdraw an old goal. Omit goal to retain it. VERIFY can report evidence
-against an assumed condition; PLAN/REVISE use it to reconsider the objective.
+Only the environment's WIN confirms full completion. In VERIFY, report evidence about a stored condition; selecting a new objective belongs to PLAN/REVISE.

@@ -1,24 +1,17 @@
 ---
 name: prediction-verification
-description: "Compare predicted effects and invariants to real observations. Separate delayed, unobservable and contradicted effects."
+description: "Interpret an action outcome when delay, occlusion or intervening actions make predicted effects hard to verify; distinguish contradiction from unobservable evidence."
 ---
-# Prediction Verification (S03)
+# Interpreting predicted outcomes
 
-1. Inspect the current observation and supplied memory. Identify evidence relevant to this skill.
-2. Compare predicted effects and invariants to real observations. Separate delayed, unobservable and contradicted effects.
-3. Separate visible facts from hypotheses. Refer only to observation IDs supplied in the input.
-4. If evidence is insufficient, report a specific unknown or a distinguishing experiment; do not invent a fact.
-5. Call the current state's completion tool with the requested structured arguments. A skill must not directly execute game actions or modify budgets.
+Use when a pending or deferred action has effects or invariants whose meaning is not settled by direct measurements.
 
-Read `references/evidence-contract.md` with `load_skill_resource` when checking evidence, coordinates or prediction semantics.
+1. Start from the pending action's source observation, predicted effects, invariants and deadline. Compare it with the current observation; retrieve intermediate frames only if order matters.
+2. Examine each effect separately. A directly visible matching result supports it; an observable incompatible result contradicts it. A hidden region, missing baseline or unresolved delay leaves it unknown. Failure to observe an effect before its deadline is not automatically refutation.
+3. Check invariants independently from effects. Reaching a target while destroying a required support may satisfy one prediction and still invalidate the plan.
+4. Check intervening actions and mode/level boundaries. An observed outcome after multiple actions does not isolate which action caused it. A reset layout is not evidence for the previous action's effect.
+5. Supply current facts and an evidence-linked interpretation of supported/refuted assumptions. The host performs predicate evaluation and applies the review; avoid claiming that a changed screen establishes progress or WIN.
 
-## Evidence-driven VERIFY
+Example: a gate opens two actions after pressing a switch, but the second action also touches the gate. Report the open gate as a current fact. Keep switch-caused opening and contact-caused opening unresolved until a discriminating observation exists.
 
-OBSERVE only captures evidence. In VERIFY, retrieve the pending action's `observation_id`
-and the current ID using `compare_observations`; inspect `get_observation` or recorded
-animation when needed. More than one intervening action prevents attributing the whole
-change to a single action. Pixels changing in a status display do not prove target progress.
-Return Interpretation, including current facts, hypotheses/unknowns as warranted, and a
-short summary with evidence_refs. The host evaluates predicates using these facts and
-merges the validated review during UPDATE. Empty or ambiguous evidence may remain unknown.
-No pending action on the first frame means there is no previous outcome to verify.
+Do not propose a new action while serving VERIFY. A useful review identifies the failed assumption or the precise evidence still missing.

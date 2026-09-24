@@ -1,13 +1,17 @@
 ---
 name: hypothesis-maintenance
-description: "Maintain competing goal/control/dynamics/mode hypotheses, their scope, evidence and counterexamples. Support is not certainty."
+description: "Compare competing control, goal, dynamics or mode explanations; update only the claims actually supported or contradicted by an observation."
 ---
-# Hypothesis Maintenance (S04)
+# Maintaining competing explanations
 
-1. Inspect the current observation and supplied memory. Identify evidence relevant to this skill.
-2. Maintain competing goal/control/dynamics/mode hypotheses, their scope, evidence and counterexamples. Support is not certainty.
-3. Separate visible facts from hypotheses. Refer only to observation IDs supplied in the input.
-4. If evidence is insufficient, report a specific unknown or a distinguishing experiment; do not invent a fact.
-5. Call the current state's completion tool with the requested structured arguments. A skill must not directly execute game actions or modify budgets.
+Use when several explanations lead to different predictions or an observation challenges a stored claim.
 
-Read `references/evidence-contract.md` with `load_skill_resource` when checking evidence, coordinates or prediction semantics.
+1. Separate the claim into a testable relationship and its conditions: input, affected object, mode and observable result. Avoid combining goal, control mapping and dynamics in one hypothesis.
+2. Reuse an existing hypothesis ID when updating the same claim. Choose `level` scope for layout-dependent rules; use `game` scope only when evidence justifies transfer across layouts.
+3. Compare the alternatives' predictions against evidence that could distinguish them. A result shared by both is compatible with both and selects neither. A repeated view of one observation is not independent support.
+4. Set `supported` for observed support, `refuted` for an observable contradiction under the claim's conditions, and `suspended` when applicability has become uncertain. A single success is not certainty. Preserve unaffected claims.
+5. Keep only decision-relevant competitors in the bounded context. State the missing discriminator in unknowns or an inquiry. When a claim changes, explain the evidence; dependent plans may need repair.
+
+Example: UP moves an object left. Candidate explanations include a rotated control frame and control of another object. Testing UP again on the same ambiguous frame may support both. Observing a second distinguishable object's response or a second direction can separate them.
+
+Describe uncertainty in existing hypothesis fields and summaries; do not invent confidence fields or claim to edit committed memory directly.

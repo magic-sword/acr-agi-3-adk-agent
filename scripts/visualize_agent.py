@@ -103,6 +103,10 @@ def extract(root: Path) -> dict:
     tools = ast.unparse(next(k.value for k in llm.keywords if k.arg == 'tools'))
     completion_path = 'agent/cognition/completion.py'
     sources[completion_path] = (root / completion_path).read_text()
+    instruction_path = 'agent/cognition/instructions.py'
+    sources[instruction_path] = (root / instruction_path).read_text()
+    planning_path = 'agent/cognition/planning.py'
+    sources[planning_path] = (root / planning_path).read_text()
     completion_tree = ast.parse(sources[completion_path])
     completions = next(ast.literal_eval(n.value) for n in completion_tree.body
                        if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name)
@@ -204,6 +208,7 @@ def main():
     html = '<!doctype html><html lang="ja"><meta charset="utf-8"><title>Agent architecture</title><style>body{font:16px system-ui;margin:24px;background:#f8fafc;color:#172554}svg{width:100%;height:auto;min-width:900px}.diagram{overflow:auto}pre{overflow:auto;background:#e2e8f0;padding:16px}summary{cursor:pointer;padding:10px}td{padding:6px 20px}code{overflow-wrap:anywhere}</style>'
     html += '<h1>エージェントの構造とスキル接続</h1><p><code>make visualize</code>で最新ソースから再生成。青い点は利用可能なスキルで、実行済みを意味しません。モデルなしではLLMスキルは使いません。</p>'
     html += '<p>OBSERVEは記録のみ。VERIFY・PLAN・PROBE・REVISEは共通の過去観測・差分取得ツールを利用できます。CONSOLIDATEはエンジン内の呼び出しです。</p>'
+    html += '<p>状態の必須指示はinstructions.py、任意の専門手順はSKILL.mdです。スキル名・用途を初回に提示し、必要時だけ本文・資料を読みます。確定・予算制御・描画・操作変換はホストが担当します。</p>'
     html += '<h2>ステート完了ツール</h2><pre>'+escape(json.dumps(data['completion_tools'], ensure_ascii=False, indent=2))+'</pre>'
     html += '<div class="diagram">'+svg+'</div><h2>モデルに渡すツール（ソース抽出）</h2><pre>'+escape(data['model_tools'])+'</pre>'
     html += '<h2>遷移一覧</h2><table>'+edge_rows+'</table><h2>分岐条件・各ステートの処理（現在のソース）</h2>'+details

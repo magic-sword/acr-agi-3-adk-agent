@@ -2,13 +2,15 @@
 
 更新日: 2026-09-24。[設計](adk-cognitive-state-machine-ja.md)と[スキル仕様](adk-cognitive-skills-ja.md)に基づく初期実装。実行基盤と検証付きの認知ループを実装した。人間並みの推論能力や未見ゲームの解決性能を実証した段階ではない。
 
-最新の[完了ツールへの変更と検証結果](local-evaluation-completion-tools-ja.md)では、全78テストと実モデルによる実験提出・1操作の実行を確認した。
+完了ツール導入時の[変更と検証結果](local-evaluation-completion-tools-ja.md)では、全78テストと実モデルによる実験提出・1操作の実行を確認した。
+
+現在のスキル構成は[責務と接続仕様](adk-native-skills-ja.md)、85件の回帰テストと実モデルの結果は[再設計の検証記録](local-evaluation-skill-redesign-ja.md)を参照。状態別指示を独立させ、未接続のスクリプト実行ツールと重複資料を除去した。
 
 ## 実装した動作
 
 - Google ADK **2.0.0の実際のWorkflow**でOBSERVE→VERIFY→UPDATEを実行し、コードのガードでREVISE／PROBE／PLAN／ACT／RECOVERを選択する。COMMITだけがセッションの認知記憶を更新する。
 - 1ゲーム実行につきRuntime・イベントループ・Runner・SessionServiceを維持する。ゲームごとの実行IDと記憶を分離し、毎手セッションを作り直さない。
-- モデルには状態別のスキル指示・JSON契約・必要な記憶だけを渡す。ローカルモデルとのツール往復で証拠を取得する。15スキルのうち検証・保存・予算管理は主にPythonが担当する。
+- モデルには状態別の必須指示・JSON契約・必要な記憶を渡す。ローカルモデルとのツール往復で証拠を取得する。任意の専門スキルは13個。検証・保存・予算管理はPythonが担当し、スキルに数えない。
 - OBSERVEは推論せず証拠を保存。VERIFYで前後の結果を解釈し、PLAN／REVISEで目標条件と次の手を検討する。目標やunknownsの有無だけで探索へ固定しない。
 - 観測事実、不可視になった記憶、目標、適用範囲付きの仮説、計画、行動結果待ち、遅延予測を別管理する。作用の仮説は目標の変更だけでは消さない。
 - 計画は依存関係、前提条件、完了条件、維持条件、共同効果、実行可能なstep区間を持つ。未観測の前提を成立扱いにせず、1手ずつ実行して再検証する。
@@ -27,7 +29,10 @@
 |`agent/cognition/state.py`|Pydanticの入出力・記憶契約|
 |`agent/cognition/engine.py`|境界、検証、記憶更新、計画選択・無効化、保存の判断|
 |`agent/cognition/workflow.py`|ADKグラフ、モデル呼出し、セッション寿命、診断ログ|
-|`agent/cognition/skills.py`|状態別のスキルレジストリとプロンプト|
+|`agent/cognition/instructions.py`|状態別の必須指示・提出契約|
+|`agent/cognition/skills.py`|任意スキルのレジストリ・L1提示・標準ロードツールの公開|
+|`agent/rendering.py` / `agent/controls.py`|ホストの画像描画・操作名変換|
+|`agent/cognition/planning.py`|仮定に基づく操作順の前提・効果・最終条件の純粋な検査|
 |`agent/cognition/validation.py`|JSON解析、参照・循環・操作の検証、三値の述語評価|
 |`agent/adk_policy.py`|ゲーム単位のRuntime生成と同期API|
 |`agent/my_agent.py`|フレーム変換、1操作の配送、無操作での停止|
@@ -69,7 +74,7 @@ COGNITION_LOG_DIR=outputs/cognition make eval-model GAME=ls20 STEPS=20
 
 基本的な長期計画はモデルが提案する部分目標グラフで実装した。条件分岐は前提条件による実行可否と再計画で表す。専用の記号探索器、厳密な同時実行制約のソルバ、実時間進行の位相推定はまだ追加していない。現在の時間制約は外部操作step単位。
 
-CONSOLIDATEは、達成確認が得られた手順と維持条件を同一ゲームの候補として保存し、計画への参考入力にする。ゲーム横断のパラメータ化した手順獲得や自動昇格は未実装。ネイティブ`SkillToolset`への接続とモデルアダプタのツール往復を実装済み。S01〜S15は`agent/skills/`の`SKILL.md`と`references/`に収録し、状態ごとに登録する。[接続仕様と検証](adk-native-skills-ja.md)。
+CONSOLIDATEは、達成確認が得られた手順と維持条件を同一ゲームの候補として保存し、計画への参考入力にする。ゲーム横断のパラメータ化した手順獲得や自動昇格は未実装。ネイティブ`SkillToolset`への接続とモデルアダプタのツール往復を実装済み。S01〜S12・S14の13手順を`agent/skills/`に収録し、状態ごとに登録する。S13/S15はホスト責務へ分類し直した。[接続仕様と検証](adk-native-skills-ja.md)。
 
 OBSERVEはモデルを呼ばない。初回は結果照合対象がなくVERIFYもモデルを呼ばない。通常は結果待ちまたは計画があればVERIFYが1判断行い、有効な計画はACTへ進む。認識を省いてよい条件を適応的に選ぶ最適化は今後の課題。
 
@@ -82,7 +87,7 @@ OBSERVEはモデルを呼ばない。初回は結果照合対象がなくVERIFY�
 - 観測履歴は128件まで一時ディスクに保存し、終了時に削除。過去画像と途中フレームを取得でき、比較は96画素差分ずつページングする。レベル・RESET境界の比較は拒否。
 - VERIFYの解釈は検証後にUPDATEで反映。PLAN／PROBE／REVISEの解釈は提案と一緒に検証し、失敗時は取り消す。
 - goalは達成条件の仮説。省略で保持、空文字と証拠で撤回。未知を残した計画も許容し、具体的なinquiryだけをPROBEへ渡す。
-- ツール読込は関連する最大2スキルを選ぶよう指示。各判断の最後のHTTP枠を回答に予約する。
+- スキル名・用途は初回に提示し、必要時だけ本文と固有資料を読む。ロードは必須ではない。各判断の最後のHTTP枠を提出に予約する。
 - 診断ログの観測にも正規化後のobservation_idを記録し、判断の証拠IDと画像を対応付ける。
 
 現在の評価結果は[リファクタ検証記録](local-evaluation-cognitive-refactor-ja.md)を参照。

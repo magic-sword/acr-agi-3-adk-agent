@@ -1,9 +1,8 @@
-"""Shared host interface to the visual-observation skill's renderer."""
+"""Visual evidence assembly using the deterministic host renderer."""
 import hashlib
-from importlib import import_module
+from . import rendering as _renderer
 import json
 
-_renderer = import_module('agent.skills.visual-observation.scripts.render_observation')
 frame_image = _renderer.frame_image
 render_current = _renderer.render_current
 render_animation_page = _renderer.render_animation_page
