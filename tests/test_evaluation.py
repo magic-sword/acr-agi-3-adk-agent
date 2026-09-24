@@ -58,7 +58,9 @@ class EvaluationReports(unittest.TestCase):
             turns = [{'trace': ['PROBE', 'ACT'], 'action': {'status': 'action', 'action': 'ACTION1'},
                       'frame_hash': 'same', 'errors': [], 'verification': [], 'decision_seconds': 3}] * 2
             (root / 'run.jsonl').write_text('\n'.join(map(json.dumps, turns)))
-            calls = [{'schema_valid': True, 'seconds': 2, 'usage': {'prompt_tokens': 8, 'completion_tokens': 2}},
+            calls = [{'schema_valid': True, 'seconds': 2, 'usage': {'prompt_tokens': 8, 'completion_tokens': 2},
+                      'http_requests': 2, 'exchanges': [{'response': {'tool_calls': [
+                          {'function': {'name': 'load_skill'}}]}}]},
                      {'error': 'invalid JSON', 'seconds': 4}]
             (root / 'run.model.jsonl').write_text('\n'.join(map(json.dumps, calls)))
             (root / 'run.observations.jsonl').write_text('{}\n')
@@ -68,6 +70,8 @@ class EvaluationReports(unittest.TestCase):
             self.assertEqual(result['unchanged_action_repeats'], 1)
             self.assertEqual(result['model_latency_p50'], 3)
             self.assertEqual(result['tokens']['prompt_tokens'], 8)
+            self.assertEqual(result['model_http_requests'], 3)
+            self.assertEqual(result['skill_tool_calls'], {'load_skill': 1})
             self.assertTrue(result['hints'])
 
     def test_hard_timeout_counts_acknowledged_actions_not_planned_actions(self):

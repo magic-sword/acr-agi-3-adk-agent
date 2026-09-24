@@ -82,3 +82,5 @@ docker compose run --rm --no-deps dev python scripts/benchmark_local.py \
 6. モデル呼出しのp50/p95とトークン数を見て、操作数を増やす前に推論費用が予算を消費していないか確認する。
 
 自動生成の改善ヒントはログ上の兆候であり、因果分析や正解ルールの推定ではない。初回の結果を基準として保存し、改善後も同じ公開ゲーム・上限で比較する。
+
+ネイティブスキル接続後は、`model_calls`を状態判断の呼び出し数、`model_http_requests`をスキル読み込みを含むHTTP往復数として区別する。`skill_tool_calls`でスキルツールの要求数、各判断の`exchanges`で生応答とツール結果を確認できる。[接続仕様](adk-native-skills-ja.md)。

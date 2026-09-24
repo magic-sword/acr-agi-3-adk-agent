@@ -40,7 +40,7 @@ def start(bundle: Path) -> subprocess.Popen:
         "--mmproj", str(bundle / PROJECTOR),
         "--alias", "qwen3-vl-4b-instruct",
         "--host", "127.0.0.1", "--port", "8080",
-        "--n-gpu-layers", "99", "--ctx-size", "16384", "--parallel", "1",
+        "--n-gpu-layers", "99", "--ctx-size", "16384", "--parallel", "1", "--jinja",
     ]
     with Path("/kaggle/working/llama-server.log").open("w") as log:
         return subprocess.Popen(command, env=env, stdout=log,

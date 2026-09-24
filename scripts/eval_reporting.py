@@ -44,6 +44,12 @@ def diagnostics(directory: Path) -> dict:
     tokens = {key: sum((c.get('usage') or {}).get(key, 0) for c in calls)
               for key in ('prompt_tokens', 'completion_tokens', 'total_tokens')}
     measured_usage = sum(isinstance(c.get('usage'), dict) for c in calls)
+    http_requests = sum(c.get('http_requests', 1) for c in calls)
+    skill_calls = Counter(
+        call['function']['name'] for c in calls for exchange in c.get('exchanges', [])
+        for call in exchange.get('response', {}).get('tool_calls', [])
+        if call.get('function', {}).get('name') in
+        ('list_skills', 'load_skill', 'load_skill_resource', 'run_skill_script'))
     latency = [c['seconds'] for c in calls if 'seconds' in c]
     errors = [error for t in turns for error in t.get('errors', [])]
     perceptions = []
@@ -78,6 +84,7 @@ def diagnostics(directory: Path) -> dict:
         hints.append('JSON型検証後の意味・操作検証エラーあり。判断ログerrorsとmodel.jsonlを照合。')
     return {
         'model_calls': len(calls), 'schema_valid_calls': valid,
+        'model_http_requests': http_requests, 'skill_tool_calls': dict(skill_calls),
         'schema_valid_rate': valid / len(calls) if calls else None,
         'model_seconds': sum(latency), 'model_latency_p50': percentile(latency, .5),
         'model_latency_p95': percentile(latency, .95),

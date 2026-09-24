@@ -183,7 +183,7 @@
 
 ## 実装時のパッケージとプロンプト
 
-最初は各スキルを`instruction.md`、入出力モデル、validator、少数の開発用例で構成し、ホストの状態レジストリがロードする。ネイティブADKスキルへ移す場合は指示を`SKILL.md`、補助資料を`references/`等へ包装する。モデルアダプタのツール対応を先に確認する。
+S01〜S15は`agent/skills/<name>/SKILL.md`と`references/evidence-contract.md`に収録する。ホストが状態に対応したSkillToolsetを登録し、モデルが一覧→本文→必要な参照資料の順にロードする。入力・出力モデルとvalidatorはホストに保持する。[接続仕様と検証](adk-native-skills-ja.md)。
 
 共通プロンプトの骨格:
 

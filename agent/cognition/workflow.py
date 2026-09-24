@@ -17,9 +17,9 @@ from google.adk.sessions import InMemorySessionService
 from google.adk.workflow import node
 from google.genai import types
 
-from agent.local_vlm import LocalVisionLlm
+from agent.local_vlm import LocalVisionLlm, MAX_REQUESTS_PER_INVOCATION
 from .engine import CognitiveTurn, new_memory
-from .skills import instruction
+from .skills import instruction, skill_toolset
 from .state import Memory, Perception, Proposal
 from .validation import parse_json
 
@@ -65,6 +65,7 @@ class CognitiveRuntime:
                                      max_output_tokens=1600 if state == "OBSERVE" else 2400,
                                      timeout_seconds=90),
                 instruction=instruction(state, schema.model_json_schema()),
+                tools=[skill_toolset(state)],
             )
         return self.agents[state]
 
@@ -101,6 +102,7 @@ class CognitiveRuntime:
         elif t.obs.get("grid") is not None:
             parts.append(types.Part(text="Current color-ID grid: " + json.dumps(t.obs["grid"], separators=(",", ":"))))
         agent = self._agent(state)
+        agent.model.begin_invocation()
         agent.model.timeout_seconds = max(1, min(90, int(t.time_left())))
         started = time.monotonic()
         record = {"observation_id": t.obs["observation_id"], "step": t.obs["step"],
@@ -122,6 +124,9 @@ class CognitiveRuntime:
             record["error"] = f"{type(exc).__name__}: {exc}"
             raise
         finally:
+            record.update(agent.model._last_metrics)
+            record['exchanges'] = agent.model._exchanges
+            record['http_requests'] = len(agent.model._exchanges)
             record["seconds"] = time.monotonic() - started
             if self.log_dir:
                 self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -262,7 +267,7 @@ class CognitiveRuntime:
         message = types.Content(role="user", parts=[types.Part(text=f'Observe external step {obs.get("step")}')])
         async for _ in self.runner.run_async(user_id="player", session_id=self.session_id,
                                              new_message=message,
-                                             run_config=RunConfig(max_llm_calls=self.max_calls)):
+                                             run_config=RunConfig(max_llm_calls=self.max_calls * MAX_REQUESTS_PER_INVOCATION)):
             pass
         session = await self.service.get_session(app_name=APP_NAME, user_id="player", session_id=self.session_id)
         self.memory = Memory.model_validate(session.state["cognition"])

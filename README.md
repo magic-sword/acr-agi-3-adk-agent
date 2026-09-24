@@ -106,3 +106,5 @@ make status                    # inspect the Kaggle run
 `make push` uploads a Notebook version after the model dataset exists under the configured slug. After its Save & Run completes, manually select `submission.parquet` in Kaggle's **Submit to Competition** UI to trigger the hidden rerun. The Notebook is generated from the agent sources, writes a placeholder parquet only during Save & Run, and uses Qwen3-VL during the competition rerun. Generated `notebooks/submission.ipynb`, credentials, caches, and the vendored framework are ignored by Git.
 
 If the Kaggle runtime changes its installed Google ADK version or competition dataset paths, rerun `make notebook` and inspect the generated cells before pushing. This repository follows the official [ARC-AGI-3 Kaggle Starter](https://github.com/arcprize/ARC-AGI-3-Kaggle-Starter) execution contract and uses the [Google ADK](https://adk.dev/) runtime.
+
+Native ADK skills now use `agent/skills/*/SKILL.md` and on-demand references through the local Qwen tool-call adapter. See [skill connection and checks](docs/adk-native-skills-ja.md).

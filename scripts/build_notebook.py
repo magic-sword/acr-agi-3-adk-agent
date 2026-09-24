@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "notebooks" / "submission.ipynb"
 METADATA = ROOT / "notebooks" / "kernel-metadata.json"
 SOURCES = {str(p.relative_to(ROOT)): p for p in sorted((ROOT / "agent").rglob("*.py"))}
+SOURCES.update({str(p.relative_to(ROOT)): p for p in sorted((ROOT / "agent/skills").rglob("*.md"))})
 SOURCES.update({
     "scripts/wait_model.py": ROOT / "scripts" / "wait_model.py",
     "agents/templates/my_agent.py": ROOT / "agent" / "my_agent.py",
