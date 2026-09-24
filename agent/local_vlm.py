@@ -94,7 +94,7 @@ class LocalVisionLlm(BaseLlm):
                     if response.parts:
                         raise ValueError('Multimodal function responses are not supported')
                     result = dict(response.response or {})
-                    if response.name in {'observe_current', 'move_observation_cursor', 'observe_animation'}:
+                    if response.name in {'observe_current', 'move_cursor', 'move_observation_cursor', 'observe_animation'}:
                         encoded = result.pop('_image_png_base64', None)
                         if encoded:
                             visual_results.extend([

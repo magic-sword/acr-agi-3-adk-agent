@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from agent.controls import ground_button
 from .state import Action, Predicate, Proposal, Memory
 
 
@@ -29,6 +30,7 @@ def parse_json(text: str) -> dict:
 
 def validate_action(raw: dict | Action, obs: dict, *, reset: bool = False) -> Action:
     value = raw.model_dump() if isinstance(raw, Action) else dict(raw)
+    value = ground_button(value, obs)
     name = value.get("action")
     if type(name) is int:
         name = str(name)

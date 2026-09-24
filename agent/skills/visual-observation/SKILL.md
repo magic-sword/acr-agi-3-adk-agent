@@ -8,8 +8,8 @@ The host attaches the **final received frame**, rendered by `scripts/render_obse
 
 - Use `observe_current` to inspect the final frame again. Repeated reads do not advance the game or create new evidence.
 - Coordinates are original pixels: x is column, y is row, zero-based. `viewport` gives the board origin and integer scale in the composed image. Never use controller/padding coordinates as click coordinates.
-- Use `move_observation_cursor(x, y)` to preview a target without clicking. Inspect the returned reticle and its printed coordinates; adjust if necessary. The reticle center is the target. Its overlay can obscure neighbors, so use the grid or move it away for inspection. The eventual ACTION6 proposal still requires explicit integer x,y; copy the verified cursor position when targeting it. This tool spends no external action and does not prove a click occurred.
-- Controller arrows describe conventional input buttons (UP/DOWN/LEFT/RIGHT); ACTION5 is an action button, ACTION6 click, ACTION7 undo. Dim controls are unavailable. The game's actual response to any button requires evidence; do not assume an object will move in that direction.
+- Use `move_cursor(x, y)` to preview a target without clicking. Inspect the returned reticle and its printed coordinates; adjust if necessary. The reticle center is the target. Its overlay can obscure neighbors, so use the grid or move it away for inspection. Propose CLICK without x/y to click at the verified current cursor position. This tool spends no external action and does not prove a click occurred.
+- Controller arrows describe conventional input buttons (UP/DOWN/LEFT/RIGHT); ACT is an action button, CLICK uses the cursor, and UNDO is the undo input. Dim controls are unavailable. The game's actual response to any button requires evidence; do not assume an object will move in that direction.
 
 ## Historical animation, requested separately
 

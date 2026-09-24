@@ -92,7 +92,7 @@ class VisualObservationTests(unittest.TestCase):
         def respond(model, payload):
             payloads.append(payload)
             n = len(payloads)
-            calls = [('move_observation_cursor', {'x': 12, 'y': 35}),
+            calls = [('move_cursor', {'x': 12, 'y': 35}),
                      ('observe_animation', {'event_id': obs['animation']['event_id']}),
                      ('observe_current', {})]
             if n <= len(calls):
@@ -108,7 +108,7 @@ class VisualObservationTests(unittest.TestCase):
                     reply.update(facts=[], unknowns=['goal'], goal='finish')
                 else:
                     reply.update(purpose='plan', plan=[{'id': 'go', 'subgoal': 'finish',
-                        'action': {'action': 'ACTION1'}, 'completion': [{'kind': 'state', 'value': 'WIN'}],
+                        'action': {'action': 'CLICK'}, 'completion': [{'kind': 'state', 'value': 'WIN'}],
                         'effects': [{'kind': 'state', 'value': 'WIN'}]}])
                 message = {'content': json.dumps(reply)}
             return {'choices': [{'message': message}]}
@@ -117,8 +117,9 @@ class VisualObservationTests(unittest.TestCase):
             runtime = CognitiveRuntime('visual', 'local/qwen3-vl-4b-instruct', log_dir=tmp)
             self.addCleanup(runtime.close)
             result = runtime.decide(obs)
-            self.assertEqual(result['action'], 'ACTION1')
+            self.assertEqual((result['action'], result['x'], result['y']), ('ACTION6', 12, 35))
             self.assertEqual(runtime.cursor, {'x': 12, 'y': 35})
+            self.assertEqual(runtime._context()['observation']['available_actions'], ['UP', 'CLICK'])
             self.assertNotIn('_visual_frames', runtime.memory.last_observation)
             archive = next((Path(tmp) / 'frames').glob('*.json'))
             self.assertEqual(json.loads(archive.read_text())['frames'], obs['_visual_frames'])

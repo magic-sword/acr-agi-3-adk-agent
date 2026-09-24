@@ -50,6 +50,14 @@ def selected_skills(state: str, proposal_state: str | None = None) -> tuple[str,
 
 def instruction(state: str, schema: dict) -> str:
     import json
+    from copy import deepcopy
+    schema = deepcopy(schema)
+    # Model-facing clicks have one coordinate source: the host cursor.
+    action_schema = schema.get('$defs', {}).get('Action', {})
+    for field in ('x', 'y'):
+        action_schema.get('properties', {}).pop(field, None)
+    if 'action' in action_schema.get('properties', {}):
+        action_schema['properties']['action']['enum'] = ['UP', 'DOWN', 'LEFT', 'RIGHT', 'ACT', 'CLICK', 'UNDO']
     return (
         "You solve an unknown visual game. Return ONE JSON object, no prose. "
         "Use only supplied observations, memory and legal actions. Never invent an observed result. "
@@ -59,12 +67,16 @@ def instruction(state: str, schema: dict) -> str:
         "Load references with load_skill_resource only when needed. Do not repeatedly load unchanged resources. "
         "Only the final answer must be JSON; intermediate function calls are allowed. "
         "The attached image is the current final frame with a host cursor/controller. "
-        "observe_current re-reads it; move_observation_cursor previews original x,y without clicking. "
+        "observe_current re-reads it; move_cursor previews original x,y without clicking. "
         "observe_animation retrieves explicitly labeled historical frames only when needed; replay never advances time. "
+        "Use the visible controller names UP, DOWN, LEFT, RIGHT, ACT, CLICK, UNDO in action.action. "
+        "Choose only available buttons. CLICK takes no x/y: the host clicks the current cursor position. "
+        "Move the cursor with move_cursor(x,y), inspect its image, then propose CLICK. "
+        "Cursor movement is not a game action. Button directions identify inputs, not proven game effects. "
         + "\nRequired JSON shape examples (replace IDs with input IDs; infer your own facts/actions): "
         + ('{"observation_id":"COPY_INPUT_ID","memory_revision":0,"facts":[],"unknowns":["control mapping"],"goal":"","hypotheses":[]}'
            if state == "OBSERVE" else
-           '{"observation_id":"COPY_INPUT_ID","memory_revision":0,"purpose":"probe","action":{"action":"ACTION1","reason":"test control"},"experiment":{"question":"Does this control visibly change the board?","alternatives":{"changes":[{"kind":"frame_changed","value":true}],"unchanged":[{"kind":"frame_changed","value":false}]},"discriminator":"compare consecutive real frames","risk":"unknown side effects"}}')
+           '{"observation_id":"COPY_INPUT_ID","memory_revision":0,"purpose":"probe","action":{"action":"UP","reason":"test control"},"experiment":{"question":"Does this control visibly change the board?","alternatives":{"changes":[{"kind":"frame_changed","value":true}],"unchanged":[{"kind":"frame_changed","value":false}]},"discriminator":"compare consecutive real frames","risk":"unknown side effects"}}')
         + "\nDo not return empty observation analysis: report visible relations and specific important unknowns. "
         "experiment.alternatives is an OBJECT whose named values are ARRAYS of predicate objects, never a flat array or single predicate. "
         + "\nPredicates: cell uses x,y and integer color ID; fact uses key,value of a currently visible fact; "

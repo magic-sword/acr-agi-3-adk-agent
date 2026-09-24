@@ -1,13 +1,23 @@
 ---
 name: action-grounding
-description: "Ground one action against current legal controls, coordinates and observed preconditions. No arbitrary fallback or RESET."
+description: "Operate the pictured controller using UP/DOWN/LEFT/RIGHT/ACT/UNDO, move the host cursor, and propose CLICK at its current position without specifying click coordinates."
 ---
 # Action Grounding (S12)
 
-1. Inspect the current observation and supplied memory. Identify evidence relevant to this skill.
-2. Ground one action against current legal controls, coordinates and observed preconditions. No arbitrary fallback or RESET.
-3. Separate visible facts from hypotheses. Refer only to observation IDs supplied in the input.
-4. If evidence is insufficient, report a specific unknown or a distinguishing experiment; do not invent a fact.
-5. Return the requested state's JSON contract. A skill must not directly execute game actions or modify budgets.
+Use the button names printed in the current image and listed in `observation.available_actions`: `UP`, `DOWN`, `LEFT`, `RIGHT`, `ACT`, `CLICK`, `UNDO`. Dim buttons are unavailable. Directions identify controller inputs; actual game effects must be observed. RESET remains host-managed recovery.
 
-Read `references/evidence-contract.md` with `load_skill_resource` when checking evidence, coordinates or prediction semantics.
+## Button presses
+
+In the requested proposal contract, use an action such as `{"action":"UP","reason":"test the up button"}`. Use the same shape in a plan node. Choose one legal external action per decision, with the required predicted effects or distinguishing experiment. Do not send internal ACTION numbers. `scripts/controls.py` maps displayed names to the engine at the validated execution boundary.
+
+## Move, inspect, click
+
+1. Call `move_cursor(x, y)` with integer **original game pixel** coordinates (x=column, y=row; zero-based). This moves only the host cursor and returns the current screen. It does not click, step the game, spend an external action, or create new evidence.
+2. Inspect the reticle and its printed coordinates. Adjust with `move_cursor` if necessary. `observe_current` reads the current frame and cursor again without replaying animation.
+3. Propose `{"action":"CLICK","reason":"click the visually checked target"}` within the requested contract. **Omit x and y.** The host resolves CLICK to the current cursor at action selection and records the concrete coordinates in the executed action. Missing/out-of-range cursors or unavailable CLICK are errors; no default target is invented.
+
+A planned CLICK means "click wherever the cursor is when this node executes". It does not remember a future target. Do not queue clicks intended for different targets; obtain a new observation and position the cursor for each target. Host history can contain concrete x/y for already executed clicks; those fields are evidence, not arguments for a new CLICK. Once selected, an external click's coordinates are fixed for that decision and are not changed by later cursor movement.
+
+The tools return views only. Your final JSON proposes the external action; the host checks legality, preconditions and budgets before executing it once. If evidence is insufficient, report the specific unknown instead of choosing an arbitrary action.
+
+Read `references/evidence-contract.md` with `load_skill_resource` for evidence and prediction semantics.

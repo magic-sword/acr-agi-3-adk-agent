@@ -9,7 +9,13 @@ import argparse
 import base64
 import io
 import json
+import sys
 from pathlib import Path
+
+# Support both packaged imports and direct CLI execution from any directory.
+if __package__ in (None, ''):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
+from agent.controls import ACTION_TO_BUTTON
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -64,17 +70,17 @@ def render_current(frame, available_actions, cursor=None, *, label='CURRENT: fin
     for color, radius in [('black', 9), ('white', 7)]:
         d.ellipse((cx-radius, cy-radius, cx+radius, cy+radius), outline=color, width=2)
     d.text((panel, 32), 'CONTROLLER (host UI)', fill='white')
-    buttons = [('RESET', 'RESET', 196, 65), ('ACTION1', 'UP', 82, 65), ('ACTION3', 'LEFT', 0, 125),
-               ('ACTION2', 'DOWN', 82, 185), ('ACTION4', 'RIGHT', 164, 125),
-               ('ACTION5', 'A / ACT', 0, 250), ('ACTION6', 'CLICK', 98, 250),
-               ('ACTION7', 'UNDO', 196, 250)]
-    for action, title, x, y in buttons:
+    buttons = [('RESET', 196, 65), ('ACTION1', 82, 65), ('ACTION3', 0, 125),
+               ('ACTION2', 82, 185), ('ACTION4', 164, 125),
+               ('ACTION5', 0, 250), ('ACTION6', 98, 250),
+               ('ACTION7', 196, 250)]
+    for action, x, y in buttons:
         x += panel
         enabled = action in available_actions
         d.rounded_rectangle((x, y, x+88, y+50), radius=9,
                             fill='#356384' if enabled else '#30353c', outline='white' if enabled else '#666666')
-        d.text((x+6, y+7), title, fill='white' if enabled else '#888888')
-        d.text((x+6, y+29), action, fill='white' if enabled else '#888888')
+        d.text((x+6, y+7), ACTION_TO_BUTTON[action], fill='white' if enabled else '#888888')
+        d.text((x+6, y+29), 'button', fill='white' if enabled else '#888888')
         if action in ('ACTION1', 'ACTION2', 'ACTION3', 'ACTION4'):
             # Directional silhouettes supplement textual labels.
             dx, dy = {'ACTION1': (0,-1), 'ACTION2': (0,1), 'ACTION3': (-1,0), 'ACTION4': (1,0)}[action]

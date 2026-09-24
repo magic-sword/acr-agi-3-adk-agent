@@ -17,6 +17,7 @@ from google.adk.sessions import InMemorySessionService
 from google.adk.workflow import node
 from google.genai import types
 
+from agent.controls import controller_context
 from agent.observation import VISUAL_PAYLOAD_KEYS, render_current, render_animation_page, png_base64, validate_cursor
 from agent.local_vlm import LocalVisionLlm, MAX_REQUESTS_PER_INVOCATION
 from .engine import CognitiveTurn, new_memory
@@ -69,7 +70,7 @@ class CognitiveRuntime:
                                      timeout_seconds=90),
                 instruction=instruction(state, schema.model_json_schema()),
                 tools=[skill_toolset(state, proposal_state), self.observe_current,
-                       self.move_observation_cursor, self.observe_animation],
+                       self.move_cursor, self.observe_animation],
             )
         return self.agents[key]
 
@@ -77,10 +78,11 @@ class CognitiveRuntime:
         """Read the final received game frame with cursor/controller. Never replay history or advance time."""
         o = self.turn.obs
         return {"observation_id": o["observation_id"], "view": "current_final_frame",
-                "cursor": o.get("cursor"), "animation": o.get("animation"),
+                "cursor": o.get("cursor"), "animation": controller_context(o.get("animation")),
+                "available_buttons": controller_context({"available_actions": o.get("available_actions", [])})["available_actions"],
                 "_image_png_base64": o.get("image_png_base64")}
 
-    def move_observation_cursor(self, x: int, y: int) -> dict:
+    def move_cursor(self, x: int, y: int) -> dict:
         """Preview a host cursor at original game pixel x,y; does NOT click or advance the game."""
         o = self.turn.obs
         if not o.get("_visual_frames"):
@@ -92,6 +94,10 @@ class CognitiveRuntime:
         self.cursor = o["cursor"] = cursor
         o["image_png_base64"] = png_base64(render_current(o["_visual_frames"][-1], o["available_actions"], cursor))
         return self.observe_current()
+
+    def move_observation_cursor(self, x: int, y: int) -> dict:
+        """Compatibility alias for callers of the earlier observation interface."""
+        return self.move_cursor(x, y)
 
     def observe_animation(self, event_id: str, start_frame: int = 0) -> dict:
         """Read up to four ordered HISTORICAL frames for this recorded event; never a live observation.
@@ -108,7 +114,7 @@ class CognitiveRuntime:
         except ValueError as exc:
             return {"error": str(exc)}
         return {"observation_id": o["observation_id"], "view": "historical_replay_not_live",
-                "event": event, "start_frame": start_frame, "next_start_frame": next_frame,
+                "event": controller_context(event), "start_frame": start_frame, "next_start_frame": next_frame,
                 "cursor_is_present_day_overlay": True, "time_advanced": False,
                 "_image_png_base64": png_base64(sheet)}
 
@@ -131,7 +137,7 @@ class CognitiveRuntime:
                 context[key] = []
         if len(json.dumps(context)) > 24000:
             raise ValueError("structured context exceeds budget")
-        return context
+        return controller_context(context)
 
     async def _ask(self, ctx: Context, state: str, proposal_state: str | None = None):
         t = self.turn
