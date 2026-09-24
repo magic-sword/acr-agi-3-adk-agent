@@ -75,6 +75,7 @@ class MyAgent(Agent):
     def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
         self.action_counter = 0
+        self.evaluation_max_levels: int | None = None
         self._runtime = create_runtime(self.game_id)
         self._sent_decisions: set[str] = set()
         self._stopped = False
@@ -83,9 +84,12 @@ class MyAgent(Agent):
         return self._stopped or latest_frame.state is GameState.WIN
 
     def _observation(self, frame):
-        return frame_observation(self.game_id, frame, self.action_counter,
-                                 max(0, self.MAX_ACTIONS + 1 - self.action_counter),
-                                 with_image=bool(os.getenv("ADK_MODEL")))
+        observation = frame_observation(self.game_id, frame, self.action_counter,
+                                        max(0, self.MAX_ACTIONS + 1 - self.action_counter),
+                                        with_image=bool(os.getenv("ADK_MODEL")))
+        if self.evaluation_max_levels is not None and frame.levels_completed >= self.evaluation_max_levels:
+            observation["evaluation_stop_reason"] = "level_limit"
+        return observation
 
     def choose_action(self, frames: list[FrameData], latest_frame: FrameData) -> GameAction:
         result = self._runtime.decide(self._observation(latest_frame))

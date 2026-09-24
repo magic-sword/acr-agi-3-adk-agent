@@ -94,22 +94,39 @@ class CognitiveRuntime:
         if t.calls >= t.max_calls or t.time_left() <= 0:
             raise ValueError("reasoning budget exhausted")
         t.calls += 1
-        parts = [types.Part(text=json.dumps(self._context(), separators=(",", ":")))]
-        # Current frame plus recent changes; no unbounded conversation image history.
+        context = self._context()
+        parts = [types.Part(text=json.dumps(context, separators=(",", ":")))]
         if t.obs.get("image_png_base64"):
             parts.append(types.Part.from_bytes(data=base64.b64decode(t.obs["image_png_base64"]), mime_type="image/png"))
         elif t.obs.get("grid") is not None:
             parts.append(types.Part(text="Current color-ID grid: " + json.dumps(t.obs["grid"], separators=(",", ":"))))
         agent = self._agent(state)
         agent.model.timeout_seconds = max(1, min(90, int(t.time_left())))
-        async with asyncio.timeout(min(92, t.time_left())):
-            answer = await ctx.run_node(agent, node_input=types.Content(role="user", parts=parts))
-        if isinstance(answer, types.Content):
-            answer = "".join(p.text or "" for p in answer.parts or [])
-        if not isinstance(answer, str):
-            raise ValueError("model returned no textual proposal")
-        schema = Perception if state == "OBSERVE" else Proposal
-        return schema.model_validate(parse_json(answer))
+        started = time.monotonic()
+        record = {"observation_id": t.obs["observation_id"], "step": t.obs["step"],
+                  "state": state, "call_index": t.calls, "context": context}
+        try:
+            async with asyncio.timeout(min(92, t.time_left())):
+                answer = await ctx.run_node(agent, node_input=types.Content(role="user", parts=parts))
+            record.update(agent.model._last_metrics)
+            if isinstance(answer, types.Content):
+                answer = "".join(p.text or "" for p in answer.parts or [])
+            record["response"] = answer if isinstance(answer, str) else str(answer)
+            if not isinstance(answer, str):
+                raise ValueError("model returned no textual proposal")
+            schema = Perception if state == "OBSERVE" else Proposal
+            parsed = schema.model_validate(parse_json(answer))
+            record["schema_valid"] = True
+            return parsed
+        except Exception as exc:
+            record["error"] = f"{type(exc).__name__}: {exc}"
+            raise
+        finally:
+            record["seconds"] = time.monotonic() - started
+            if self.log_dir:
+                self.log_dir.mkdir(parents=True, exist_ok=True)
+                with (self.log_dir / f"{self.session_id}.model.jsonl").open("a") as log:
+                    log.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     def _offline_proposal(self):
         t, m = self.turn, self.turn.memory
@@ -138,7 +155,8 @@ class CognitiveRuntime:
             try:
                 t.observe()
                 if (not t.duplicate and t.memory.lifecycle == "ACTIVE" and self.model
-                        and t.obs["state"] in ("NOT_FINISHED", "IN_PROGRESS") and t.obs.get("remaining_actions", 1) > 0):
+                        and t.obs["state"] in ("NOT_FINISHED", "IN_PROGRESS") and t.obs.get("remaining_actions", 1) > 0
+                        and not t.obs.get("evaluation_stop_reason")):
                     # One bounded formatting retry; preserve budget for the action proposal.
                     for attempt in range(2):
                         try:
@@ -228,6 +246,17 @@ class CognitiveRuntime:
             await self.service.create_session(app_name=APP_NAME, user_id="player", session_id=self.session_id,
                                               state={"cognition": self.memory.model_dump(mode="json")})
             self.initialized = True
+        if self.log_dir:
+            self.log_dir.mkdir(parents=True, exist_ok=True)
+            record = {k: v for k, v in obs.items() if k != "image_png_base64"}
+            if obs.get("image_png_base64"):
+                frames_dir = self.log_dir / "frames"
+                frames_dir.mkdir(exist_ok=True)
+                frame_name = f"{self.session_id}-{obs['step']:05d}.png"
+                (frames_dir / frame_name).write_bytes(base64.b64decode(obs["image_png_base64"]))
+                record["image_path"] = "frames/" + frame_name
+            with (self.log_dir / f"{self.session_id}.observations.jsonl").open("a") as log:
+                log.write(json.dumps(record) + "\n")
         self.turn = CognitiveTurn(self.memory, obs, max_calls=self.max_calls,
                                   max_resets=self.max_resets, deadline=self.deadline)
         message = types.Content(role="user", parts=[types.Part(text=f'Observe external step {obs.get("step")}')])

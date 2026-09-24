@@ -5,10 +5,15 @@ LOCAL_GID := $(shell id -g)
 export LOCAL_UID LOCAL_GID
 GAME ?=
 STEPS ?= 80
+EVAL_GAMES ?= ls20,vc33,ft09
+EVAL_STEPS ?= 12
+EVAL_LEVELS ?= 1
+EVAL_SECONDS ?= 90
+EVAL_HARD_SECONDS ?= 110
 FRAMEWORK_REPO := https://github.com/arcprize/ARC-AGI-3-Agents.git
 FRAMEWORK_DIR := vendor/ARC-AGI-3-Agents
 
-.PHONY: help build cache-dir repair-perms setup lab down logs shell gpu check auth eval verify notebook push status clean model-download model-up model-check eval-model model-runtime test
+.PHONY: help build cache-dir repair-perms setup lab down logs shell gpu check auth eval verify notebook push status clean model-download model-up model-check eval-model model-runtime test benchmark benchmark-prepare
 
 help:
 	@printf '%s\n' \
@@ -22,6 +27,8 @@ help:
 	  'make model-download         Download Qwen3-VL GGUF + vision projector' \
 	  'make model-up               Start the local GPU vision model' \
 	  'make eval-model GAME=ls20   Play locally using Qwen3-VL and ADK' \
+	  'make benchmark-prepare      Cache public evaluation games (no submission)' \
+	  'make benchmark              Bounded local gateway evaluation + diagnostic report' \
 	  'make test                   Check ARC action IDs and ADK model replies' \
 	  'make model-runtime          Build portable llama-server for Kaggle bundle' \
 	  'make verify                Short two-game smoke test' \
@@ -100,3 +107,9 @@ status: cache-dir
 clean:
 	$(DC) down --remove-orphans
 	rm -f notebooks/submission.ipynb
+
+benchmark-prepare: cache-dir
+	$(RUN) python scripts/benchmark_local.py --prepare --games $(EVAL_GAMES)
+
+benchmark: cache-dir
+	$(RUN) python scripts/benchmark_local.py --games $(EVAL_GAMES) --steps $(EVAL_STEPS) --levels $(EVAL_LEVELS) --seconds $(EVAL_SECONDS) --hard-seconds $(EVAL_HARD_SECONDS)

@@ -57,6 +57,17 @@ The GGUF files are stored in ignored `.cache/model-cache/qwen3-vl-4b/`; they are
 
 To use an existing compatible server, set `VLM_API_BASE=http://host.docker.internal:8080/v1` in `.env` and run `ADK_MODEL=local/qwen3-vl-4b-instruct make eval GAME=ls20`; the server must present the `qwen3-vl-4b-instruct` alias and support OpenAI vision chat completions. JupyterLab may use the same endpoint through its Compose network.
 
+## Bounded local evaluation
+
+```bash
+make benchmark-prepare           # cache ls20, vc33 and ft09 once
+make model-up
+make benchmark                   # 1 level / 12 actions / 90 seconds per game
+make benchmark EVAL_GAMES=ls20,vc33 EVAL_STEPS=40 EVAL_SECONDS=180 EVAL_HARD_SECONDS=200
+```
+
+This runs the notebook packager's source snapshot through an official **local HTTP competition gateway** and the same Qwen3-VL policy. It saves SDK scorecards, timing/token metrics, model responses, frame images, action acknowledgments and diagnostic reports under `outputs/evaluations/`. Each game has a separate process with a hard timeout. No Kaggle upload or submission occurs. Public-game scores retain the full game's level denominator and are not leaderboard estimates. See the [evaluation guide](docs/local-evaluation-ja.md) for limits, logs and production differences.
+
 ## Cognitive workflow settings
 
 ```bash

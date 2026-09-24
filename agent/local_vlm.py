@@ -16,12 +16,14 @@ from google.adk.models.base_llm import BaseLlm
 from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
 from google.genai import types
+from pydantic import PrivateAttr
 
 
 class LocalVisionLlm(BaseLlm):
     api_base: str
     timeout_seconds: int = 180
     max_output_tokens: int = 1600
+    _last_metrics: dict = PrivateAttr(default_factory=dict)
 
     def _complete(self, messages: list[dict]) -> str:
         payload = json.dumps({
@@ -39,6 +41,9 @@ class LocalVisionLlm(BaseLlm):
         )
         with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
             result = json.load(response)
+        self._last_metrics = {"usage": result.get("usage"),
+                              "finish_reason": result["choices"][0].get("finish_reason"),
+                              "server_model": result.get("model")}
         answer = result["choices"][0]["message"]["content"]
         if not isinstance(answer, str) or not answer.strip():
             raise ValueError(f"Local vision model returned no text: {result!r}")

@@ -16,6 +16,7 @@ class CognitiveTurn:
 
     def __init__(self, memory: Memory, observation: dict, *, max_resets: int = 2,
                  max_calls: int = 3, deadline: float | None = None):
+        self.started_at = time.monotonic()
         self.memory = memory.model_copy(deep=True)
         self.obs = deepcopy(observation)
         self.max_resets = max_resets
@@ -211,6 +212,9 @@ class CognitiveTurn:
             self.consolidate("environment_win")
             self.stop("environment_win")
             return
+        if o.get("evaluation_stop_reason") == "level_limit":
+            self.stop("level_limit")
+            return
         if o.get("remaining_actions", 1) <= 0 or self.time_left() <= 0:
             self.stop("budget_exhausted")
             return
@@ -379,7 +383,10 @@ class CognitiveTurn:
                  "node_id": self.node_id, "action": self.result,
                  "effects": [p.model_dump() for p in self.effects],
                  "invariants": [p.model_dump() for p in self.invariants],
-                 "errors": self.errors, "model_calls": self.calls}
+                 "errors": self.errors, "model_calls": self.calls,
+                 "decision_seconds": time.monotonic() - self.started_at,
+                 "frame_hash": o.get("frame_hash"), "changed_cell_count": o.get("changed_cell_count"),
+                 "levels_completed": o.get("levels_completed"), "game_state": o.get("state")}
         m.history = (m.history + [entry])[-64:]
         m.last_observation = {k: v for k, v in o.items() if k not in ("image_png_base64", "recent_actions")}
         m.last_result = deepcopy(self.result)
