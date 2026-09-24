@@ -120,58 +120,37 @@ class EvidenceContracts(unittest.TestCase):
 
 
 class ReasoningRoundTrip(unittest.TestCase):
-    def test_initial_plan_probe_then_visual_verify_updates_memory(self):
+    def test_reflection_and_next_action_share_one_call_with_before_after_evidence(self):
         requests = []
 
         def respond(model, payload):
             context = next(json.loads(p['text']) for m in payload['messages']
                            if m['role'] == 'user' and isinstance(m['content'], list)
                            for p in m['content'] if p.get('type') == 'text')
-            state, step = context['reasoning_state'], context['observation']['step']
-            requests.append((state, step, payload))
-            oid = context['observation_id']
-            base = dict(observation_id=oid, memory_revision=context['memory_revision'])
-            if state == 'PLAN' and step == 0:
-                reply = dict(base, status='need_evidence', purpose='plan', inquiry='Does UP affect the target?',
-                             interpretation=dict(base, unknowns=['control mapping']))
-            elif state == 'PROBE':
-                self.assertIn('UP', context['inquiry'])
-                reply = dict(base, purpose='probe', action={'action': 'UP'},
-                    effects=[{'kind': 'fact', 'key': 'target_changed', 'value': True}],
-                    experiment={'question': context['inquiry'], 'risk': 'unknown', 'discriminator': 'target change',
-                                'alternatives': {'changed': [{'kind': 'frame_changed', 'value': True}],
-                                                 'unchanged': [{'kind': 'frame_changed', 'value': False}]}})
-            elif state == 'VERIFY':
-                if not any(m['role'] == 'tool' for m in payload['messages']):
-                    return {'choices': [{'message': {'tool_calls': [{'id': 'compare', 'type': 'function',
-                        'function': {'name': 'compare_observations', 'arguments': json.dumps({
-                            'before_id': context['pending']['observation_id'], 'after_id': oid})}}]}}]}
-                tool = next(json.loads(m['content']) for m in payload['messages'] if m['role'] == 'tool')
-                self.assertEqual(tool['changed_cell_count'], 64)
-                self.assertNotIn('_image_png_base64', tool)
-                self.assertTrue(any(p.get('type') == 'image_url' for m in payload['messages']
-                                    if isinstance(m['content'], list) for p in m['content']))
-                reply = dict(base, summary='The tested target changed.', evidence_refs=[oid], unknowns=[],
-                             facts=[{'key': 'target_changed', 'value': True, 'evidence': oid}])
-            else:
-                self.assertEqual(context['verification'][0]['result'], 'supported')
-                self.assertEqual(context['verification'][0]['matched_alternatives'], ['changed'])
-                self.assertEqual(context['facts'][0]['key'], 'target_changed')
-                reply = dict(base, purpose='plan', interpretation=dict(base, goal='satisfy alignment conditions',
-                             evidence_refs=[oid]), plan=[{'id': 'align', 'subgoal': 'test alignment',
-                             'action': {'action': 'UP'}, 'completion': [{'kind': 'state', 'value': 'WIN'}],
-                             'effects': [{'kind': 'state', 'value': 'WIN'}]}])
-            name = {'PLAN': 'submit_plan', 'PROBE': 'submit_experiment', 'VERIFY': 'submit_interpretation'}[state]
+            requests.append(context)
+            step = context['observation']['step']
+            self.assertEqual(context['reasoning_state'], 'DECIDE')
+            images = [p for m in payload['messages'] if isinstance(m['content'], list)
+                      for p in m['content'] if p.get('type') == 'image_url']
+            self.assertEqual(len(images), 1 if step == 0 else 2)
+            if step == 1:
+                self.assertEqual(context['notebook'], 'Control mapping unknown; test UP.')
+                self.assertEqual(context['previous_action']['prediction'], 'UP may change the target.')
+                self.assertEqual(context['observation']['changed_cell_count'], 64)
+            reply = {'action': {'action': 'UP'}, 'prediction': 'UP may change the target.',
+                     'reflection': '' if step == 0 else 'The target changed; causation still uncertain.',
+                     'notebook': 'Control mapping unknown; test UP.' if step == 0 else 'UP changed the board once.'}
             return {'choices': [{'message': {'tool_calls': [{'id': 'submission', 'type': 'function',
-                'function': {'name': name, 'arguments': json.dumps(reply)}}]}}]}
+                'function': {'name': 'submit_decision', 'arguments': json.dumps(reply)}}]}}]}
 
         with patch.object(LocalVisionLlm, '_complete', respond):
-            runtime = CognitiveRuntime('test', 'local/qwen3-vl-4b-instruct')
+            runtime = CognitiveRuntime('test', 'local/qwen3-vl-4b-instruct', max_calls=1)
             self.addCleanup(runtime.close)
             self.assertEqual(runtime.decide(observation())['action'], 'ACTION1')
-            self.assertEqual(runtime.memory.goal, '')
             self.assertEqual(runtime.decide(observation(1, 1))['action'], 'ACTION1')
-            self.assertEqual(runtime.memory.goal, 'satisfy alignment conditions')
-            self.assertEqual([s for s, _, _ in requests], ['PLAN', 'PROBE', 'VERIFY', 'VERIFY', 'PLAN'])
-            self.assertTrue(any(x['state'] == 'VERIFY' for x in runtime.memory.interpretations))
-            self.assertEqual(runtime.memory.model_calls, 4)  # Tool roundtrip is within VERIFY.
+            self.assertEqual(runtime.memory.notebook, 'UP changed the board once.')
+            self.assertEqual(len(requests), 2)
+            self.assertEqual(runtime.memory.model_calls, 2)
+            self.assertEqual(runtime.memory.facts, {})  # Model notes never become verified facts.
+            self.assertEqual(runtime.memory.plan, [])
+            self.assertEqual(set(runtime.agents), {'DECIDE'})

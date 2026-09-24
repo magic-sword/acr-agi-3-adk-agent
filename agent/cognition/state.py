@@ -40,6 +40,18 @@ class Action(Contract):
     reason: str = Field(default="", max_length=300)
 
 
+class Decision(Contract):
+    """One next action; the host binds it to the current observation and revision.
+
+    Notebook and prediction are model hypotheses, never verified environment facts.
+    Omit notebook to retain it; an empty string deliberately clears it.
+    """
+    action: Action
+    prediction: str = Field(min_length=1, max_length=500)
+    reflection: str = Field(default="", max_length=600)
+    notebook: str | None = Field(default=None, max_length=2400)
+
+
 class Fact(Contract):
     key: str = Field(min_length=1, max_length=100)
     value: str | int | bool
@@ -125,6 +137,7 @@ class Pending(Contract):
     node_id: str | None = None
     experiment: Experiment | None = None
     intervening_actions: list[str] = Field(default_factory=list)
+    prediction: str = ""
 
 
 class Memory(Contract):
@@ -152,3 +165,4 @@ class Memory(Contract):
     last_result: dict = Field(default_factory=dict)
     model_calls: int = 0
     resets: int = 0
+    notebook: str = ""

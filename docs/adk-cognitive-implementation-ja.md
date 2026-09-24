@@ -1,5 +1,7 @@
 # ADK認知ワークフロー: 実装と検証
 
+> 以下は詳細な認知機能を分割した旧設計の記録。現在の実行構成・提出契約は[一手ずつ学ぶ認知ループ](adk-cognitive-state-machine-ja.md)を参照。
+
 更新日: 2026-09-24。[設計](adk-cognitive-state-machine-ja.md)と[スキル仕様](adk-cognitive-skills-ja.md)に基づく初期実装。実行基盤と検証付きの認知ループを実装した。人間並みの推論能力や未見ゲームの解決性能を実証した段階ではない。
 
 完了ツール導入時の[変更と検証結果](local-evaluation-completion-tools-ja.md)では、全78テストと実モデルによる実験提出・1操作の実行を確認した。

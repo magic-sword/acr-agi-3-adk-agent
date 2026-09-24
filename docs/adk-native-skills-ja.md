@@ -1,12 +1,12 @@
 # ADK 2.0 スキル接続と責務
 
-更新日: 2026-09-24。[設計レビュー](adk-design-review-20260924-ja.md)に基づき、状態の必須指示、ホスト制御、任意の推論スキルを分離した。専門手順の一覧は[スキル仕様](adk-cognitive-skills-ja.md)を参照。
+更新日: 2026-09-25（日本時間）。[設計レビュー](adk-design-review-20260924-ja.md)に基づき、状態の必須指示、ホスト制御、任意の推論スキルを分離した。専門手順の一覧は[スキル仕様](adk-cognitive-skills-ja.md)を参照。
 
 ## 実行構造
 
 ```text
 Workflow（遷移・ホスト検証・確定）
-  → 状態別LlmAgent（reasoner_plan / probe / revise / verify）
+  → LlmAgent（reasoner_decide）
       instruction: 状態の課題・必須契約
       tools: 完了ツール + 観測ツール + ReasoningSkillToolset
           L1: 名前・用途を初回から提示
@@ -34,17 +34,16 @@ ADK本体のプライベート属性は変更しない。この2ツール限定�
 
 |状態|スキルID|数|
 |---|---|---:|
-|VERIFY|S01 / S02 / S03 / S04 / S10|5|
-|PLAN|S01 / S02 / S04 / S05 / S08 / S09 / S10 / S11 / S12 / S14|10|
-|PROBE|S01 / S02 / S04 / S07 / S10 / S12|6|
-|REVISE|S01 / S02 / S04 / S05 / S06 / S07 / S08 / S09 / S10 / S11 / S12|11|
-|OBSERVE / UPDATE / ACT / COMMIT / CONSOLIDATE / RECOVER|ホスト処理|0|
+|DECIDE|S01 / S03 / S05 / S07 / S08|5|
+|OBSERVE / COMMITおよびホスト内部処理|ホスト処理|0|
+
+現行グラフは[3段階の認知ループ](adk-cognitive-state-machine-ja.md)。13個の専門スキル資料のうち、通常ループへ公開するのは上記5個だけ。旧PLAN/PROBE/VERIFY/REVISEのモデル状態は廃止した。完了ツールは`submit_decision`一つ、必須はactionとprediction。接続するスキル本文も、作業メモと次の一手に適用する説明へ更新した。
 
 旧S13（決定確定）とS15（予算制御）はスキル定義から除外し、ホスト責務として扱う。残りのIDは既存の分析との対応のため保持する。登録数は技能の実証数ではなく、利用可能な手順の数である。
 
 ## ツールとホスト実装
 
-全モデル状態に `observe_current`、`list_observations`、`get_observation`、`compare_observations`、`observe_animation`、`move_cursor` を直接登録する。スキルのロード有無で観測機能は変わらない。画像は画像入力として返し、外部ゲームは進めない。
+DECIDEに `observe_current`、`list_observations`、`get_observation`、`compare_observations`、`observe_animation`、`move_cursor` を直接登録する。スキルのロード有無で観測機能は変わらない。画像は画像入力として返し、外部ゲームは進めない。
 
 描画は `agent/rendering.py`、操作名変換は `agent/controls.py` に配置した。どちらもホストの通常のPython実装で、スキルの実行ファイルではない。CLIは次のとおり。
 
@@ -55,12 +54,12 @@ python agent/rendering.py replay EVENT.json history.gif
 
 `run_skill_script` は公開しない。以前の構成はexecutorなしでこのツールを公開していたため `NO_CODE_EXECUTOR` を返していた。将来、実行スキルが必要になった場合は、知識スキルとは別にexecutor・依存関係・入出力を実装して検証する。
 
-PLAN／REVISEには `check_plan_order` も直接登録する。`initial_conditions`、順序付き `steps`（requires/adds/removes）、`required_final_conditions` を受け、最初に欠ける前提または未達の最終条件と計算過程を返す。入力が真実かを判断せず、ゲーム操作・記憶更新は行わない。S08は条件を破壊する操作順の検査にこのツールを使う。
+DECIDEには `check_plan_order` も直接登録する。`initial_conditions`、順序付き `steps`（requires/adds/removes）、`required_final_conditions` を受け、最初に欠ける前提または未達の最終条件と計算過程を返す。入力が真実かを判断せず、ゲーム操作・記憶更新は行わない。S08は条件を破壊する操作順の検査にこのツールを使う。
 
 ## 予算・提出・保存
 
 - 各状態の必須契約は `instructions.py`、型と参照の検証は完了ツールとホスト、遷移はWorkflowが所有する。スキル本文には状態完了の共通定型文を複製しない。
-- 1判断につき最大8 HTTP要求。最終枠はその状態の完了ツールだけを公開し、`tool_choice=required` にする。受理時は追加のモデル応答なしでWorkflowへ戻る。
+- 1判断につき最大3 HTTP要求。最終枠はその状態の完了ツールだけを公開し、`tool_choice=required` にする。受理時は追加のモデル応答なしでWorkflowへ戻る。
 - スキルを必ず読む指示と「最大2個」というソフトな制限は撤廃した。必要な専門手順だけ選び、証拠取得と提出に予算を残す。全体の要求数・時間・判断数はホストが強制する。
 - `include_contents="none"` により、本文の再利用は現在の判断内に限る。前回ロード済みというだけで次回に本文があるとは扱わない。
 - 認知記憶はCOMMITの `Event(state=...)` で公開する。作業中の `self.turn`、提出結果、観測ストアはプロセス内にあり、障害後の自動再開は保証しない。

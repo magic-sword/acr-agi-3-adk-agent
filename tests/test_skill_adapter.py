@@ -43,12 +43,12 @@ class SkillAdapterTests(unittest.TestCase):
         from agent.cognition.skills import skill_toolset
 
         async def run():
-            toolset = skill_toolset('VERIFY')
+            toolset = skill_toolset('DECIDE')
             try:
                 tools = await toolset.get_tools()
                 loader = next(t for t in tools if t.name == 'load_skill')
                 context = SimpleNamespace(invocation_id='scope', agent_name='verify', state={})
-                result = await loader.run_async(args={'skill_name': 'backward-planning'},
+                result = await loader.run_async(args={'skill_name': 'effect-revaluation'},
                                                tool_context=context)
                 self.assertEqual(result['error_code'], 'SKILL_NOT_FOUND')
                 self.assertEqual(context.state, {})
@@ -60,16 +60,8 @@ class SkillAdapterTests(unittest.TestCase):
         from agent.cognition.workflow import CognitiveRuntime
         runtime = CognitiveRuntime('test', 'local/qwen3-vl-4b-instruct')
         try:
-            shared = {'visual-observation', 'occlusion-memory', 'hypothesis-maintenance', 'temporal-reasoning'}
-            expected = {
-                'VERIFY': shared | {'prediction-verification'},
-                'PLAN': shared | {'goal-inference', 'backward-planning', 'plan-repair',
-                                  'effect-revaluation', 'action-grounding', 'procedure-reuse'},
-                'PROBE': shared | {'discriminating-experiment', 'action-grounding'},
-                'REVISE': shared | {'goal-inference', 'cause-diagnosis', 'discriminating-experiment',
-                                    'backward-planning', 'plan-repair', 'effect-revaluation',
-                                    'action-grounding'},
-            }
+            expected = {'DECIDE': {'visual-observation', 'prediction-verification', 'goal-inference',
+                                   'discriminating-experiment', 'backward-planning'}}
             for state, names in expected.items():
                 agent = runtime._agent(state)
                 registered = [s.name for s in agent.tools[1]._list_skills()]
@@ -77,11 +69,8 @@ class SkillAdapterTests(unittest.TestCase):
                 self.assertEqual(len(registered), len(names))
                 tools = {getattr(tool, 'name', None) or tool.__name__ for tool in agent.tools[2:]}
                 self.assertTrue({'get_observation', 'compare_observations', 'list_observations'} <= tools)
-                self.assertEqual('check_plan_order' in tools, state in ('PLAN', 'REVISE'))
-            from agent.cognition.skills import SKILL_NAMES
-            self.assertEqual(set().union(*expected.values()),
-                             set(SKILL_NAMES.values()))
-            self.assertIs(runtime._agent('REVISE'), runtime._agent('REVISE'))
+                self.assertEqual('check_plan_order' in tools, state == 'DECIDE')
+            self.assertIs(runtime._agent('DECIDE'), runtime._agent('DECIDE'))
         finally:
             runtime.close()
 
@@ -210,8 +199,8 @@ class SkillAdapterTests(unittest.TestCase):
             payloads.append(payload)
             systems = [m for m in payload['messages'] if m['role'] == 'system']
             self.assertEqual(len(systems), 1)
-            self.assertIn('JSON schema:', systems[0]['content'])
-            self.assertIn('Current reasoning state: PLAN', systems[0]['content'])
+            self.assertIn('action and prediction are the only required fields', systems[0]['content'])
+            self.assertIn('Current reasoning state: DECIDE', systems[0]['content'])
             self.assertIn('HTTP requests remain', systems[0]['content'])
             n = len(payloads)
             if n <= 2:
@@ -226,17 +215,14 @@ class SkillAdapterTests(unittest.TestCase):
                 context = next(json.loads(p['text']) for m in payload['messages']
                                if m['role'] == 'user' and isinstance(m['content'], list)
                                for p in m['content'] if p.get('type') == 'text')
-                reply = {'observation_id': context['observation_id'], 'memory_revision': context['memory_revision']}
                 self.assertEqual(payload['tool_choice'], 'required')
-                self.assertEqual([t['function']['name'] for t in payload['tools']], ['submit_plan'])
-                reply.update(purpose='plan', plan=[{'id': 'go', 'subgoal': 'finish',
-                    'action': {'action': 'ACTION1'}, 'completion': [{'kind': 'state', 'value': 'WIN'}],
-                    'effects': [{'kind': 'state', 'value': 'WIN'}]}])
-                message = {'tool_calls': [{'id': 'submit', 'type': 'function', 'function': {'name': 'submit_plan', 'arguments': json.dumps(reply)}}]}
+                self.assertEqual([t['function']['name'] for t in payload['tools']], ['submit_decision'])
+                reply = {'action': {'action': 'ACTION1'}, 'prediction': 'The target may move.'}
+                message = {'tool_calls': [{'id': 'submit', 'type': 'function', 'function': {'name': 'submit_decision', 'arguments': json.dumps(reply)}}]}
             return {'choices': [{'message': message}]}
         with patch.object(LocalVisionLlm, '_complete', respond):
             runtime = CognitiveRuntime('test', 'local/qwen3-vl-4b-instruct')
-            runtime._agent('PLAN').model.max_requests = 3
+            runtime._agent('DECIDE').model.max_requests = 3
             try:
                 result = runtime.decide({'game_id': 'test', 'state': 'NOT_FINISHED', 'step': 0,
                                          'available_actions': ['ACTION1'], 'remaining_actions': 1})

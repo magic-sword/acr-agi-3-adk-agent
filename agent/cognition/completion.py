@@ -5,26 +5,21 @@ from google.adk.tools import BaseTool
 from google.genai import types
 
 from agent.controls import controller_context
-from .state import Interpretation, Proposal
+from .state import Decision
 
-COMPLETION_TOOLS = {
-    'PLAN': 'submit_plan', 'REVISE': 'submit_revision',
-    'PROBE': 'submit_experiment', 'VERIFY': 'submit_interpretation',
-}
+COMPLETION_TOOLS = {'DECIDE': 'submit_decision'}
 
 
 def submission_schema(state, buttons=None):
-    schema = (Interpretation if state == 'VERIFY' else Proposal).model_json_schema()
+    if state != 'DECIDE':
+        raise ValueError(f'{state} is not a model reasoning state')
+    schema = Decision.model_json_schema()
     action = schema.get('$defs', {}).get('Action', {})
     for field in ('x', 'y'):
         action.get('properties', {}).pop(field, None)
     if 'action' in action.get('properties', {}):
         action['properties']['action']['enum'] = (buttons if buttons is not None else
             ['UP', 'DOWN', 'LEFT', 'RIGHT', 'ACT', 'CLICK', 'UNDO'])
-    if state == 'PROBE':
-        schema['properties']['purpose'] = {'type': 'string', 'enum': ['probe']}
-        schema['properties']['status'] = {'type': 'string', 'enum': ['ok'], 'default': 'ok'}
-        schema['required'] = list(dict.fromkeys(schema['required'] + ['action', 'experiment']))
     return schema
 
 
@@ -50,16 +45,11 @@ class CompletionTool(BaseTool):
         try:
             if runtime.turn.time_left() <= 0:
                 raise ValueError('reasoning time budget exhausted')
-            result = (Interpretation if state == 'VERIFY' else Proposal).model_validate(args)
+            result = Decision.model_validate(args)
             # Check against an isolated transaction; no memory/cursor/game side effects.
             trial = copy(runtime.turn)
             trial.memory = runtime.turn.memory.model_copy(deep=True)
-            if state == 'VERIFY':
-                trial.stage_review(result)
-            else:
-                if state == 'PROBE' and (result.status != 'ok' or result.purpose != 'probe'):
-                    raise ValueError('PROBE requires a complete discriminating experiment')
-                trial.accept(result, state)
+            trial.accept_decision(result)
         except ValueError as exc:
             response = {'accepted': False, 'error': str(exc)[:2000],
                         'instruction': 'Correct the submission and call this tool again.'}
@@ -67,6 +57,6 @@ class CompletionTool(BaseTool):
             return response
         runtime._submission = result
         tool_context.actions.skip_summarization = True
-        response = {'accepted': True, 'state': state, 'observation_id': result.observation_id}
+        response = {'accepted': True, 'state': state, 'observation_id': runtime.turn.obs['observation_id']}
         runtime._submission_attempts.append({'tool': self.name, **response})
         return response

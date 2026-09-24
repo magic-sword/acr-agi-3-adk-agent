@@ -51,14 +51,8 @@ class ActionContractTests(unittest.TestCase):
                          if isinstance(message["content"], list)
                          for part in message["content"] if part.get("type") == "text"]
                 context = json.loads(texts[0])
-                reply = {"observation_id": context["observation_id"],
-                         "memory_revision": context["memory_revision"]}
-                reply.update(purpose="plan", plan=[{
-                    "id": "move", "subgoal": "reach next level", "action": {"action": "ACTION1"},
-                    "completion": [{"kind": "levels_min", "value": 1}],
-                    "effects": [{"kind": "levels_min", "value": 1}],
-                }])
-                body = json.dumps({"choices": [{"message": {"tool_calls": [{"id": "submit", "type": "function", "function": {"name": "submit_plan", "arguments": json.dumps(reply)}}]}}]}).encode()
+                reply = {"action": {"action": "ACTION1"}, "prediction": "The target may move."}
+                body = json.dumps({"choices": [{"message": {"tool_calls": [{"id": "submit", "type": "function", "function": {"name": "submit_decision", "arguments": json.dumps(reply)}}]}}]}).encode()
 
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")

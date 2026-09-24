@@ -23,8 +23,8 @@ This order fails at B. Reversing it works only if B leaves A's prerequisites int
 
 ## Turn a feasible order into a conditional plan
 
-Use a short acyclic graph of remaining subgoals. Each action node needs observable `completion`, predicted `effects`, and any invariants. Associate supporting hypotheses. Fresh nodes are `todo`; already achieved conditions belong in current evidence, not fabricated done nodes. Check that the first action is legal now and the remainder is feasible under the stated assumptions.
+Keep a short ordered list of remaining subgoals in the working notebook. Note completion evidence and conditions that must survive later actions. Submit only the first legal action and its prediction; check the actual result before choosing the next step. A formal subgoal graph is unnecessary.
 
-Count prerequisite actions and checkpoints against the budget. CLICK nodes sample the current cursor, so distinct click targets require new positioning and observation. If no first action is justified, ask a precise question or propose an experiment instead of an impossible plan.
+Count prerequisite actions and checkpoints against the budget. CLICK actions sample the current cursor, so distinct click targets require new positioning and observation. If no first action is justified, ask a precise question or propose an experiment instead of an impossible plan.
 
-Read [references/dependencies.md](references/dependencies.md) for staging and replacement-plan details when needed.
+Read [references/dependencies.md](references/dependencies.md) for staging and plan-repair details when needed.

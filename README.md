@@ -82,11 +82,13 @@ This runs the notebook packager's source snapshot through an official **local HT
 
 ## Cognitive workflow settings
 
-OBSERVE records immutable evidence without a model call. VERIFY interprets previous
-results; PLAN and REVISE consider success conditions and choose a plan or a specific
-experiment. An unknown goal does not block planning. Each reasoning state can retrieve
-the same historical images and differences through shared tools. See the
-[revised design](docs/adk-cognitive-state-machine-ja.md).
+The workflow is **OBSERVE → DECIDE → COMMIT**. OBSERVE records evidence;
+DECIDE compares the previous result, updates a short notebook and chooses one action;
+COMMIT validates and publishes the decision. The only required submission fields are
+`action` and `prediction`. An unknown goal does not block a useful trial. Previous and
+current frames are supplied together, with optional tools for older evidence.
+See the [design](docs/adk-cognitive-state-machine-ja.md) and
+[evaluation](docs/local-evaluation-simple-loop-ja.md).
 
 
 Run `make visualize` to generate the current state-machine diagram and state-to-skill
@@ -110,7 +112,7 @@ substituting a fixed diagram. On failure, any previous output retains its old ti
 COGNITION_LOG_DIR=outputs/cognition make eval-model GAME=ls20 STEPS=20
 ```
 
-`COGNITION_MAX_CALLS=3` bounds model calls per observation, `COGNITION_MAX_RESETS=2` bounds retries after GAME_OVER, and `COGNITION_SECONDS=600` bounds each game's reasoning time. Optional JSONL traces and memory snapshots include predictions, results and transition reasons. They do not automatically restore an external game after a crash. The VLM context size is 16,384 tokens; restart it with `make model-up` after updating. An already-running JupyterLab container needs `make lab` after saving work to use the rebuilt ADK image.
+`COGNITION_MAX_CALLS=3` bounds model attempts per observation (normally one; extra attempts repair failures). Each DECIDE attempt allows at most 3 HTTP requests. `COGNITION_MAX_RESETS=2` bounds retries after GAME_OVER, and `COGNITION_SECONDS=600` bounds each game's reasoning time. Optional JSONL traces and memory snapshots include predictions, results and transition reasons. They do not automatically restore an external game after a crash. The VLM context size is 16,384 tokens; restart it with `make model-up` after updating. An already-running JupyterLab container needs `make lab` after saving work to use the rebuilt ADK image.
 
 ## Offline Kaggle model bundle
 
@@ -145,4 +147,4 @@ If the Kaggle runtime changes its installed Google ADK version or competition da
 
 Thirteen optional reasoning skills use native ADK loaders with an inline name/description catalog and on-demand bodies/references. State instructions live in `agent/cognition/instructions.py`; commit, budgets, rendering and control translation belong to host code. See [skill connection and checks](docs/adk-native-skills-ja.md).
 
-Reasoning states finish through validated submission tools (`submit_plan`, `submit_revision`, `submit_experiment`, `submit_interpretation`). ADK can perform multiple evidence lookups before submission; Workflow retains routing and action execution. No separate final JSON response is required. `make visualize` also shows the state-to-completion-tool mapping.
+DECIDE finishes through the validated `submit_decision` tool. ADK can perform multiple evidence lookups before submission; Workflow retains routing and action execution. No separate final JSON response is required. `make visualize` also shows the state-to-completion-tool mapping.

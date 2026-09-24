@@ -23,7 +23,7 @@ ADK FunctionDeclaration / FunctionResponse
 - 打ち切られた生成、未登録ツール、不正なJSONは実行しない。ゲーム操作の`CLICK`などを勝手にツールへ読み替えない。
 - `tool_choice=none`で返された呼び出しは、正しいネイティブ構文でも`ToolCallNotAllowedError`とする。変換器は予算やホストの実行制約を変更しない。
 
-後続の完了ツール設計では、認知Workflowの最終枠を`none`から変更した。状態専用の完了ツールだけを公開し、`required`で提出を要求する。Qwen形式の呼び出しを受理・検証したら、追加の最終JSONを要求せずに状態を完了する。上の`none`検査は一般的な変換器の制約として残す。[現行の完了契約](adk-cognitive-state-machine-ja.md#4-記憶と応答の契約)を参照。
+後続の完了ツール設計では、認知Workflowの最終枠を`none`から変更した。状態専用の完了ツールだけを公開し、`required`で提出を要求する。Qwen形式の呼び出しを受理・検証したら、追加の最終JSONを要求せずに状態を完了する。上の`none`検査は一般的な変換器の制約として残す。[現行の完了契約](adk-cognitive-state-machine-ja.md#提出と記憶)を参照。
 
 生応答に加えて`tool_choice`、`decoded_protocol`、`normalized_tool_calls`をログへ残す。集計はネイティブ形式で受理した要求も数え、構造化形式との二重計上を避ける。
 

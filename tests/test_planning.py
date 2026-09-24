@@ -71,14 +71,8 @@ class PlanOrderTests(unittest.TestCase):
                 context = next(json.loads(p['text']) for m in payload['messages']
                                if m['role'] == 'user' and isinstance(m['content'], list)
                                for p in m['content'] if p.get('type') == 'text')
-                name = 'submit_plan'
-                args = {'observation_id': context['observation_id'],
-                        'memory_revision': context['memory_revision'], 'purpose': 'probe',
-                        'action': {'action': 'UP'}, 'experiment': {
-                            'question': 'Does the input change the frame?',
-                            'alternatives': {'responsive': [{'kind': 'frame_changed', 'value': True}],
-                                             'unresponsive': [{'kind': 'frame_changed', 'value': False}]},
-                            'discriminator': 'Compare the next actual frame.', 'risk': 'Unknown input effect.'}}
+                name = 'submit_decision'
+                args = {'action': {'action': 'UP'}, 'prediction': 'Test whether the input moves the target.'}
             return {'choices': [{'message': {'tool_calls': [{'id': str(len(payloads)), 'type': 'function',
                 'function': {'name': name, 'arguments': json.dumps(args)}}]}}]}
 

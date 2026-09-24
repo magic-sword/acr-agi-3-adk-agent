@@ -9,7 +9,7 @@ import uuid
 
 from agent.observation import VISUAL_PAYLOAD_KEYS
 
-from .state import Action, Memory, Pending, Interpretation, Proposal
+from .state import Action, Decision, Memory, Pending, Interpretation, Proposal
 from .validation import all_true, evaluate, validate_action, validate_proposal
 
 
@@ -41,6 +41,7 @@ class CognitiveTurn:
         self.result: dict | None = None
         self.review: Interpretation | None = None
         self.inquiry = ""
+        self.decision: Decision | None = None
 
     def enter(self, state: str):
         self.trace.append(state)
@@ -367,6 +368,18 @@ class CognitiveTurn:
         if self.time_left() <= 0:
             self.stop("budget_exhausted")
 
+    def accept_decision(self, decision: Decision):
+        """Validate before changing working memory; no graph or certainty required."""
+        if self.memory.lifecycle in ("DONE", "STOPPED"):
+            raise ValueError("cannot act after termination")
+        action = validate_action(decision.action, self.obs)
+        if self.time_left() <= 0 or self.obs.get("remaining_actions", 1) <= 0:
+            raise ValueError("action budget exhausted")
+        self.selected = action
+        self.decision = decision
+        if decision.notebook is not None:
+            self.memory.notebook = decision.notebook
+
     def recover(self):
         self.enter("RECOVER")
         m, o = self.memory, self.obs
@@ -405,7 +418,8 @@ class CognitiveTurn:
             pending = Pending(decision_id=decision_id, observation_id=o["observation_id"], step=o["step"],
                               action=self.selected, effects=self.effects, invariants=self.invariants,
                               deadline_step=o["step"] + self.delay, baseline_hash=o.get("frame_hash", ""),
-                              node_id=self.node_id, experiment=self.experiment)
+                              node_id=self.node_id, experiment=self.experiment,
+                              prediction=self.decision.prediction if self.decision else "")
             for delayed in m.deferred:
                 delayed.intervening_actions.append(decision_id)
             m.pending = pending
@@ -427,6 +441,8 @@ class CognitiveTurn:
                  "decision_seconds": time.monotonic() - self.started_at,
                  "frame_hash": o.get("frame_hash"), "changed_cell_count": o.get("changed_cell_count"),
                  "levels_completed": o.get("levels_completed"), "game_state": o.get("state")}
+        if self.decision:
+            entry["decision"] = self.decision.model_dump(exclude_none=True)
         m.history = (m.history + [entry])[-64:]
         m.last_observation = {k: v for k, v in o.items() if k not in VISUAL_PAYLOAD_KEYS | {"recent_actions"}}
         m.last_result = deepcopy(self.result)

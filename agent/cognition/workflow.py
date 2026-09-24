@@ -18,13 +18,13 @@ from google.adk.workflow import node
 from google.genai import types
 
 from agent.controls import controller_context
-from agent.observation import VISUAL_PAYLOAD_KEYS, render_current, render_animation_page, png_base64, validate_cursor
+from agent.observation import VISUAL_PAYLOAD_KEYS, render_current, png_base64, validate_cursor
 from agent.local_vlm import LocalVisionLlm, MAX_REQUESTS_PER_INVOCATION
 from .engine import CognitiveTurn, new_memory
 from .evidence import EvidenceStore
 from .instructions import instruction
 from .skills import skill_toolset, selected_skills
-from .state import Memory, Interpretation, Proposal
+from .state import Decision, Memory
 from .completion import CompletionTool, COMPLETION_TOOLS, submission_schema
 from .planning import PlanOrderTool
 
@@ -72,12 +72,13 @@ class CognitiveRuntime:
                 name=f"reasoner_{key.lower()}", include_contents="none",
                 model=LocalVisionLlm(model="qwen3-vl-4b-instruct",
                                      api_base=os.getenv("VLM_API_BASE", "http://vlm:8080/v1"),
-                                     max_output_tokens=1600 if state == "VERIFY" else 2400,
+                                     max_output_tokens=1000,
+                                     max_requests=3,
                                      timeout_seconds=90, completion_tools=(COMPLETION_TOOLS[state],)),
                 instruction=instruction(state, submission_schema(state)),
                 tools=[CompletionTool(self, state), skill_toolset(state), self.observe_current, self.list_observations,
                        self.get_observation, self.compare_observations, self.move_cursor, self.observe_animation,
-                       *([PlanOrderTool()] if state in ('PLAN', 'REVISE') else [])],
+                       PlanOrderTool()],
             )
         return self.agents[key]
 
@@ -131,24 +132,28 @@ class CognitiveRuntime:
     def _context(self):
         t, m = self.turn, self.turn.memory
         o = {k: v for k, v in t.obs.items() if k not in VISUAL_PAYLOAD_KEYS | {"grid", "recent_actions"}}
-        context = {"observation": o, "observation_id": t.obs["observation_id"], "memory_revision": m.revision,
-                "attempt": m.attempt, "model_revision": m.model_revision,
-                "goal": m.goal, "facts": [f.model_dump() for f in m.facts.values()][-24:],
-                "hypotheses": [h.model_dump() for h in m.hypotheses.values()][-16:],
-                "unknowns": m.unknowns, "plan": [n.model_dump() for n in m.plan],
-                "pending": m.pending.model_dump() if m.pending else None,
-                "deferred": [d.model_dump() for d in m.deferred],
-                "verification": t.verification, "procedures": m.procedures[-2:],
-                "history": m.history[-3:], "errors": t.errors[-1:],
-                "remaining_seconds": round(t.time_left(), 2), "inquiry": t.inquiry,
-                "observation_records": self.evidence.list()[-8:],
-                "interpretations": m.interpretations[-3:]}
-        # Drop optional histories first. Never truncate JSON or silently omit plan constraints.
-        for key in ("history", "procedures"):
-            if len(json.dumps(context)) > 24000:
-                context[key] = []
-        if len(json.dumps(context)) > 24000:
-            raise ValueError("structured context exceeds budget")
+        previous = self.memory.pending
+        # Match each past action to the following actual frame, not the change before that action.
+        trials = []
+        for index in range(max(0, len(m.history) - 4), len(m.history)):
+            entry = m.history[index]
+            after = m.history[index + 1] if index + 1 < len(m.history) else t.obs
+            same_level = entry.get("levels_completed") == after.get("levels_completed")
+            comparable = (same_level and entry.get("frame_hash") and after.get("frame_hash")
+                          and entry.get("action", {}).get("action") != "RESET"
+                          and not (index == len(m.history) - 1 and t.boundary))
+            decision = entry.get("decision", {})
+            trials.append({"step": entry["step"], "action": entry.get("action"),
+                           "prediction": decision.get("prediction"),
+                           "observed_frame_changed": (entry["frame_hash"] != after["frame_hash"])
+                           if comparable else None})
+        context = {"observation": o, "observation_id": t.obs["observation_id"],
+                   "memory_revision": m.revision, "notebook": m.notebook,
+                   "boundary": t.boundary,
+                   "previous_action": previous.model_dump(exclude_none=True) if previous else None,
+                   "recent_trials": trials,
+                   "errors": t.errors[-1:], "remaining_seconds": round(t.time_left(), 2),
+                   "observation_records": self.evidence.list()[-8:]}
         return controller_context(context)
 
     async def _ask(self, ctx: Context, state: str):
@@ -159,30 +164,20 @@ class CognitiveRuntime:
         context = self._context()
         context["reasoning_state"] = state
         parts = [types.Part(text=json.dumps(context, separators=(",", ":")))]
+        # Supply the immediately preceding real screen without a separate VERIFY call.
+        previous = self.memory.pending
+        if previous and not t.boundary and previous.observation_id in self.evidence.index:
+            before = self.evidence.get(previous.observation_id)
+            parts.append(types.Part(text="BEFORE the previous action: " + previous.observation_id))
+            if before.get("image_png_base64"):
+                parts.append(types.Part.from_bytes(data=base64.b64decode(before["image_png_base64"]), mime_type="image/png"))
+            elif before.get("grid") is not None:
+                parts.append(types.Part(text="Before color-ID grid: " + json.dumps(before["grid"])))
+        parts.append(types.Part(text="CURRENT observation (choose the next action here):"))
         if t.obs.get("image_png_base64"):
             parts.append(types.Part.from_bytes(data=base64.b64decode(t.obs["image_png_base64"]), mime_type="image/png"))
         elif t.obs.get("grid") is not None:
             parts.append(types.Part(text="Current color-ID grid: " + json.dumps(t.obs["grid"], separators=(",", ":"))))
-        # Restate the outer contract beside the image: skills may show nested action examples.
-        identity = {"observation_id": context["observation_id"], "memory_revision": context["memory_revision"]}
-        if state in ("PLAN", "REVISE"):
-            example = {**identity, "purpose": "plan", "status": "need_evidence",
-                       "inquiry": "REPLACE with one concrete uncertainty that changes the next action"}
-            parts.append(types.Part(text="If evidence is insufficient, use this complete outer shape, "
-                "replacing inquiry with your specific question. Do not return a bare action: " + json.dumps(example)))
-        elif state == "PROBE":
-            legal = context["observation"].get("available_actions", [])
-            example = {**identity, "purpose": "probe", "action": {"action": legal[0] if legal else "NO_LEGAL_ACTION"},
-                       "experiment": {"question": "REPLACE with your testable question", "alternatives": {
-                           "changes": [{"kind": "frame_changed", "value": True}],
-                           "unchanged": [{"kind": "frame_changed", "value": False}]},
-                           "discriminator": "REPLACE with what to compare", "risk": "REPLACE with possible side effects"}}
-            parts.append(types.Part(text="Example submit_experiment arguments for an experiment (choose your own legal action and useful predictions; "
-                "a whole-frame change alone is not goal progress). No bare action JSON: " + json.dumps(example)))
-        else:
-            parts.append(types.Part(text="Call submit_interpretation with these exact identity fields: "
-                + json.dumps(identity) + ". Include only grounded facts and a concise evidence-linked summary; "
-                "omit goal unless outcome evidence requires a revision."))
         agent = self._agent(state)
         self._submission = None
         self._submission_attempts = []
@@ -194,7 +189,7 @@ class CognitiveRuntime:
                   "available_skills": selected_skills(state)}
         try:
             async with asyncio.timeout(min(92, t.time_left())):
-                answer = await ctx.run_node(agent, node_input=types.Content(role="user", parts=parts))
+                await ctx.run_node(agent, node_input=types.Content(role="user", parts=parts))
             record.update(agent.model._last_metrics)
             if self._submission is None:
                 raise ValueError("state ended without an accepted completion tool call")
@@ -218,7 +213,7 @@ class CognitiveRuntime:
                 with (self.log_dir / f"{self.session_id}.model.jsonl").open("a") as log:
                     log.write(json.dumps(record, ensure_ascii=False) + "\n")
 
-    def _offline_proposal(self):
+    def _offline_decision(self):
         t, m = self.turn, self.turn.memory
         allowed = [a for a in t.obs.get("available_actions", []) if a.startswith("ACTION")]
         if not allowed:
@@ -229,14 +224,7 @@ class CognitiveRuntime:
         if action == "ACTION6":
             data.update(x=(t.obs["step"] * 11) % t.obs.get("width", 64),
                         y=(t.obs["step"] * 7) % t.obs.get("height", 64))
-        return Proposal.model_validate({
-            "observation_id": t.obs["observation_id"], "memory_revision": m.revision,
-            "purpose": "probe", "action": data,
-            "experiment": {"question": f"Does {action} change the visible board?",
-                           "alternatives": {"visible_effect": [{"kind": "frame_changed", "value": True}],
-                                            "no_visible_effect": [{"kind": "frame_changed", "value": False}]},
-                           "discriminator": "compare next real frame", "risk": "unknown control effects"},
-        })
+        return Decision(action=data, prediction="Compare the next real frame for a visible control effect.")
 
     def _build_graph(self):
         @node(rerun_on_resume=True)
@@ -251,93 +239,42 @@ class CognitiveRuntime:
             except Exception as exc:
                 t.errors.append(f"observation {type(exc).__name__}: {exc}"[:500])
                 t.stop("invalid_observation")
-            return Event(output="observed")
-
-        @node(rerun_on_resume=True)
-        async def verify(ctx: Context):
-            t = self.turn
             if not t.duplicate and t.obs.get("observation_id"):
-                # Initial observation needs no outcome interpretation. Reserve one call for action planning.
-                if (self.model and not t.boundary and t.memory.lifecycle == "ACTIVE"
-                        and (t.memory.pending or t.memory.deferred or t.memory.plan)
-                        and t.obs["state"] in ("NOT_FINISHED", "IN_PROGRESS")
-                        and t.obs.get("remaining_actions", 1) > 0 and not t.obs.get("evaluation_stop_reason")
-                        and t.calls < t.max_calls - 1 and t.time_left() > 0):
-                    try:
-                        t.stage_review(await self._ask(ctx, "VERIFY"))
-                    except Exception as exc:
-                        t.errors.append(f"verification {type(exc).__name__}: {exc}"[:500])
+                # Deterministic bookkeeping only. Reflection and next action share one model call.
                 t.verify()
-            return Event(output="verified")
+                t.update()
+            return Event(route="COMMIT" if t.duplicate or t.memory.lifecycle in ("DONE", "STOPPED") else "DECIDE")
 
-        def update():
-            self.turn.update()
-            return Event(route=self.turn.route())
-
-        async def propose(ctx: Context, state: str):
+        @node(rerun_on_resume=True)
+        async def decide(ctx: Context):
             t = self.turn
-            t.enter(state)
-            if state == "PROBE" and t.proposal and t.proposal.purpose == "probe":
-                return Event(route="ACT")
-            if not self.model:
-                try:
-                    t.accept(self._offline_proposal(), state)
-                    return Event(route="ACT" if state == "PROBE" else "PROBE")
-                except ValueError as exc:
-                    t.errors.append(str(exc))
-                    t.stop("no_legal_action")
-                    return Event(route="COMMIT")
-            while t.calls < t.max_calls and t.time_left() > 0:
-                try:
-                    p = await self._ask(ctx, state)
-                    if state == "PROBE" and (p.status != "ok" or p.purpose != "probe"):
-                        raise ValueError("PROBE requires a complete discriminating experiment")
-                    t.accept(p, state)
-                    if p.status == "need_evidence" or (p.purpose == "probe" and state != "PROBE"):
-                        return Event(route="PROBE")
-                    return Event(route="ACT")
-                except Exception as exc:
-                    t.errors.append(f"proposal {type(exc).__name__}: {exc}"[:500])
-            t.stop("proposal_unavailable")
-            return Event(route="COMMIT")
-
-        @node(rerun_on_resume=True)
-        async def revise(ctx: Context):
-            return await propose(ctx, "REVISE")
-
-        @node(rerun_on_resume=True)
-        async def probe(ctx: Context):
-            return await propose(ctx, "PROBE")
-
-        @node(rerun_on_resume=True)
-        async def plan(ctx: Context):
-            return await propose(ctx, "PLAN")
-
-        def act():
-            try:
-                self.turn.act()
-            except ValueError as exc:
-                self.turn.errors.append(str(exc))
-                if self.model and self.turn.calls < self.turn.max_calls and self.turn.time_left() > 0:
-                    return Event(route="PLAN")
-                self.turn.stop("action_validation_failed")
-            return Event(route="COMMIT")
-
-        def recover():
-            self.turn.recover()
-            return "recovered"
+            t.enter("DECIDE")
+            if t.obs["state"] in ("NOT_PLAYED", "GAME_OVER"):
+                t.recover()
+            elif not t.obs.get("available_actions") or not any(
+                    a.startswith("ACTION") for a in t.obs["available_actions"]):
+                t.stop("no_legal_action")
+            elif not self.model:
+                t.accept_decision(self._offline_decision())
+            else:
+                # Retries repair malformed submissions, never route through more reasoning states.
+                while t.calls < t.max_calls and t.time_left() > 0:
+                    try:
+                        t.accept_decision(await self._ask(ctx, "DECIDE"))
+                        break
+                    except Exception as exc:
+                        t.errors.append(f"decision {type(exc).__name__}: {exc}"[:500])
+                if t.selected is None:
+                    t.stop("budget_exhausted" if t.time_left() <= 0 else "proposal_unavailable")
+            return Event(output="decided")
 
         def commit():
             result = self.turn.commit()
             return Event(output=result, state={"cognition": self.turn.memory.model_dump(mode="json")})
 
-        routes = {"REVISE": revise, "PROBE": probe, "PLAN": plan, "ACT": act,
-                  "RECOVER": recover, "COMMIT": commit}
         return Workflow(name="cognitive_workflow", edges=[
-            ("START", observe, verify, update), (update, routes),
-            (revise, {"PROBE": probe, "ACT": act, "COMMIT": commit}),
-            (probe, {"ACT": act, "COMMIT": commit}), (plan, {"PROBE": probe, "ACT": act, "COMMIT": commit}),
-            (act, {"PLAN": plan, "COMMIT": commit}), (recover, commit),
+            ("START", observe), (observe, {"DECIDE": decide, "COMMIT": commit}),
+            (decide, commit),
         ])
 
     def _log_observation(self, obs: dict):

@@ -54,14 +54,9 @@ class ModelRecoveryTests(unittest.TestCase):
             text = next(part['text'] for msg in body['messages'] if isinstance(msg['content'], list)
                         for part in msg['content'] if part.get('type') == 'text')
             context = json.loads(text)
-            reply = {'observation_id': context['observation_id'], 'memory_revision': context['memory_revision']}
-            reply.update(purpose='plan', plan=[{
-                'id': 'go', 'subgoal': 'finish',
-                'action': {'action': 'ACTION2' if n == 1 else 'ACTION1'},
-                'completion': [{'kind': 'state', 'value': 'WIN'}],
-                'effects': [{'kind': 'state', 'value': 'WIN'}],
-            }])
-            return '<tool_call>' + json.dumps({'name': 'submit_plan', 'arguments': reply}) + '</tool_call>'
+            reply = {'action': {'action': 'ACTION2' if n == 1 else 'ACTION1'},
+                     'prediction': 'The target may move.'}
+            return '<tool_call>' + json.dumps({'name': 'submit_decision', 'arguments': reply}) + '</tool_call>'
         result, memory, requests = self.run_server(respond)
         self.assertEqual(result['action'], 'ACTION1')
         self.assertEqual(len(requests), 2)

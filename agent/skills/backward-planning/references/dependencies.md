@@ -4,6 +4,6 @@ Suppose a block must occupy a pad, but the only path to a switch crosses the pad
 
 If reaching the switch requires the block as a bridge, moving it away too early breaks the prerequisite. Search for a staging location or an alternate access route before accepting the plan. If neither is supported, identify the specific missing effect or route as an inquiry.
 
-For the runtime plan, use `depends_on` only for proposed nodes. Already achieved prerequisites belong in current evidence/preconditions; never create a `done` node to assert an achievement. Each actionable node supplies `completion` and `effects`. A completion condition describes what will be observed after execution, not merely the action name.
+Keep the remaining order and its prerequisites in the working notebook. Already achieved prerequisites need actual evidence; a plan does not prove them. Predict what the first action should change and compare the next observation before continuing.
 
-A repair submission replaces the stored plan. Include the still-needed unaffected future work along with the repair. CLICK nodes sample the current cursor; plans for distinct click targets need fresh positioning and observation instead of a queued list of targetless clicks.
+When repairing the plan, keep unaffected future work in the notebook. CLICK samples the current cursor; distinct targets need fresh positioning and observation instead of a queued list of targetless clicks.

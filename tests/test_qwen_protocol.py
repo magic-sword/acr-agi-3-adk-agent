@@ -68,11 +68,8 @@ class QwenProtocolTests(unittest.TestCase):
                 context = next(json.loads(p['text']) for m in payload['messages']
                     if m['role']=='user' and isinstance(m['content'], list)
                     for p in m['content'] if p.get('type')=='text')
-                message = {'content': native('submit_plan', {'observation_id':context['observation_id'],
-                    'memory_revision':context['memory_revision'], 'purpose':'plan', 'plan':[{
-                        'id':'test', 'subgoal':'test input', 'action':{'action':'UP'},
-                        'completion':[{'kind':'frame_changed','value':True}],
-                        'effects':[{'kind':'frame_changed','value':True}]}]})}
+                message = {'content': native('submit_decision', {
+                    'action': {'action': 'UP'}, 'prediction': 'Test whether the target moves.'})}
             return {'choices':[{'message':message,'finish_reason':'stop'}]}
         with patch.object(LocalVisionLlm, '_complete', respond):
             runtime = CognitiveRuntime('test','local/qwen3-vl-4b-instruct')
@@ -81,6 +78,6 @@ class QwenProtocolTests(unittest.TestCase):
                     'available_actions':['ACTION1'],'remaining_actions':2,'grid':[[0]]})
                 self.assertEqual(result['action'], 'ACTION1')
                 self.assertEqual(len(requests), 2)
-                self.assertEqual(runtime._agent('PLAN').model._exchanges[0]['decoded_protocol'], 'qwen_hermes_text')
+                self.assertEqual(runtime._agent('DECIDE').model._exchanges[0]['decoded_protocol'], 'qwen_hermes_text')
             finally:
                 runtime.close()

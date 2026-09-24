@@ -105,16 +105,14 @@ class VisualObservationTests(unittest.TestCase):
                 context = next(json.loads(part['text']) for m in payload['messages']
                                if m['role'] == 'user' and isinstance(m['content'], list)
                                for part in m['content'] if part.get('type') == 'text')
-                reply = {'observation_id': context['observation_id'], 'memory_revision': context['memory_revision']}
-                reply.update(purpose='plan', plan=[{'id': 'go', 'subgoal': 'finish',
-                    'action': {'action': 'CLICK'}, 'completion': [{'kind': 'state', 'value': 'WIN'}],
-                    'effects': [{'kind': 'state', 'value': 'WIN'}]}])
-                message = {'tool_calls': [{'id': 'submit', 'type': 'function', 'function': {'name': 'submit_plan', 'arguments': json.dumps(reply)}}]}
+                reply = {'action': {'action': 'CLICK'}, 'prediction': 'The selected tile may change.'}
+                message = {'tool_calls': [{'id': 'submit', 'type': 'function', 'function': {'name': 'submit_decision', 'arguments': json.dumps(reply)}}]}
             return {'choices': [{'message': message}]}
 
         with tempfile.TemporaryDirectory() as tmp, patch.object(LocalVisionLlm, '_complete', respond):
             runtime = CognitiveRuntime('visual', 'local/qwen3-vl-4b-instruct', log_dir=tmp)
             self.addCleanup(runtime.close)
+            runtime._agent('DECIDE').model.max_requests = 4  # Exercise all visual tools in one invocation.
             result = runtime.decide(obs)
             self.assertEqual((result['action'], result['x'], result['y']), ('ACTION6', 12, 35))
             self.assertEqual(runtime.cursor, {'x': 12, 'y': 35})

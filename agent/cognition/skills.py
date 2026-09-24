@@ -23,17 +23,14 @@ SKILL_NAMES = {
 }
 
 STATE_SKILLS = {
+    "DECIDE": ("S01", "S03", "S05", "S07", "S08"),
     "OBSERVE": (),
-    "VERIFY": ("S01", "S02", "S03", "S04", "S10"),
-    "PLAN": ("S01", "S02", "S04", "S05", "S08", "S09", "S10", "S11", "S12", "S14"),
-    "PROBE": ("S01", "S02", "S04", "S07", "S10", "S12"),
-    "REVISE": ("S01", "S02", "S04", "S05", "S06", "S07", "S08", "S09", "S10", "S11", "S12"),
     "UPDATE": (), "ACT": (), "COMMIT": (), "CONSOLIDATE": (), "RECOVER": (),
 }
 
 
 def selected_skills(state: str) -> tuple[str, ...]:
-    selected = STATE_SKILLS[state]
+    selected = STATE_SKILLS.get(state, ())
     if not selected:
         raise ValueError(f"{state} is host-only and must not create a model skill toolset")
     return tuple(dict.fromkeys(selected))
