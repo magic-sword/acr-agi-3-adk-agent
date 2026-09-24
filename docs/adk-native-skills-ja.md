@@ -34,7 +34,7 @@ OBSERVEは画像・観測ID・操作対応の記録だけを行う。VERIFYはIn
 
 全モデル状態に`observe_current`、`list_observations`、`get_observation`、`compare_observations`、`observe_animation`、`move_cursor`を公開する。画像付きの取得結果はテキストへbase64を埋め込まず、画像入力としてモデルへ返す。呼出しは外部ゲームを進めない。
 
-モデルログの`state`と`available_skills`で候補、`exchanges`で実際の読込・観測参照を確認する。登録済みでも未使用のスキルがあることは正常であり、全候補を毎回ロードしない。現行実装では関連する最大2スキルの選択を指示し、最終HTTP枠は`tool_choice=none`でJSON回答に予約する。
+モデルログの`state`と`available_skills`で候補、`exchanges`で実際の読込・観測参照を確認する。登録済みでも未使用のスキルがあることは正常であり、全候補を毎回ロードしない。現行実装では関連する最大2スキルの選択を指示する。最終HTTP枠では`submit_plan`／`submit_revision`／`submit_experiment`／`submit_interpretation`のうち、その状態の完了ツールだけを公開して`tool_choice=required`とする。受理した提出は追加のモデル応答なしでWorkflowへ戻る。
 
 S01〜S12、S14、S15は実際に呼び出されるLLM状態へ接続済み。S13（決定の確定・記録）だけはCOMMITのPython処理が担い、モデルへ登録しない。S13の定義ファイルは保持する。その他のスキルについて、関数による処理があることだけを理由に意味解釈・計画判断の候補から除外しない。
 

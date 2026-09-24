@@ -2,6 +2,8 @@
 
 更新日: 2026-09-24。[設計](adk-cognitive-state-machine-ja.md)と[スキル仕様](adk-cognitive-skills-ja.md)に基づく初期実装。実行基盤と検証付きの認知ループを実装した。人間並みの推論能力や未見ゲームの解決性能を実証した段階ではない。
 
+最新の[完了ツールへの変更と検証結果](local-evaluation-completion-tools-ja.md)では、全78テストと実モデルによる実験提出・1操作の実行を確認した。
+
 ## 実装した動作
 
 - Google ADK **2.0.0の実際のWorkflow**でOBSERVE→VERIFY→UPDATEを実行し、コードのガードでREVISE／PROBE／PLAN／ACT／RECOVERを選択する。COMMITだけがセッションの認知記憶を更新する。
@@ -30,7 +32,7 @@
 |`agent/adk_policy.py`|ゲーム単位のRuntime生成と同期API|
 |`agent/my_agent.py`|フレーム変換、1操作の配送、無操作での停止|
 
-ADKの関数ノード・ルートを使用し、モデル判断は関数ノードから`Context.run_node`で呼ぶ。根拠となるAPIは[Graph workflows](https://adk.dev/graphs/)、[Graph routes](https://adk.dev/graphs/routes/)、[Dynamic workflows](https://adk.dev/graphs/dynamic/)。モデルが返すJSONはホストで検証し、サーバ側の制約付き生成には依存しない。
+ADKの関数ノード・ルートを使用し、モデル判断は関数ノードから`Context.run_node`で呼ぶ。根拠となるAPIは[Graph workflows](https://adk.dev/graphs/)、[Graph routes](https://adk.dev/graphs/routes/)、[Dynamic workflows](https://adk.dev/graphs/dynamic/)。`agent/cognition/completion.py`の状態専用ツールで型付き結果を受け付ける。ホスト検証を通ったら`skip_summarization`でADKのツールループを終了し、Workflowが遷移する。最終回答テキストのJSON解析には依存しない。
 
 ## 実行方法
 

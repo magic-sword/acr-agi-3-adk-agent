@@ -43,6 +43,6 @@ Tool reads do not change observation IDs, memory revisions or external action co
 Unavailable evidence must remain unknown. Retrieval does not itself establish an effect,
 causal explanation, object identity or progress. Infer those only in the relevant reasoning state.
 
-When relevant to your current question, extract visible objects and relations, preserving color IDs and original coordinates. Separate facts from hypotheses, cite only supplied observation IDs, and state specific unknowns. Return the requested JSON contract. Tools only inspect or position the host cursor; the host validates and executes game actions.
+When relevant to your current question, extract visible objects and relations, preserving color IDs and original coordinates. Separate facts from hypotheses, cite only supplied observation IDs, and state specific unknowns. Call the current state's completion tool with the requested structured arguments. Tools only inspect or position the host cursor; the host validates and executes game actions.
 
 Read `references/evidence-contract.md` with `load_skill_resource` when checking evidence or predictions.

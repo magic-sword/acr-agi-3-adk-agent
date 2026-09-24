@@ -8,7 +8,7 @@ Use the button names printed in the current image and listed in `observation.ava
 
 ## Button presses
 
-The following is a NESTED action field, never a complete final response. In the requested Proposal contract, use an action such as `{"action":"UP","reason":"test the up button"}`. Use the same shape in a plan node. Choose one legal external action per decision, with the required predicted effects or distinguishing experiment. Do not send internal ACTION numbers. `scripts/controls.py` maps displayed names to the engine at the validated execution boundary.
+The following is a NESTED action field, never the complete submission. In the completion tool arguments, use an action such as `{"action":"UP","reason":"test the up button"}`. Use the same shape in a plan node. Choose one legal external action per decision, with the required predicted effects or distinguishing experiment. Do not send internal ACTION numbers. `scripts/controls.py` maps displayed names to the engine at the validated execution boundary.
 
 ## Move, inspect, click
 
@@ -18,6 +18,6 @@ The following is a NESTED action field, never a complete final response. In the 
 
 A planned CLICK means "click wherever the cursor is when this node executes". It does not remember a future target. Do not queue clicks intended for different targets; obtain a new observation and position the cursor for each target. Host history can contain concrete x/y for already executed clicks; those fields are evidence, not arguments for a new CLICK. Once selected, an external click's coordinates are fixed for that decision and are not changed by later cursor movement.
 
-The tools return views only. Your final JSON must be the complete Proposal (observation_id, memory_revision, purpose, and experiment or plan), not the nested action example; the host checks legality, preconditions and budgets before executing it once. If evidence is insufficient, report the specific unknown instead of choosing an arbitrary action.
+Observation tools return views only. Submit the complete Proposal (observation_id, memory_revision, purpose, and experiment or plan) through the current completion tool, such as submit_experiment in PROBE; the host checks legality, preconditions and budgets before executing it once. If evidence is insufficient, report the specific unknown instead of choosing an arbitrary action.
 
 Read `references/evidence-contract.md` with `load_skill_resource` for evidence and prediction semantics.

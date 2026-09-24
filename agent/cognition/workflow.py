@@ -24,7 +24,7 @@ from .engine import CognitiveTurn, new_memory
 from .evidence import EvidenceStore
 from .skills import instruction, skill_toolset, selected_skills
 from .state import Memory, Interpretation, Proposal
-from .validation import parse_json
+from .completion import CompletionTool, COMPLETION_TOOLS, submission_schema
 
 APP_NAME = "arc_cognition"
 
@@ -55,6 +55,8 @@ class CognitiveRuntime:
         self.initialized = False
         self.closed = False
         self.agents = {}
+        self._submission = None
+        self._submission_attempts = []
         self.cursor = None
         self.evidence = EvidenceStore()
         self.workflow = self._build_graph()
@@ -64,15 +66,14 @@ class CognitiveRuntime:
         selected_skills(state)
         key = state
         if key not in self.agents:
-            schema = Interpretation if state == "VERIFY" else Proposal
             self.agents[key] = LlmAgent(
                 name=f"skill_{key.lower()}", include_contents="none",
                 model=LocalVisionLlm(model="qwen3-vl-4b-instruct",
                                      api_base=os.getenv("VLM_API_BASE", "http://vlm:8080/v1"),
                                      max_output_tokens=1600 if state == "VERIFY" else 2400,
-                                     timeout_seconds=90),
-                instruction=instruction(state, schema.model_json_schema()),
-                tools=[skill_toolset(state), self.observe_current, self.list_observations,
+                                     timeout_seconds=90, completion_tools=(COMPLETION_TOOLS[state],)),
+                instruction=instruction(state, submission_schema(state)),
+                tools=[CompletionTool(self, state), skill_toolset(state), self.observe_current, self.list_observations,
                        self.get_observation, self.compare_observations, self.move_cursor, self.observe_animation],
             )
         return self.agents[key]
@@ -173,13 +174,15 @@ class CognitiveRuntime:
                            "changes": [{"kind": "frame_changed", "value": True}],
                            "unchanged": [{"kind": "frame_changed", "value": False}]},
                            "discriminator": "REPLACE with what to compare", "risk": "REPLACE with possible side effects"}}
-            parts.append(types.Part(text="Example response JSON structure for an experiment (choose your own legal action and useful predictions; "
+            parts.append(types.Part(text="Example submit_experiment arguments for an experiment (choose your own legal action and useful predictions; "
                 "a whole-frame change alone is not goal progress). No bare action JSON: " + json.dumps(example)))
         else:
-            parts.append(types.Part(text="Return Interpretation starting with these exact identity fields: "
+            parts.append(types.Part(text="Call submit_interpretation with these exact identity fields: "
                 + json.dumps(identity) + ". Include only grounded facts and a concise evidence-linked summary; "
                 "omit goal unless outcome evidence requires a revision."))
         agent = self._agent(state)
+        self._submission = None
+        self._submission_attempts = []
         agent.model.begin_invocation()
         agent.model.timeout_seconds = max(1, min(90, int(t.time_left())))
         started = time.monotonic()
@@ -190,13 +193,11 @@ class CognitiveRuntime:
             async with asyncio.timeout(min(92, t.time_left())):
                 answer = await ctx.run_node(agent, node_input=types.Content(role="user", parts=parts))
             record.update(agent.model._last_metrics)
-            if isinstance(answer, types.Content):
-                answer = "".join(p.text or "" for p in answer.parts or [])
-            record["response"] = answer if isinstance(answer, str) else str(answer)
-            if not isinstance(answer, str):
-                raise ValueError("model returned no textual proposal")
-            schema = Interpretation if state == "VERIFY" else Proposal
-            parsed = schema.model_validate(parse_json(answer))
+            if self._submission is None:
+                raise ValueError("state ended without an accepted completion tool call")
+            parsed = self._submission
+            record["response"] = parsed.model_dump_json()
+            record["completion_tool"] = COMPLETION_TOOLS[state]
             record["schema_valid"] = True
             return parsed
         except Exception as exc:
@@ -206,7 +207,9 @@ class CognitiveRuntime:
             record.update(agent.model._last_metrics)
             record['exchanges'] = agent.model._exchanges
             record['http_requests'] = len(agent.model._exchanges)
+            record['submissions'] = self._submission_attempts
             record["seconds"] = time.monotonic() - started
+            self._submission = None
             if self.log_dir:
                 self.log_dir.mkdir(parents=True, exist_ok=True)
                 with (self.log_dir / f"{self.session_id}.model.jsonl").open("a") as log:

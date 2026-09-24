@@ -58,7 +58,7 @@ class ActionContractTests(unittest.TestCase):
                     "completion": [{"kind": "levels_min", "value": 1}],
                     "effects": [{"kind": "levels_min", "value": 1}],
                 }])
-                body = json.dumps({"choices": [{"message": {"content": json.dumps(reply)}}]}).encode()
+                body = json.dumps({"choices": [{"message": {"tool_calls": [{"id": "submit", "type": "function", "function": {"name": "submit_plan", "arguments": json.dumps(reply)}}]}}]}).encode()
 
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")

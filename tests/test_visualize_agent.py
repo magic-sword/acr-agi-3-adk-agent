@@ -18,6 +18,8 @@ class VisualizeAgentTests(unittest.TestCase):
         expected = set(data['state_skills']['REVISE'])
         self.assertEqual(set(data['effective_skills']['REVISE']), expected)
         self.assertEqual(data['effective_skills']['COMMIT'], [])
+        self.assertEqual(data['completion_tools']['PROBE'], 'submit_experiment')
+        self.assertIn('agent/cognition/completion.py', data['sha256'])
         ET.fromstring(render_svg(data))
         json.dumps(data)
 

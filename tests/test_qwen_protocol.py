@@ -68,7 +68,7 @@ class QwenProtocolTests(unittest.TestCase):
                 context = next(json.loads(p['text']) for m in payload['messages']
                     if m['role']=='user' and isinstance(m['content'], list)
                     for p in m['content'] if p.get('type')=='text')
-                message = {'content': json.dumps({'observation_id':context['observation_id'],
+                message = {'content': native('submit_plan', {'observation_id':context['observation_id'],
                     'memory_revision':context['memory_revision'], 'purpose':'plan', 'plan':[{
                         'id':'test', 'subgoal':'test input', 'action':{'action':'UP'},
                         'completion':[{'kind':'frame_changed','value':True}],

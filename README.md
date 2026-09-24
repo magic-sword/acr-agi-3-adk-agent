@@ -144,3 +144,5 @@ make status                    # inspect the Kaggle run
 If the Kaggle runtime changes its installed Google ADK version or competition dataset paths, rerun `make notebook` and inspect the generated cells before pushing. This repository follows the official [ARC-AGI-3 Kaggle Starter](https://github.com/arcprize/ARC-AGI-3-Kaggle-Starter) execution contract and uses the [Google ADK](https://adk.dev/) runtime.
 
 Native ADK skills now use `agent/skills/*/SKILL.md` and on-demand references through the local Qwen tool-call adapter. See [skill connection and checks](docs/adk-native-skills-ja.md).
+
+Reasoning states finish through validated submission tools (`submit_plan`, `submit_revision`, `submit_experiment`, `submit_interpretation`). ADK can perform multiple evidence lookups before submission; Workflow retains routing and action execution. No separate final JSON response is required. `make visualize` also shows the state-to-completion-tool mapping.

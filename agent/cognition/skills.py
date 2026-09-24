@@ -1,6 +1,7 @@
 """State-scoped ADK SkillToolsets with on-demand instructions and resources."""
 
 from pathlib import Path
+from .completion import COMPLETION_TOOLS
 
 from google.adk.skills import load_skill_from_dir
 from google.adk.tools.skill_toolset import SkillToolset
@@ -78,7 +79,10 @@ def instruction(state: str, schema: dict) -> str:
     }[state]
     return (
         f'You solve an unknown visual game. Current reasoning state: {state}. {task}\n'
-        'Return ONE JSON object matching the schema, with no prose. Use only supplied observations and memory. '
+        f'Finish by calling {COMPLETION_TOOLS[state]} with arguments matching the schema. '
+        'A text response does not complete the state. Call the completion tool alone. '
+        'If rejected, correct the reported error and resubmit within the request budget. '
+        'Use only supplied observations and memory. '
         'Use list_skills then load_skill for at most two directly relevant skills; do not load the whole catalog. '
         'The attached image is the current final frame. OBSERVE only records evidence; YOU interpret it for this task. '
         'Use list_observations, get_observation(observation_id), compare_observations(before_id,after_id,offset) '
@@ -96,7 +100,7 @@ def instruction(state: str, schema: dict) -> str:
         'levels_min needs integer; frame_changed needs boolean and does not imply useful progress. '
         'Plan dependencies must be acyclic; status must be todo; action nodes need completion and effects. '
         'delay_steps counts external actions. Hypothesis scope is level or game. '
-        'Start the final JSON with observation_id and memory_revision copied from input. Both are REQUIRED even for need_evidence. '
+        'Include observation_id and memory_revision copied from input. Both are REQUIRED even for need_evidence. '
         'For need_evidence include purpose=plan, status=need_evidence and inquiry, with no plan/action/experiment. '
         'An experiment is purpose=probe, never a plan node with empty completion/effects. '
         'Do not fill fields with template answers.\n'

@@ -37,10 +37,10 @@ class SkillAdapterTests(unittest.TestCase):
             }
             for state, names in expected.items():
                 agent = runtime._agent(state)
-                registered = [s.name for s in agent.tools[0]._list_skills()]
+                registered = [s.name for s in agent.tools[1]._list_skills()]
                 self.assertEqual(set(registered), names)
                 self.assertEqual(len(registered), len(names))
-                tools = {tool.__name__ for tool in agent.tools[1:]}
+                tools = {tool.__name__ for tool in agent.tools[2:]}
                 self.assertTrue({'get_observation', 'compare_observations', 'list_observations'} <= tools)
             from agent.cognition.skills import SKILL_NAMES
             self.assertEqual(set().union(*expected.values()),
@@ -183,11 +183,12 @@ class SkillAdapterTests(unittest.TestCase):
                                if m['role'] == 'user' and isinstance(m['content'], list)
                                for p in m['content'] if p.get('type') == 'text')
                 reply = {'observation_id': context['observation_id'], 'memory_revision': context['memory_revision']}
-                self.assertEqual(payload['tool_choice'], 'none')
+                self.assertEqual(payload['tool_choice'], 'required')
+                self.assertEqual([t['function']['name'] for t in payload['tools']], ['submit_plan'])
                 reply.update(purpose='plan', plan=[{'id': 'go', 'subgoal': 'finish',
                     'action': {'action': 'ACTION1'}, 'completion': [{'kind': 'state', 'value': 'WIN'}],
                     'effects': [{'kind': 'state', 'value': 'WIN'}]}])
-                message = {'content': json.dumps(reply)}
+                message = {'tool_calls': [{'id': 'submit', 'type': 'function', 'function': {'name': 'submit_plan', 'arguments': json.dumps(reply)}}]}
             return {'choices': [{'message': message}]}
         with patch.object(LocalVisionLlm, '_complete', respond):
             runtime = CognitiveRuntime('test', 'local/qwen3-vl-4b-instruct')

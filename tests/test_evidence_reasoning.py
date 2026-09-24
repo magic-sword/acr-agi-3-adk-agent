@@ -161,7 +161,9 @@ class ReasoningRoundTrip(unittest.TestCase):
                              evidence_refs=[oid]), plan=[{'id': 'align', 'subgoal': 'test alignment',
                              'action': {'action': 'UP'}, 'completion': [{'kind': 'state', 'value': 'WIN'}],
                              'effects': [{'kind': 'state', 'value': 'WIN'}]}])
-            return {'choices': [{'message': {'content': json.dumps(reply)}}]}
+            name = {'PLAN': 'submit_plan', 'PROBE': 'submit_experiment', 'VERIFY': 'submit_interpretation'}[state]
+            return {'choices': [{'message': {'tool_calls': [{'id': 'submission', 'type': 'function',
+                'function': {'name': name, 'arguments': json.dumps(reply)}}]}}]}
 
         with patch.object(LocalVisionLlm, '_complete', respond):
             runtime = CognitiveRuntime('test', 'local/qwen3-vl-4b-instruct')

@@ -109,7 +109,7 @@ class VisualObservationTests(unittest.TestCase):
                 reply.update(purpose='plan', plan=[{'id': 'go', 'subgoal': 'finish',
                     'action': {'action': 'CLICK'}, 'completion': [{'kind': 'state', 'value': 'WIN'}],
                     'effects': [{'kind': 'state', 'value': 'WIN'}]}])
-                message = {'content': json.dumps(reply)}
+                message = {'tool_calls': [{'id': 'submit', 'type': 'function', 'function': {'name': 'submit_plan', 'arguments': json.dumps(reply)}}]}
             return {'choices': [{'message': message}]}
 
         with tempfile.TemporaryDirectory() as tmp, patch.object(LocalVisionLlm, '_complete', respond):

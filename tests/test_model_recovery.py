@@ -61,10 +61,10 @@ class ModelRecoveryTests(unittest.TestCase):
                 'completion': [{'kind': 'state', 'value': 'WIN'}],
                 'effects': [{'kind': 'state', 'value': 'WIN'}],
             }])
-            return json.dumps(reply)
+            return '<tool_call>' + json.dumps({'name': 'submit_plan', 'arguments': reply}) + '</tool_call>'
         result, memory, requests = self.run_server(respond)
         self.assertEqual(result['action'], 'ACTION1')
         self.assertEqual(len(requests), 2)
         self.assertEqual(memory.revision, 1)
         self.assertEqual(memory.pending.action.action, 'ACTION1')
-        self.assertTrue(memory.history[-1]['errors'])
+        self.assertTrue(any('Invalid model action' in m.get('content', '') for m in requests[-1]['messages'] if m['role'] == 'tool'))

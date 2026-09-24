@@ -47,6 +47,7 @@ class LocalVisionLlm(BaseLlm):
     timeout_seconds: int = 180
     max_output_tokens: int = 1600
     max_requests: int = MAX_REQUESTS_PER_INVOCATION
+    completion_tools: tuple[str, ...] = ()
     _last_metrics: dict = PrivateAttr(default_factory=dict)
     _exchanges: list = PrivateAttr(default_factory=list)
     _request_count: int = PrivateAttr(default=0)
@@ -159,12 +160,14 @@ class LocalVisionLlm(BaseLlm):
         payload = self._payload(llm_request)
         remaining = self.max_requests - self._request_count
         if payload.get('tools'):
-            # Reserve the final HTTP request for a textual decision, not another tool round.
-            if remaining == 1:
-                payload['tool_choice'] = 'none'
+            if remaining == 1 and self.completion_tools:
+                payload['tools'] = [tool for tool in payload['tools']
+                                    if tool['function']['name'] in self.completion_tools]
+                payload['tool_choice'] = 'required'
             budget_instruction = (f'{remaining} HTTP requests remain in this reasoning state. '
-                + ('Return the final JSON now; no further tool calls.' if remaining == 1 else
-                   'Load at most two relevant skills; preserve requests for evidence and the final JSON.'))
+                + ('Submit the completed result using the completion tool now. No further evidence lookups.'
+                   if remaining == 1 and self.completion_tools else
+                   'Load at most two relevant skills; preserve requests for evidence and task completion.'))
             # Qwen's template reads only the first system message. Keep the full state contract there.
             if payload['messages'][0]['role'] == 'system':
                 payload['messages'][0]['content'] += '\n' + budget_instruction
@@ -186,6 +189,9 @@ class LocalVisionLlm(BaseLlm):
             parts, protocol = QwenToolCallAdapter().decode(
                 message, allowed=allowed, tool_choice=payload.get('tool_choice', 'auto'),
                 finish_reason=choice.get('finish_reason'))
+            calls = [part.function_call for part in parts if part.function_call]
+            if any(call.name in self.completion_tools for call in calls) and len(calls) != 1:
+                raise ValueError('Completion must be the only tool call in a response')
             record['decoded_protocol'] = protocol
             record['normalized_tool_calls'] = [
                 {'id': p.function_call.id, 'name': p.function_call.name, 'arguments': p.function_call.args}

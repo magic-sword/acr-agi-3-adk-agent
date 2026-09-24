@@ -8,6 +8,6 @@ description: "Design a bounded experiment whose observable outcomes distinguish 
 2. Design a bounded experiment whose observable outcomes distinguish at least two plausible hypotheses. State cost and irreversible risk.
 3. Separate visible facts from hypotheses. Refer only to observation IDs supplied in the input.
 4. If evidence is insufficient, report a specific unknown or a distinguishing experiment; do not invent a fact.
-5. Return the requested state's JSON contract. A skill must not directly execute game actions or modify budgets.
+5. Call the current state's completion tool with the requested structured arguments. A skill must not directly execute game actions or modify budgets.
 
 Read `references/evidence-contract.md` with `load_skill_resource` when checking evidence, coordinates or prediction semantics.

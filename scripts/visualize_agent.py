@@ -101,6 +101,13 @@ def extract(root: Path) -> dict:
     agent = next(n for n in runtime.body if isinstance(n, ast.FunctionDef) and n.name == '_agent')
     llm = next(n for n in ast.walk(agent) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == 'LlmAgent')
     tools = ast.unparse(next(k.value for k in llm.keywords if k.arg == 'tools'))
+    completion_path = 'agent/cognition/completion.py'
+    sources[completion_path] = (root / completion_path).read_text()
+    completion_tree = ast.parse(sources[completion_path])
+    completions = next(ast.literal_eval(n.value) for n in completion_tree.body
+                       if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name)
+                       and t.id == 'COMPLETION_TOOLS' for t in n.targets))
+
     details = {}
     for n in build.body:
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -111,7 +118,7 @@ def extract(root: Path) -> dict:
     return {'generated_utc': datetime.now(timezone.utc).isoformat(), 'nodes': list(names),
             'edges': edges, 'skill_names': constants['SKILL_NAMES'], 'state_skills': constants['STATE_SKILLS'],
             'effective_skills': matrix, 'skill_files': skill_files, 'internal': internal,
-            'model_tools': tools, 'source_details': details,
+            'completion_tools': completions, 'model_tools': tools, 'source_details': details,
             'sha256': {p: hashlib.sha256(s.encode()).hexdigest() for p, s in sources.items()}}
 
 
@@ -197,6 +204,7 @@ def main():
     html = '<!doctype html><html lang="ja"><meta charset="utf-8"><title>Agent architecture</title><style>body{font:16px system-ui;margin:24px;background:#f8fafc;color:#172554}svg{width:100%;height:auto;min-width:900px}.diagram{overflow:auto}pre{overflow:auto;background:#e2e8f0;padding:16px}summary{cursor:pointer;padding:10px}td{padding:6px 20px}code{overflow-wrap:anywhere}</style>'
     html += '<h1>エージェントの構造とスキル接続</h1><p><code>make visualize</code>で最新ソースから再生成。青い点は利用可能なスキルで、実行済みを意味しません。モデルなしではLLMスキルは使いません。</p>'
     html += '<p>OBSERVEは記録のみ。VERIFY・PLAN・PROBE・REVISEは共通の過去観測・差分取得ツールを利用できます。CONSOLIDATEはエンジン内の呼び出しです。</p>'
+    html += '<h2>ステート完了ツール</h2><pre>'+escape(json.dumps(data['completion_tools'], ensure_ascii=False, indent=2))+'</pre>'
     html += '<div class="diagram">'+svg+'</div><h2>モデルに渡すツール（ソース抽出）</h2><pre>'+escape(data['model_tools'])+'</pre>'
     html += '<h2>遷移一覧</h2><table>'+edge_rows+'</table><h2>分岐条件・各ステートの処理（現在のソース）</h2>'+details
     html += '<h2>再現情報</h2><p>生成時刻: '+escape(data['generated_utc'])+'</p><pre>'+escape(json.dumps(data['sha256'],indent=2))+'</pre></html>'
