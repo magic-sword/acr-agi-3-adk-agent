@@ -50,17 +50,14 @@ class ActionContractTests(unittest.TestCase):
                 texts = [part["text"] for message in payload["messages"]
                          if isinstance(message["content"], list)
                          for part in message["content"] if part.get("type") == "text"]
-                context = json.loads(texts[-1])
+                context = json.loads(texts[0])
                 reply = {"observation_id": context["observation_id"],
                          "memory_revision": context["memory_revision"]}
-                if "relational" in payload["messages"][0]["content"] or len(received) == 1:
-                    reply.update(goal="reach next level", facts=[], unknowns=[])
-                else:
-                    reply.update(purpose="plan", plan=[{
-                        "id": "move", "subgoal": "reach next level", "action": {"action": "ACTION1"},
-                        "completion": [{"kind": "levels_min", "value": 1}],
-                        "effects": [{"kind": "levels_min", "value": 1}],
-                    }])
+                reply.update(purpose="plan", plan=[{
+                    "id": "move", "subgoal": "reach next level", "action": {"action": "ACTION1"},
+                    "completion": [{"kind": "levels_min", "value": 1}],
+                    "effects": [{"kind": "levels_min", "value": 1}],
+                }])
                 body = json.dumps({"choices": [{"message": {"content": json.dumps(reply)}}]}).encode()
 
                 self.send_response(200)

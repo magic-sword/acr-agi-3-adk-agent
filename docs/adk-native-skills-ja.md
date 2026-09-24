@@ -2,6 +2,8 @@
 
 `LocalVisionLlm`はADKの`BaseLlm`を継承し、画像・テキストに加え、OpenAI互換APIのfunction callingを変換する。ADKがツールを実行し、その結果をモデルへ返す。アダプタ自身はゲーム操作やスクリプトを実行しない。
 
+応答の変換は`QwenToolCallAdapter`へ分離した。構造化された`tool_calls`とQwen3-VLの`<tool_call>`形式の両方をADKへ接続する。[形式・実行制約・検証結果](qwen-adk-tool-protocol-ja.md)を参照。
+
 ## 構成
 
 ```text
@@ -14,7 +16,7 @@ Workflow → 状態に対応したLlmAgent + SkillToolset
 
 S01〜S15を`agent/skills/<name>/SKILL.md`と`references/evidence-contract.md`へ移した。状態ごとに`STATE_SKILLS`に登録された候補だけを公開する。本文を一括でシステム指示に連結せず、LLMが`list_skills`でL1の名前・説明、`load_skill`でL2の手順、必要に応じて`load_skill_resource`でL3の資料を取得する。フォルダはホストで読み込まれるが、LLMへの提示は段階的に行う。
 
-VERIFYやCOMMIT等の決定的処理は引き続きPythonで実行する。15スキル全部を毎手モデルで実行する構成ではない。モデルによるスキル選択の適切さ・指示への準拠は別の評価対象で、ツールを登録するだけでは保証されない。
+OBSERVE・UPDATE・COMMIT等の決定的処理はPythonで実行する。VERIFYは視覚的解釈とPythonの述語照合を組み合わせる。15スキル全部を毎手モデルで実行する構成ではない。モデルによるスキル選択の適切さ・指示への準拠は別の評価対象で、ツールを登録するだけでは保証されない。
 
 ## 状態ごとのスキル接続
 
@@ -22,16 +24,17 @@ VERIFYやCOMMIT等の決定的処理は引き続きPythonで実行する。15ス
 
 |状態・用途|公開するスキル|数|
 |---|---|---:|
-|OBSERVE|S01 視覚観測、S02 不可視情報、S03 予測照合の解釈、S04 仮説管理、S05 目標推定|5|
-|PROBE|S07 識別実験、S10 時間・同期、S12 操作の具体化、S15 予算を考慮した回復判断|4|
-|PLAN|S08 逆算計画、S09 計画修復、S10 時間・同期、S11 効果の再評価、S12 操作の具体化、S14 成功手順の再利用|6|
-|REVISE → PROBE|S04 / S05 / S06 原因診断 / S09 / S11 ＋ PROBEの候補|9|
-|REVISE → PLAN|S04 / S05 / S06 原因診断 / S09 / S11 ＋ PLANの候補（重複除去）|9|
-|VERIFY / UPDATE / ACT / COMMIT / CONSOLIDATE / RECOVER|Pythonで処理し、これらのノード自身にはLLMを追加しない|0|
+|OBSERVE / UPDATE / ACT / COMMIT / CONSOLIDATE / RECOVER|ホスト処理のみ|0|
+|VERIFY|S01 / S02 / S03 / S04 / S10|5|
+|PLAN|S01 / S02 / S04 / S05 / S08 / S09 / S10 / S11 / S12 / S14|10|
+|PROBE|S01 / S02 / S04 / S07 / S10 / S12 / S15|7|
+|REVISE|S01 / S02 / S04 / S05 / S06 / S07 / S08 / S09 / S10 / S11 / S12 / S15|12|
 
-OBSERVEはPerception応答で観測・仮説・目標を提案するため、不可視情報や予測の解釈もここへ接続する。Pythonの予測照合や記憶保持はそのまま維持する。S12は実行前検証を置き換えず、モデルが有効な操作を提案するために使う。S15の判断支援とPythonによる予算上限の強制も別の責務である。
+OBSERVEは画像・観測ID・操作対応の記録だけを行う。VERIFYはInterpretation、PLAN・PROBE・REVISEは必要なInterpretationを含むProposalを返す。目標未確定でもPLANへ進む。REVISEは独立した推論状態で、旧実装の遷移先との動的な合成は廃止した。
 
-REVISEは遷移先のスキル候補に仮説・目標・原因の再検討と計画修復・効果の再評価を加える。PROBE用・PLAN用のLlmAgentは別々に保持する。モデルログの`available_skills`と`proposal_state`で候補を確認できる。
+全モデル状態に`observe_current`、`list_observations`、`get_observation`、`compare_observations`、`observe_animation`、`move_cursor`を公開する。画像付きの取得結果はテキストへbase64を埋め込まず、画像入力としてモデルへ返す。呼出しは外部ゲームを進めない。
+
+モデルログの`state`と`available_skills`で候補、`exchanges`で実際の読込・観測参照を確認する。登録済みでも未使用のスキルがあることは正常であり、全候補を毎回ロードしない。現行実装では関連する最大2スキルの選択を指示し、最終HTTP枠は`tool_choice=none`でJSON回答に予約する。
 
 S01〜S12、S14、S15は実際に呼び出されるLLM状態へ接続済み。S13（決定の確定・記録）だけはCOMMITのPython処理が担い、モデルへ登録しない。S13の定義ファイルは保持する。その他のスキルについて、関数による処理があることだけを理由に意味解釈・計画判断の候補から除外しない。
 
@@ -39,9 +42,9 @@ S01〜S12、S14、S15は実際に呼び出されるLLM状態へ接続済み。S1
 
 - ツール宣言のJSON Schema、assistantの`tool_calls`、対応する`tool_call_id`付き結果を変換する。複数呼び出しの履歴もIDで対応付けるが、モデルへの要求は`parallel_tool_calls=false`とする。
 - 不正な引数JSON、未登録ツール、重複ID、対応しない結果は拒否する。ゲーム操作は従来の操作検証・COMMITを経由する。
-- 応答は非ストリーミング。画像入力は維持する。function_response内のマルチモーダルpartsは未対応で明示的に拒否する。現在のスキルはテキスト資料のみ。
+- 応答は非ストリーミング。画像入力は維持する。function_response内のマルチモーダルpartsは未対応で明示的に拒否する。画像付きツール結果は専用フィールドから通常の画像メッセージへ変換する。
 - 1回の状態判断につき最大8 HTTPリクエスト。`begin_invocation()`で計数をリセットし、既存の判断回数・ゲーム全体の時間上限も維持する。スキル読み込みも推論予算を消費する。
-- `SkillToolset`にはスクリプト実行用ツールもあるが、今回の15スキルに実行スクリプトは同梱しない。スクリプト実行や動的追加ツールの実モデル検証は今回の範囲外。
+- `SkillToolset`にはスクリプト実行用ツールがある。視覚描画・操作変換のスクリプトもパッケージに含めるが、ゲーム操作の実行権限は与えない。スクリプト実行や動的追加ツールの実モデル検証は今回の範囲外。
 - スキル本文は各判断の会話内で利用する。全ゲームの会話履歴を無制限に持ち越す構成にはせず、再判断では再ロードが発生し得る。
 - ローカルとノートブック内のllama.cpp起動に`--jinja`を追加。ノートブック生成器はスキルのMarkdown資料も同梱する。
 
@@ -64,10 +67,12 @@ docker compose run --rm --no-deps dev python -m unittest discover -s tests -v
 
 参考: [ADK Skills](https://adk.dev/skills/)、[llama.cpp function calling](https://github.com/ggml-org/llama.cpp/blob/master/docs/function-calling.md)。
 
-## ゲーム統合確認
+## 改訂前のゲーム統合確認
 
 ls20を1手・判断時間60秒・プロセス上限80秒に制限し、約8.73秒で1手を実行、手数上限で正常終了した。OBSERVEとPROBEの2判断で計8 HTTPリクエスト、list_skills / load_skill / load_skill_resourceを各2回記録し、検証エラーは0件。ログは`outputs/evaluations/20260924T095948206701Z/`。
 
 最初の統合試行では既存のADK `max_llm_calls=3`が読み込みだけで尽きたため、状態判断数とHTTP往復の上限を分けて修正した。このケースを含む45件のテストが通過している。既定は最大3判断×各8 HTTPリクエストで、既存のゲーム時間上限も適用する。
 
 この1手の観測応答ではfactsとgoalが空のままで、レベルクリアは0。接続は動作したが、知覚・仮説更新・計画の品質改善は未確認。Kaggleへの提出は行っていない。
+
+現行の観測分離後の検証は[リファクタ検証記録](local-evaluation-cognitive-refactor-ja.md)を参照。

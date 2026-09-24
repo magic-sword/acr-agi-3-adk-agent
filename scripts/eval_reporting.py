@@ -30,6 +30,15 @@ def percentile(values, q):
     return values[lower] + (values[upper] - values[lower]) * (position - lower)
 
 
+def tool_requests(exchange):
+    """Count structured calls or successfully normalized native Qwen calls once."""
+    structured = exchange.get('response', {}).get('tool_calls') or []
+    if structured:
+        return structured
+    return [{'function': {'name': c['name'], 'arguments': c['arguments']}}
+            for c in exchange.get('normalized_tool_calls', [])]
+
+
 def diagnostics(directory: Path) -> dict:
     turns, calls = [], []
     for path in directory.glob('*.jsonl'):
@@ -47,7 +56,7 @@ def diagnostics(directory: Path) -> dict:
     http_requests = sum(c.get('http_requests', 1) for c in calls)
     skill_calls = Counter(
         call['function']['name'] for c in calls for exchange in c.get('exchanges', [])
-        for call in exchange.get('response', {}).get('tool_calls', [])
+        for call in tool_requests(exchange)
         if call.get('function', {}).get('name') in
         ('list_skills', 'load_skill', 'load_skill_resource', 'run_skill_script'))
     latency = [c['seconds'] for c in calls if 'seconds' in c]
@@ -60,6 +69,24 @@ def diagnostics(directory: Path) -> dict:
                 if isinstance(parsed, dict):
                     perceptions.append(parsed)
             except (ValueError, TypeError):
+                pass
+    interpretations = []
+    reasoning_states = Counter()
+    evidence_tools = Counter()
+    for call in calls:
+        reasoning_states[call.get('state', 'unknown')] += 1
+        for exchange in call.get('exchanges', []):
+            for tool in tool_requests(exchange):
+                name = tool['function']['name']
+                if name in ('list_observations', 'get_observation', 'compare_observations', 'observe_animation', 'observe_current', 'move_cursor'):
+                    evidence_tools[name] += 1
+        if call.get('schema_valid'):
+            try:
+                parsed = json.loads(call.get('response', ''))
+                interpretation = parsed if call.get('state') == 'VERIFY' else parsed.get('interpretation')
+                if isinstance(interpretation, dict):
+                    interpretations.append(interpretation)
+            except (ValueError, TypeError, AttributeError):
                 pass
     empty_perceptions = sum(not p.get('facts') and not p.get('goal') for p in perceptions)
     repeats = 0
@@ -83,6 +110,10 @@ def diagnostics(directory: Path) -> dict:
     if calls and valid == len(calls) and errors:
         hints.append('JSON型検証後の意味・操作検証エラーあり。判断ログerrorsとmodel.jsonlを照合。')
     return {
+        'reasoning_calls_by_state': dict(reasoning_states),
+        'evidence_tool_calls': dict(evidence_tools),
+        'interpretation_count': len(interpretations),
+        'interpretations_with_facts': sum(bool(p.get('facts')) for p in interpretations),
         'model_calls': len(calls), 'schema_valid_calls': valid,
         'model_http_requests': http_requests, 'skill_tool_calls': dict(skill_calls),
         'schema_valid_rate': valid / len(calls) if calls else None,

@@ -5,7 +5,7 @@ import json
 import unittest
 
 from agent.cognition.engine import CognitiveTurn, new_memory
-from agent.cognition.state import Fact, Hypothesis, Pending, Action, Predicate, Perception, PlanNode, Proposal
+from agent.cognition.state import Fact, Hypothesis, Pending, Action, Predicate, Interpretation, PlanNode, Proposal
 from agent.cognition.validation import evaluate, parse_json, validate_action, validate_proposal
 from agent.cognition.workflow import CognitiveRuntime
 
@@ -149,8 +149,8 @@ class CognitiveContracts(unittest.TestCase):
         t.memory.goal = "avoid yellow"
         t.memory.hypotheses["effect"] = Hypothesis(id="effect", kind="dynamics", claim="orange becomes yellow")
         t.memory.plan = [PlanNode(id="a", subgoal="avoid", completion=[Predicate(kind="state", value="WIN")])]
-        t.apply_perception(Perception(observation_id=t.obs["observation_id"], memory_revision=0,
-                                     goal="produce yellow"))
+        t.apply_interpretation(Interpretation(observation_id=t.obs["observation_id"], memory_revision=0,
+                                     goal="produce yellow", evidence_refs=[t.obs["observation_id"]]), "PLAN")
         self.assertEqual(t.memory.hypotheses["effect"].claim, "orange becomes yellow")
         self.assertEqual(t.memory.plan[0].status, "invalid")
 

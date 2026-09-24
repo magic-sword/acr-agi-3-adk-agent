@@ -21,8 +21,9 @@ from agent.controls import controller_context
 from agent.observation import VISUAL_PAYLOAD_KEYS, render_current, render_animation_page, png_base64, validate_cursor
 from agent.local_vlm import LocalVisionLlm, MAX_REQUESTS_PER_INVOCATION
 from .engine import CognitiveTurn, new_memory
+from .evidence import EvidenceStore
 from .skills import instruction, skill_toolset, selected_skills
-from .state import Memory, Perception, Proposal
+from .state import Memory, Interpretation, Proposal
 from .validation import parse_json
 
 APP_NAME = "arc_cognition"
@@ -55,22 +56,24 @@ class CognitiveRuntime:
         self.closed = False
         self.agents = {}
         self.cursor = None
+        self.evidence = EvidenceStore()
         self.workflow = self._build_graph()
         self.runner = Runner(agent=self.workflow, app_name=APP_NAME, session_service=self.service)
 
-    def _agent(self, state: str, proposal_state: str | None = None):
-        key = state if proposal_state is None else f"{state}_{proposal_state}"
+    def _agent(self, state: str):
+        selected_skills(state)
+        key = state
         if key not in self.agents:
-            schema = Perception if state == "OBSERVE" else Proposal
+            schema = Interpretation if state == "VERIFY" else Proposal
             self.agents[key] = LlmAgent(
                 name=f"skill_{key.lower()}", include_contents="none",
                 model=LocalVisionLlm(model="qwen3-vl-4b-instruct",
                                      api_base=os.getenv("VLM_API_BASE", "http://vlm:8080/v1"),
-                                     max_output_tokens=1600 if state == "OBSERVE" else 2400,
+                                     max_output_tokens=1600 if state == "VERIFY" else 2400,
                                      timeout_seconds=90),
                 instruction=instruction(state, schema.model_json_schema()),
-                tools=[skill_toolset(state, proposal_state), self.observe_current,
-                       self.move_cursor, self.observe_animation],
+                tools=[skill_toolset(state), self.observe_current, self.list_observations,
+                       self.get_observation, self.compare_observations, self.move_cursor, self.observe_animation],
             )
         return self.agents[key]
 
@@ -95,28 +98,31 @@ class CognitiveRuntime:
         o["image_png_base64"] = png_base64(render_current(o["_visual_frames"][-1], o["available_actions"], cursor))
         return self.observe_current()
 
-    def move_observation_cursor(self, x: int, y: int) -> dict:
-        """Compatibility alias for callers of the earlier observation interface."""
-        return self.move_cursor(x, y)
+    def list_observations(self) -> dict:
+        """List retained real observation IDs, steps, boundaries and source actions."""
+        return {"observations": self.evidence.list(), "capacity": self.evidence.capacity,
+                "current_id": self.turn.obs.get("observation_id"), "time_advanced": False}
 
-    def observe_animation(self, event_id: str, start_frame: int = 0) -> dict:
-        """Read up to four ordered HISTORICAL frames for this recorded event; never a live observation.
-
-        Follow next_start_frame to inspect the remainder. Re-reading an event is the same evidence.
-        """
-        o = self.turn.obs
-        event = o.get("animation", {})
-        if event_id != event.get("event_id") or not o.get("_visual_frames"):
-            return {"error": "Recorded event unavailable; use the current observation's animation.event_id"}
+    def get_observation(self, observation_id: str) -> dict:
+        """Retrieve a retained historical screen by ID. This is not a new game observation."""
         try:
-            sheet, next_frame = render_animation_page(o["_visual_frames"], o["available_actions"],
-                                                     o["cursor"], event_id, start_frame)
+            return controller_context(self.evidence.view(observation_id))
         except ValueError as exc:
             return {"error": str(exc)}
-        return {"observation_id": o["observation_id"], "view": "historical_replay_not_live",
-                "event": controller_context(event), "start_frame": start_frame, "next_start_frame": next_frame,
-                "cursor_is_present_day_overlay": True, "time_advanced": False,
-                "_image_png_base64": png_base64(sheet)}
+
+    def compare_observations(self, before_id: str, after_id: str, offset: int = 0) -> dict:
+        """Inspect labeled before/after screens and paginated pixel differences; not inferred effects."""
+        try:
+            return controller_context(self.evidence.compare(before_id, after_id, offset))
+        except ValueError as exc:
+            return {"error": str(exc)}
+
+    def observe_animation(self, event_id: str, start_frame: int = 0) -> dict:
+        """Retrieve a retained action's intermediate frames. Replay never advances game time."""
+        try:
+            return controller_context(self.evidence.animation(event_id, start_frame))
+        except ValueError as exc:
+            return {"error": str(exc)}
 
     def _context(self):
         t, m = self.turn, self.turn.memory
@@ -130,7 +136,9 @@ class CognitiveRuntime:
                 "deferred": [d.model_dump() for d in m.deferred],
                 "verification": t.verification, "procedures": m.procedures[-2:],
                 "history": m.history[-3:], "errors": t.errors[-1:],
-                "remaining_seconds": round(t.time_left(), 2)}
+                "remaining_seconds": round(t.time_left(), 2), "inquiry": t.inquiry,
+                "observation_records": self.evidence.list()[-8:],
+                "interpretations": m.interpretations[-3:]}
         # Drop optional histories first. Never truncate JSON or silently omit plan constraints.
         for key in ("history", "procedures"):
             if len(json.dumps(context)) > 24000:
@@ -139,26 +147,45 @@ class CognitiveRuntime:
             raise ValueError("structured context exceeds budget")
         return controller_context(context)
 
-    async def _ask(self, ctx: Context, state: str, proposal_state: str | None = None):
+    async def _ask(self, ctx: Context, state: str):
         t = self.turn
         if t.calls >= t.max_calls or t.time_left() <= 0:
             raise ValueError("reasoning budget exhausted")
         t.calls += 1
         context = self._context()
+        context["reasoning_state"] = state
         parts = [types.Part(text=json.dumps(context, separators=(",", ":")))]
         if t.obs.get("image_png_base64"):
             parts.append(types.Part.from_bytes(data=base64.b64decode(t.obs["image_png_base64"]), mime_type="image/png"))
         elif t.obs.get("grid") is not None:
             parts.append(types.Part(text="Current color-ID grid: " + json.dumps(t.obs["grid"], separators=(",", ":"))))
-        agent = self._agent(state, proposal_state)
+        # Restate the outer contract beside the image: skills may show nested action examples.
+        identity = {"observation_id": context["observation_id"], "memory_revision": context["memory_revision"]}
+        if state in ("PLAN", "REVISE"):
+            example = {**identity, "purpose": "plan", "status": "need_evidence",
+                       "inquiry": "REPLACE with one concrete uncertainty that changes the next action"}
+            parts.append(types.Part(text="If evidence is insufficient, use this complete outer shape, "
+                "replacing inquiry with your specific question. Do not return a bare action: " + json.dumps(example)))
+        elif state == "PROBE":
+            legal = context["observation"].get("available_actions", [])
+            example = {**identity, "purpose": "probe", "action": {"action": legal[0] if legal else "NO_LEGAL_ACTION"},
+                       "experiment": {"question": "REPLACE with your testable question", "alternatives": {
+                           "changes": [{"kind": "frame_changed", "value": True}],
+                           "unchanged": [{"kind": "frame_changed", "value": False}]},
+                           "discriminator": "REPLACE with what to compare", "risk": "REPLACE with possible side effects"}}
+            parts.append(types.Part(text="Example response JSON structure for an experiment (choose your own legal action and useful predictions; "
+                "a whole-frame change alone is not goal progress). No bare action JSON: " + json.dumps(example)))
+        else:
+            parts.append(types.Part(text="Return Interpretation starting with these exact identity fields: "
+                + json.dumps(identity) + ". Include only grounded facts and a concise evidence-linked summary; "
+                "omit goal unless outcome evidence requires a revision."))
+        agent = self._agent(state)
         agent.model.begin_invocation()
         agent.model.timeout_seconds = max(1, min(90, int(t.time_left())))
         started = time.monotonic()
         record = {"observation_id": t.obs["observation_id"], "step": t.obs["step"],
                   "state": state, "call_index": t.calls, "context": context,
-                  "available_skills": selected_skills(state, proposal_state)}
-        if proposal_state:
-            record["proposal_state"] = proposal_state
+                  "available_skills": selected_skills(state)}
         try:
             async with asyncio.timeout(min(92, t.time_left())):
                 answer = await ctx.run_node(agent, node_input=types.Content(role="user", parts=parts))
@@ -168,7 +195,7 @@ class CognitiveRuntime:
             record["response"] = answer if isinstance(answer, str) else str(answer)
             if not isinstance(answer, str):
                 raise ValueError("model returned no textual proposal")
-            schema = Perception if state == "OBSERVE" else Proposal
+            schema = Interpretation if state == "VERIFY" else Proposal
             parsed = schema.model_validate(parse_json(answer))
             record["schema_valid"] = True
             return parsed
@@ -211,60 +238,66 @@ class CognitiveRuntime:
             t = self.turn
             try:
                 t.observe()
-                if (not t.duplicate and t.memory.lifecycle == "ACTIVE" and self.model
-                        and t.obs["state"] in ("NOT_FINISHED", "IN_PROGRESS") and t.obs.get("remaining_actions", 1) > 0
-                        and not t.obs.get("evaluation_stop_reason")):
-                    # One bounded formatting retry; preserve budget for the action proposal.
-                    for attempt in range(2):
-                        try:
-                            t.apply_perception(await self._ask(ctx, "OBSERVE"))
-                            break
-                        except Exception as exc:
-                            t.errors.append(f"perception {type(exc).__name__}: {exc}"[:500])
-                            if attempt or t.calls >= t.max_calls - 1:
-                                t.stop("perception_unavailable")
-                                break
+                if not t.duplicate and t.memory.lifecycle == "ACTIVE":
+                    self.evidence.add(t.obs, boundary=t.boundary,
+                                      source_action=self.memory.pending.model_dump() if self.memory.pending else None)
+                    self._log_observation(t.obs)
             except Exception as exc:
                 t.errors.append(f"observation {type(exc).__name__}: {exc}"[:500])
                 t.stop("invalid_observation")
             return Event(output="observed")
 
-        def verify():
-            if not self.turn.duplicate and self.turn.obs.get("observation_id"):
-                self.turn.verify()
-            return "verified"
+        @node(rerun_on_resume=True)
+        async def verify(ctx: Context):
+            t = self.turn
+            if not t.duplicate and t.obs.get("observation_id"):
+                # Initial observation needs no outcome interpretation. Reserve one call for action planning.
+                if (self.model and not t.boundary and t.memory.lifecycle == "ACTIVE"
+                        and (t.memory.pending or t.memory.deferred or t.memory.plan)
+                        and t.obs["state"] in ("NOT_FINISHED", "IN_PROGRESS")
+                        and t.obs.get("remaining_actions", 1) > 0 and not t.obs.get("evaluation_stop_reason")
+                        and t.calls < t.max_calls - 1 and t.time_left() > 0):
+                    try:
+                        t.stage_review(await self._ask(ctx, "VERIFY"))
+                    except Exception as exc:
+                        t.errors.append(f"verification {type(exc).__name__}: {exc}"[:500])
+                t.verify()
+            return Event(output="verified")
 
         def update():
             self.turn.update()
             return Event(route=self.turn.route())
 
-        def revise():
-            self.turn.revise_model()
-            return Event(route="PROBE" if self.turn.memory.unknowns or not self.turn.memory.goal else "PLAN")
-
         async def propose(ctx: Context, state: str):
             t = self.turn
             t.enter(state)
+            if state == "PROBE" and t.proposal and t.proposal.purpose == "probe":
+                return Event(route="ACT")
             if not self.model:
                 try:
-                    t.accept(self._offline_proposal())
-                    return Event(route="ACT")
+                    t.accept(self._offline_proposal(), state)
+                    return Event(route="ACT" if state == "PROBE" else "PROBE")
                 except ValueError as exc:
                     t.errors.append(str(exc))
                     t.stop("no_legal_action")
                     return Event(route="COMMIT")
             while t.calls < t.max_calls and t.time_left() > 0:
                 try:
-                    if t.revise:
-                        p = await self._ask(ctx, "REVISE", state)
-                    else:
-                        p = await self._ask(ctx, state)
-                    t.accept(p)
+                    p = await self._ask(ctx, state)
+                    if state == "PROBE" and (p.status != "ok" or p.purpose != "probe"):
+                        raise ValueError("PROBE requires a complete discriminating experiment")
+                    t.accept(p, state)
+                    if p.status == "need_evidence" or (p.purpose == "probe" and state != "PROBE"):
+                        return Event(route="PROBE")
                     return Event(route="ACT")
                 except Exception as exc:
                     t.errors.append(f"proposal {type(exc).__name__}: {exc}"[:500])
             t.stop("proposal_unavailable")
             return Event(route="COMMIT")
+
+        @node(rerun_on_resume=True)
+        async def revise(ctx: Context):
+            return await propose(ctx, "REVISE")
 
         @node(rerun_on_resume=True)
         async def probe(ctx: Context):
@@ -296,16 +329,12 @@ class CognitiveRuntime:
                   "RECOVER": recover, "COMMIT": commit}
         return Workflow(name="cognitive_workflow", edges=[
             ("START", observe, verify, update), (update, routes),
-            (revise, {"PROBE": probe, "PLAN": plan}),
-            (probe, {"ACT": act, "COMMIT": commit}), (plan, {"ACT": act, "COMMIT": commit}),
+            (revise, {"PROBE": probe, "ACT": act, "COMMIT": commit}),
+            (probe, {"ACT": act, "COMMIT": commit}), (plan, {"PROBE": probe, "ACT": act, "COMMIT": commit}),
             (act, {"PLAN": plan, "COMMIT": commit}), (recover, commit),
         ])
 
-    async def _decide(self, obs: dict) -> dict:
-        if not self.initialized:
-            await self.service.create_session(app_name=APP_NAME, user_id="player", session_id=self.session_id,
-                                              state={"cognition": self.memory.model_dump(mode="json")})
-            self.initialized = True
+    def _log_observation(self, obs: dict):
         if self.log_dir:
             self.log_dir.mkdir(parents=True, exist_ok=True)
             record = {k: v for k, v in obs.items() if k not in VISUAL_PAYLOAD_KEYS}
@@ -323,6 +352,12 @@ class CognitiveRuntime:
                 record["animation_archive_path"] = "frames/" + archive_name
             with (self.log_dir / f"{self.session_id}.observations.jsonl").open("a") as log:
                 log.write(json.dumps(record) + "\n")
+
+    async def _decide(self, obs: dict) -> dict:
+        if not self.initialized:
+            await self.service.create_session(app_name=APP_NAME, user_id="player", session_id=self.session_id,
+                                              state={"cognition": self.memory.model_dump(mode="json")})
+            self.initialized = True
         self.turn = CognitiveTurn(self.memory, obs, max_calls=self.max_calls,
                                   max_resets=self.max_resets, deadline=self.deadline)
         message = types.Content(role="user", parts=[types.Part(text=f'Observe external step {obs.get("step")}')])
@@ -356,4 +391,5 @@ class CognitiveRuntime:
                 self.loop.run_until_complete(self.loop.shutdown_asyncgens())
                 self.loop.run_until_complete(self.loop.shutdown_default_executor())
                 self.loop.close()
+                self.evidence.close()
                 self.closed = True

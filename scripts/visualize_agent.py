@@ -71,14 +71,7 @@ def extract(root: Path) -> dict:
         if not ids:
             matrix[state] = []
             continue
-        try:
-            matrix[state] = list(selected(state))
-        except ValueError:
-            destinations = [e['to'] for e in edges if e['from'] == state]
-            if not destinations:
-                raise ValueError(f'Cannot resolve contextual skills for {state}')
-            for dest in destinations:
-                matrix[f'{state} → {dest}'] = list(selected(state, dest))
+        matrix[state] = list(selected(state))
     missing = [sid for ids in matrix.values() for sid in ids if sid not in constants['SKILL_NAMES']]
     if missing:
         raise ValueError(f'Unknown skill IDs: {missing}')
@@ -184,7 +177,7 @@ def render_svg(data: dict) -> str:
     for item in data['internal']:
         y += 30
         text(30, y, f'{item["state"]}: {item["method"]}() called by '+', '.join(item['callers']), 15)
-    text(30, y+40, 'REVISE row is a composed model context used in its destination proposal; REVISE node itself runs host logic.', 14)
+    text(30, y+40, 'OBSERVE archives evidence; VERIFY interprets outcomes; PLAN / REVISE infer goal conditions and choose a plan or probe.', 14)
     parts.append('</svg>')
     return '\n'.join(parts)
 
@@ -203,7 +196,7 @@ def main():
     edge_rows = ''.join(f'<tr><td>{escape(e["from"])}</td><td>→ {escape(e["to"])}</td><td>{escape(e["label"] or "sequence")}</td></tr>' for e in data['edges'])
     html = '<!doctype html><html lang="ja"><meta charset="utf-8"><title>Agent architecture</title><style>body{font:16px system-ui;margin:24px;background:#f8fafc;color:#172554}svg{width:100%;height:auto;min-width:900px}.diagram{overflow:auto}pre{overflow:auto;background:#e2e8f0;padding:16px}summary{cursor:pointer;padding:10px}td{padding:6px 20px}code{overflow-wrap:anywhere}</style>'
     html += '<h1>エージェントの構造とスキル接続</h1><p><code>make visualize</code>で最新ソースから再生成。青い点は利用可能なスキルで、実行済みを意味しません。モデルなしではLLMスキルは使いません。</p>'
-    html += '<p>REVISEはホストで遷移先を選び、遷移先の提案時にREVISEとPROBE/PLANのスキルを合成します。CONSOLIDATEはエンジン内の呼び出しです。</p>'
+    html += '<p>OBSERVEは記録のみ。VERIFY・PLAN・PROBE・REVISEは共通の過去観測・差分取得ツールを利用できます。CONSOLIDATEはエンジン内の呼び出しです。</p>'
     html += '<div class="diagram">'+svg+'</div><h2>モデルに渡すツール（ソース抽出）</h2><pre>'+escape(data['model_tools'])+'</pre>'
     html += '<h2>遷移一覧</h2><table>'+edge_rows+'</table><h2>分岐条件・各ステートの処理（現在のソース）</h2>'+details
     html += '<h2>再現情報</h2><p>生成時刻: '+escape(data['generated_utc'])+'</p><pre>'+escape(json.dumps(data['sha256'],indent=2))+'</pre></html>'

@@ -42,6 +42,15 @@ class EvaluationLimits(unittest.TestCase):
 
 
 class EvaluationReports(unittest.TestCase):
+    def test_native_tool_metrics_and_duplicate_representation(self):
+        from scripts.eval_reporting import tool_requests
+        normalized = [{'id': 'x', 'name': 'list_observations', 'arguments': {}}]
+        exchange = {'response': {}, 'normalized_tool_calls': normalized}
+        self.assertEqual(tool_requests(exchange), [
+            {'function': {'name': 'list_observations', 'arguments': {}}}])
+        exchange['response']['tool_calls'] = tool_requests(exchange)
+        self.assertEqual(len(tool_requests(exchange)), 1)
+
     def test_missing_score_is_not_zero_or_omitted_from_suite_mean(self):
         with tempfile.TemporaryDirectory() as d:
             summary = write_report(Path(d), [

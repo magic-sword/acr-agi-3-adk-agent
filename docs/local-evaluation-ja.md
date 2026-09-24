@@ -4,6 +4,8 @@
 
 [現行エージェントの再測定とログ分析（2026-09-24 19:48 JST）](local-evaluation-20260924-current-ja.md)
 
+[観測と解釈を分離したリファクタの検証](local-evaluation-cognitive-refactor-ja.md)
+
 ## 実行
 
 ```bash
@@ -86,3 +88,5 @@ docker compose run --rm --no-deps dev python scripts/benchmark_local.py \
 自動生成の改善ヒントはログ上の兆候であり、因果分析や正解ルールの推定ではない。初回の結果を基準として保存し、改善後も同じ公開ゲーム・上限で比較する。
 
 ネイティブスキル接続後は、`model_calls`を状態判断の呼び出し数、`model_http_requests`をスキル読み込みを含むHTTP往復数として区別する。`skill_tool_calls`でスキルツールの要求数、各判断の`exchanges`で生応答とツール結果を確認できる。[接続仕様](adk-native-skills-ja.md)。
+
+観測分離後はOBSERVEをモデル呼出しとして集計しない。`reasoning_calls_by_state`、`evidence_tool_calls`、`interpretation_count`、`interpretations_with_facts`で判断の配置と証拠参照を確認する。解釈の有無・事実の件数は正しさを保証する指標ではない。旧ログ用の`parsed_perceptions`等は旧構成の比較用に残る。

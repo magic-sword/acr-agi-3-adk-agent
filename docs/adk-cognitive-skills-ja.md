@@ -18,26 +18,26 @@
 
 |状態|主スキル|補助スキル|実行主体|
 |---|---|---|---|
-|OBSERVE|S01 relational-observation|S02 belief-tracking|差分関数＋必要時VLM|
-|VERIFY|S03 prediction-check|S10 temporal-reasoning|述語評価関数＋曖昧な場合VLM|
-|UPDATE|S02 belief-tracking、S04 hypothesis-ledger|S05 goal-inference|提案はVLM可、更新は関数|
-|REVISE|S06 model-revision|S05 goal-inference、S04 hypothesis-ledger|VLM＋依存関係の無効化関数|
-|PROBE|S07 discriminating-experiment|S10 temporal-reasoning|VLM／候補探索関数＋検証器|
-|PLAN|S08 dependency-planning|S09 plan-repair、S10 temporal-reasoning、S11 affordance-revaluation|VLM＋利用可能なら記号探索|
-|ACT|S12 action-grounding|S03 prediction-check|合法性・前提条件の関数検査|
+|OBSERVE|観測ストアへの記録|入力・境界・画素差分|関数のみ|
+|VERIFY|S03 prediction-check|S01・S02・S04・S10|文脈付きVLM解釈＋述語照合関数|
+|UPDATE|検証済みInterpretationの反映|計画完了・期限検査|関数のみ|
+|REVISE|S06 model-revision|S01・S02・S04・S05・S07・S08・S09・S10・S11・S12・S15|VLM＋依存関係検査|
+|PROBE|S07 discriminating-experiment|S01・S02・S04・S10・S12・S15|VLM／完成した提案の受け取り|
+|PLAN|S05 goal-inference、S08 dependency-planning|S01・S02・S04・S09・S10・S11・S12・S14|VLM＋検証器|
+|ACT|S12相当の操作検査|前提・予測の検証|関数のみ|
 |COMMIT|S13 decision-commit|なし|関数のみ|
-|CONSOLIDATE|S14 procedure-abstraction|S04 hypothesis-ledger|VLM提案＋証拠検査|
-|RECOVER／全状態|S15 budget-and-recovery|S09 plan-repair|関数が統括、再解釈のみVLM|
+|CONSOLIDATE|検証済み手順候補の記録|観測・操作履歴|関数のみ|
+|RECOVER|上限付き開始／RESET|予算管理|関数のみ|
 
-## S01 relational-observation: 関係として観察する
+## S01 visual-observation: 問いに応じて証拠を取得する
 
-**入力:** 今回と直近の観測、座標系、過去の対象候補。**出力:** 対象候補、属性、接触・包含・接続・遮蔽などの関係、変化した領域、同一性の代替候補。
+**入力:** 観測ID、比較する前後のID、イベントID。**出力:** 実際の画面・画素差分・途中フレーム・時点・操作対応。証拠の取得は新しい環境操作ではない。
 
-手順は、画像の差分を検出し、変化した領域と操作箇所を対応付け、対象間の関係を抽出する。役割は候補として付ける。見た目が似ているだけで「プレイヤー」「出口」「障害物」を確定しない。色ID・形状・位置は生の属性として残し、抽象関係と併用する。
+VERIFY・PLAN・PROBE・REVISEの共通スキルとして、`list_observations`、`get_observation`、`compare_observations`、`observe_animation`を使う。現在画像は`observe_current`、カーソル確認は`move_cursor`。最新128観測を実行単位で保持し、失効した証拠は取得不能として返す。比較は同じレベル／RESET区間内に限る。
 
-検証: 対象の画面上の根拠、元解像度での座標、有効な対象ID。縮小画像上の座標をそのまま操作に使わない。初期入力の色表現が不適切ならモデル改善より先に直す。
+生の証拠は意味付けで上書きしない。関係抽出や対象追跡は、呼び出したステートの問いに応じて行う。OBSERVEが全物体の役割や目標を最初に認識する必要はない。色ID・形状・位置と、「出口」「操作対象」などの役割仮説を分ける。
 
-根拠: cn04の接触構造、ft09の局所関係、re86の色・形の照合。品質指標: 操作対象の取り違え、関係の見落とし、ID追跡の誤り。
+検証: 元解像度の座標、根拠ID、観測順序と境界、差分のページング。品質指標: 過去と現在の混同、因果関係と画素変化の混同、必要な証拠の取得率。
 
 ## S02 belief-tracking: 見えない状態を保持する
 
@@ -51,9 +51,9 @@
 
 ## S03 prediction-check: 予測と結果を照合する
 
-**入力:** PendingAction、DeferredPredictions、今回の実観測、予測窓。**出力:** 各効果・維持条件の`支持／反証／不明`と、`pending／resolved`、不一致箇所。
+**入力:** PendingAction、DeferredPredictions、操作前後の観測ID、今回の実観測、予測窓。**出力:** 各効果・維持条件の`支持／反証／不明`と、`pending／resolved`、不一致箇所。
 
-操作が実際に送られたかを確認し、期待した変化と副作用を個別に照合する。成功していないこと、目標仮説が間違っていること、操作が効かなかったことを一つにまとめない。初回はno_pending。部分目標の成立と環境WINは別項目。
+操作が実際に送られたかを確認し、期待した変化と副作用を個別に照合する。成功していないこと、目標仮説が間違っていること、操作が効かなかったことを一つにまとめない。初回はno_pendingで視覚解釈のモデルを呼ばない。VERIFYはInterpretationを返し、現在のfactsを使った述語検査の後、UPDATEが検証済みの解釈を反映する。部分目標の成立と環境WINは別項目。
 
 検証: 新しい観測に基づく判定であること。遅延窓が閉じていない、または対象が不可視なら、効果なしを直ちに反証にしない。
 
@@ -71,11 +71,11 @@
 
 根拠: tn36の操作実験、ar25の連動規則。品質指標: 同じ否定済み仮説への復帰、支持範囲外への誤適用。
 
-## S05 goal-inference: 達成条件を推定する
+## S05 goal-inference: PLAN／REVISEで達成条件を推定する
 
 **入力:** 盤面の関係、環境の進捗信号、未達成の証拠。**出力:** ゴール候補、必要条件／十分条件の区別、候補を分ける観測。
 
-位置合わせ、関係一致、変換、収集、同期などから候補を作るが、固定の分類だけに閉じない。一部が完成しても終わらない場合は、対象の取り違え、残条件、同時条件を検討する。
+OBSERVEの出力条件にしない。目標未確定でもPLANに入り、必要なら具体的なinquiryをPROBEへ送る。位置合わせ、関係一致、変換、収集、同期などから候補を作るが、固定の分類だけに閉じない。一部が完成しても終わらない場合は、対象の取り違え、残条件、同時条件を検討する。
 
 検証: 根拠のない達成条件を確定しない。環境のWINと推定条件の成立を混同しない。
 

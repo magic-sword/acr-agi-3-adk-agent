@@ -61,7 +61,7 @@ To use an existing compatible server, set `VLM_API_BASE=http://host.docker.inter
 
 The visual-observation skill renders the final received frame with an input controller, coordinate rulers, and a host cursor. `observe_current` reads this screen; `move_cursor(x, y)` previews a position in original game pixels without clicking or spending an external action. The action skill proposes `CLICK` without x/y; the host uses the current cursor position. Other proposals use the displayed `UP`, `DOWN`, `LEFT`, `RIGHT`, `ACT`, and `UNDO` names.
 
-Intermediate frames are **not automatically replayed** on each observation. `animation.event_id` identifies the completed transition and its source action. `observe_animation(event_id, start_frame)` retrieves four consecutive historical frames at a time, explicitly labeled as replay, without advancing game time. The local vision transport uses ordered PNG sheets, not animated GIF input. With `COGNITION_LOG_DIR` enabled, each source batch is saved as `frames/<run>-<step>.json`; explicit single-play GIF export is available with:
+Intermediate frames are **not automatically replayed** on each observation. `animation.event_id` identifies the completed transition and its source action. `list_observations` and `get_observation` retrieve retained evidence; `compare_observations` returns labeled before/after images and paginated pixel differences. The latest 128 observations are retained independently of logging. Cross-level/RESET comparisons are rejected. `observe_animation(event_id, start_frame)` retrieves four consecutive historical frames at a time from retained events, explicitly labeled as replay, without advancing game time. The local vision transport uses ordered PNG sheets, not animated GIF input. With `COGNITION_LOG_DIR` enabled, each source batch is saved as `frames/<run>-<step>.json`; explicit single-play GIF export is available with:
 
 ```bash
 python agent/skills/visual-observation/scripts/render_observation.py replay EVENT.json history.gif
@@ -82,6 +82,13 @@ This runs the notebook packager's source snapshot through an official **local HT
 
 ## Cognitive workflow settings
 
+OBSERVE records immutable evidence without a model call. VERIFY interprets previous
+results; PLAN and REVISE consider success conditions and choose a plan or a specific
+experiment. An unknown goal does not block planning. Each reasoning state can retrieve
+the same historical images and differences through shared tools. See the
+[revised design](docs/adk-cognitive-state-machine-ja.md).
+
+
 Run `make visualize` to generate the current state-machine diagram and state-to-skill
 connection matrix. It needs only Python 3.10+ on the host; Docker, a model server,
 and network access are not required. Open
@@ -93,7 +100,7 @@ The HTML includes expandable current source for routing conditions and state han
 
 Each invocation reads `Workflow.edges`, the skill mappings and selector, and engine
 internal-state calls from the current source, then replaces these generated files.
-REVISE's composed skills and internal CONSOLIDATE calls are shown separately.
+OBSERVE capture, reasoning-state skill connections, and internal CONSOLIDATE calls are shown separately.
 Connections indicate skills available to the model, not observed runtime tool use.
 Outputs live under the already Git-ignored `outputs/` directory. If workflow syntax
 changes beyond what the extractor supports, generation fails instead of silently

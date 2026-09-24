@@ -11,3 +11,13 @@ description: "Treat success conditions as hypotheses. Visual completion is not W
 5. Return the requested state's JSON contract. A skill must not directly execute game actions or modify budgets.
 
 Read `references/evidence-contract.md` with `load_skill_resource` when checking evidence, coordinates or prediction semantics.
+
+## Goal ownership
+
+PLAN and REVISE consider goals as success conditions, which may be relations,
+configurations, sequences or simultaneous constraints rather than an object. OBSERVE
+never has to discover a goal. An unknown goal is valid: formulate an inquiry for PROBE
+if evidence is needed. Retrieve past screens/comparisons before revising an assumption.
+Store a proposed goal and its evidence_refs in Proposal.interpretation; use goal=""
+with evidence to withdraw an old goal. Omit goal to retain it. VERIFY can report evidence
+against an assumed condition; PLAN/REVISE use it to reconsider the objective.

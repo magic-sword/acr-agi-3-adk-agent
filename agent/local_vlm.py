@@ -9,7 +9,6 @@ import base64
 import json
 import time
 import urllib.request
-import uuid
 from typing import AsyncGenerator
 
 from google.adk.models.base_llm import BaseLlm
@@ -17,6 +16,8 @@ from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
 from google.genai import types
 from pydantic import PrivateAttr
+
+from agent.qwen_protocol import QwenToolCallAdapter
 
 MAX_REQUESTS_PER_INVOCATION = 8
 
@@ -94,7 +95,7 @@ class LocalVisionLlm(BaseLlm):
                     if response.parts:
                         raise ValueError('Multimodal function responses are not supported')
                     result = dict(response.response or {})
-                    if response.name in {'observe_current', 'move_cursor', 'move_observation_cursor', 'observe_animation'}:
+                    if response.name in {'observe_current', 'move_cursor', 'observe_animation', 'get_observation', 'compare_observations'}:
                         encoded = result.pop('_image_png_base64', None)
                         if encoded:
                             visual_results.extend([
@@ -156,9 +157,23 @@ class LocalVisionLlm(BaseLlm):
         if self._request_count >= self.max_requests:
             raise ValueError('Local model tool-round budget exhausted')
         payload = self._payload(llm_request)
+        remaining = self.max_requests - self._request_count
+        if payload.get('tools'):
+            # Reserve the final HTTP request for a textual decision, not another tool round.
+            if remaining == 1:
+                payload['tool_choice'] = 'none'
+            budget_instruction = (f'{remaining} HTTP requests remain in this reasoning state. '
+                + ('Return the final JSON now; no further tool calls.' if remaining == 1 else
+                   'Load at most two relevant skills; preserve requests for evidence and the final JSON.'))
+            # Qwen's template reads only the first system message. Keep the full state contract there.
+            if payload['messages'][0]['role'] == 'system':
+                payload['messages'][0]['content'] += '\n' + budget_instruction
+            else:
+                payload['messages'].insert(0, {'role': 'system', 'content': budget_instruction})
         self._request_count += 1
         started = time.monotonic()
         record = {'request_index': self._request_count,
+                  'tool_choice': payload.get('tool_choice', 'auto'),
                   'available_tools': [t['function']['name'] for t in payload.get('tools', [])],
                   'tool_results': [m for m in payload['messages'] if m['role'] == 'tool']}
         self._exchanges.append(record)
@@ -167,26 +182,14 @@ class LocalVisionLlm(BaseLlm):
             choice = result['choices'][0]
             message = choice['message']
             record.update(response=message, usage=result.get('usage'), finish_reason=choice.get('finish_reason'))
-            parts = []
-            if isinstance(message.get('content'), str) and message['content'].strip():
-                parts.append(types.Part(text=message['content']))
             allowed = {t['function']['name'] for t in payload.get('tools', [])}
-            seen = set()
-            for call in message.get('tool_calls') or []:
-                function = call['function']
-                if call.get('type') != 'function' or function['name'] not in allowed:
-                    raise ValueError('Model requested an unregistered function')
-                args = json.loads(function['arguments'])
-                if not isinstance(args, dict):
-                    raise ValueError('Tool arguments must be a JSON object')
-                call_id = call.get('id') or 'call_' + uuid.uuid4().hex
-                if call_id in seen:
-                    raise ValueError('Duplicate tool call ID')
-                seen.add(call_id)
-                parts.append(types.Part(function_call=types.FunctionCall(
-                    id=call_id, name=function['name'], args=args)))
-            if not parts:
-                raise ValueError('Local model returned neither text nor tool calls')
+            parts, protocol = QwenToolCallAdapter().decode(
+                message, allowed=allowed, tool_choice=payload.get('tool_choice', 'auto'),
+                finish_reason=choice.get('finish_reason'))
+            record['decoded_protocol'] = protocol
+            record['normalized_tool_calls'] = [
+                {'id': p.function_call.id, 'name': p.function_call.name, 'arguments': p.function_call.args}
+                for p in parts if p.function_call]
             self._last_metrics = {'usage': {
                 key: sum((r.get('usage') or {}).get(key, 0) for r in self._exchanges)
                 for key in ('prompt_tokens', 'completion_tokens', 'total_tokens')}

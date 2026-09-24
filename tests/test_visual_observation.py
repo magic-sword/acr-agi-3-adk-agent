@@ -37,12 +37,13 @@ class VisualObservationTests(unittest.TestCase):
         self.addCleanup(runtime.close)
         runtime.turn = CognitiveTurn(runtime.memory, obs)
         runtime.turn.observe()
+        runtime.evidence.add(runtime.turn.obs)
         before = runtime.turn.obs['observation_id'], runtime.turn.obs['frame_hash']
         for x, y in [(0, 0), (63, 63), (12, 35)]:
-            result = runtime.move_observation_cursor(x, y)
+            result = runtime.move_cursor(x, y)
             self.assertEqual(result['cursor'], {'x': x, 'y': y})
         self.assertEqual(before, (runtime.turn.obs['observation_id'], runtime.turn.obs['frame_hash']))
-        self.assertIn('error', runtime.move_observation_cursor(64, 0))
+        self.assertIn('error', runtime.move_cursor(64, 0))
         self.assertEqual(runtime.observe_current()['view'], 'current_final_frame')
         self.assertNotIn('next_start_frame', runtime.observe_current())
 
@@ -52,6 +53,7 @@ class VisualObservationTests(unittest.TestCase):
         self.addCleanup(runtime.close)
         runtime.turn = CognitiveTurn(runtime.memory, obs)
         runtime.turn.observe()
+        runtime.evidence.add(runtime.turn.obs)
         event = obs['animation']['event_id']
         page = runtime.observe_animation(event)
         self.assertFalse(page['time_advanced'])
@@ -104,12 +106,9 @@ class VisualObservationTests(unittest.TestCase):
                                if m['role'] == 'user' and isinstance(m['content'], list)
                                for part in m['content'] if part.get('type') == 'text')
                 reply = {'observation_id': context['observation_id'], 'memory_revision': context['memory_revision']}
-                if n == 4:
-                    reply.update(facts=[], unknowns=['goal'], goal='finish')
-                else:
-                    reply.update(purpose='plan', plan=[{'id': 'go', 'subgoal': 'finish',
-                        'action': {'action': 'CLICK'}, 'completion': [{'kind': 'state', 'value': 'WIN'}],
-                        'effects': [{'kind': 'state', 'value': 'WIN'}]}])
+                reply.update(purpose='plan', plan=[{'id': 'go', 'subgoal': 'finish',
+                    'action': {'action': 'CLICK'}, 'completion': [{'kind': 'state', 'value': 'WIN'}],
+                    'effects': [{'kind': 'state', 'value': 'WIN'}]}])
                 message = {'content': json.dumps(reply)}
             return {'choices': [{'message': message}]}
 

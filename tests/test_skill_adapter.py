@@ -25,30 +25,27 @@ class SkillAdapterTests(unittest.TestCase):
         from agent.cognition.workflow import CognitiveRuntime
         runtime = CognitiveRuntime('test', 'local/qwen3-vl-4b-instruct')
         try:
-            observe = {'visual-observation', 'occlusion-memory', 'prediction-verification',
-                       'hypothesis-maintenance', 'goal-inference'}
-            probe = {'discriminating-experiment', 'temporal-reasoning', 'action-grounding', 'budget-recovery'}
-            plan = {'backward-planning', 'plan-repair', 'temporal-reasoning',
-                    'effect-revaluation', 'action-grounding', 'procedure-reuse'}
-            revision = {'hypothesis-maintenance', 'goal-inference', 'cause-diagnosis',
-                        'plan-repair', 'effect-revaluation'}
+            shared = {'visual-observation', 'occlusion-memory', 'hypothesis-maintenance', 'temporal-reasoning'}
             expected = {
-                ('OBSERVE', None): observe,
-                ('PROBE', None): probe,
-                ('PLAN', None): plan,
-                ('REVISE', 'PROBE'): revision | probe,
-                ('REVISE', 'PLAN'): revision | plan,
+                'VERIFY': shared | {'prediction-verification'},
+                'PLAN': shared | {'goal-inference', 'backward-planning', 'plan-repair',
+                                  'effect-revaluation', 'action-grounding', 'procedure-reuse'},
+                'PROBE': shared | {'discriminating-experiment', 'action-grounding', 'budget-recovery'},
+                'REVISE': shared | {'goal-inference', 'cause-diagnosis', 'discriminating-experiment',
+                                    'backward-planning', 'plan-repair', 'effect-revaluation',
+                                    'action-grounding', 'budget-recovery'},
             }
-            for (state, destination), names in expected.items():
-                agent = runtime._agent(state, destination)
+            for state, names in expected.items():
+                agent = runtime._agent(state)
                 registered = [s.name for s in agent.tools[0]._list_skills()]
                 self.assertEqual(set(registered), names)
                 self.assertEqual(len(registered), len(names))
+                tools = {tool.__name__ for tool in agent.tools[1:]}
+                self.assertTrue({'get_observation', 'compare_observations', 'list_observations'} <= tools)
             from agent.cognition.skills import SKILL_NAMES
             self.assertEqual(set().union(*expected.values()),
                              set(SKILL_NAMES.values()) - {'decision-commit'})
-            self.assertIsNot(runtime._agent('REVISE', 'PROBE'), runtime._agent('REVISE', 'PLAN'))
-            self.assertIs(runtime._agent('REVISE', 'PROBE'), runtime._agent('REVISE', 'PROBE'))
+            self.assertIs(runtime._agent('REVISE'), runtime._agent('REVISE'))
         finally:
             runtime.close()
 
@@ -56,11 +53,9 @@ class SkillAdapterTests(unittest.TestCase):
         from agent.cognition.workflow import CognitiveRuntime
         runtime = CognitiveRuntime('test', 'local/qwen3-vl-4b-instruct')
         try:
-            for state in ('VERIFY', 'UPDATE', 'ACT', 'COMMIT', 'CONSOLIDATE', 'RECOVER'):
+            for state in ('OBSERVE', 'UPDATE', 'ACT', 'COMMIT', 'CONSOLIDATE', 'RECOVER'):
                 with self.subTest(state=state), self.assertRaisesRegex(ValueError, 'host-only'):
                     runtime._agent(state)
-            with self.assertRaisesRegex(ValueError, 'destination'):
-                runtime._agent('REVISE')
             self.assertFalse(runtime.agents)
         finally:
             runtime.close()
@@ -168,6 +163,11 @@ class SkillAdapterTests(unittest.TestCase):
         payloads = []
         def respond(model, payload):
             payloads.append(payload)
+            systems = [m for m in payload['messages'] if m['role'] == 'system']
+            self.assertEqual(len(systems), 1)
+            self.assertIn('JSON schema:', systems[0]['content'])
+            self.assertIn('Current reasoning state: PLAN', systems[0]['content'])
+            self.assertIn('HTTP requests remain', systems[0]['content'])
             n = len(payloads)
             if n <= 3:
                 name, args = [
@@ -183,20 +183,19 @@ class SkillAdapterTests(unittest.TestCase):
                                if m['role'] == 'user' and isinstance(m['content'], list)
                                for p in m['content'] if p.get('type') == 'text')
                 reply = {'observation_id': context['observation_id'], 'memory_revision': context['memory_revision']}
-                if n == 4:
-                    reply.update(goal='finish', facts=[], unknowns=[])
-                else:
-                    reply.update(purpose='plan', plan=[{'id': 'go', 'subgoal': 'finish',
-                        'action': {'action': 'ACTION1'}, 'completion': [{'kind': 'state', 'value': 'WIN'}],
-                        'effects': [{'kind': 'state', 'value': 'WIN'}]}])
+                self.assertEqual(payload['tool_choice'], 'none')
+                reply.update(purpose='plan', plan=[{'id': 'go', 'subgoal': 'finish',
+                    'action': {'action': 'ACTION1'}, 'completion': [{'kind': 'state', 'value': 'WIN'}],
+                    'effects': [{'kind': 'state', 'value': 'WIN'}]}])
                 message = {'content': json.dumps(reply)}
             return {'choices': [{'message': message}]}
         with patch.object(LocalVisionLlm, '_complete', respond):
             runtime = CognitiveRuntime('test', 'local/qwen3-vl-4b-instruct')
+            runtime._agent('PLAN').model.max_requests = 4
             try:
                 result = runtime.decide({'game_id': 'test', 'state': 'NOT_FINISHED', 'step': 0,
                                          'available_actions': ['ACTION1'], 'remaining_actions': 1})
                 self.assertEqual(result['action'], 'ACTION1')
-                self.assertEqual(len(payloads), 5)
+                self.assertEqual(len(payloads), 4)
             finally:
                 runtime.close()

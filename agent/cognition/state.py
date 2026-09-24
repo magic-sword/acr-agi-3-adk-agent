@@ -56,15 +56,17 @@ class Hypothesis(Contract):
     evidence_refs: list[str] = Field(default_factory=list, max_length=8)
 
 
-class Perception(Contract):
+class Interpretation(Contract):
     observation_id: str
     memory_revision: int
     facts: list[Fact] = Field(default_factory=list, max_length=24)
-    unknowns: list[str] = Field(default_factory=list, max_length=8)
+    unknowns: list[str] | None = Field(default=None, max_length=8)
     hypotheses: list[Hypothesis] = Field(default_factory=list, max_length=8)
-    goal: str = Field(default="", max_length=500)
+    goal: str | None = Field(default=None, max_length=500)
     change: Literal["none", "layout", "mode", "dynamics", "goal", "uncertain"] = "none"
     change_evidence: list[str] = Field(default_factory=list, max_length=8)
+    summary: str = Field(default="", max_length=800)
+    evidence_refs: list[str] = Field(default_factory=list, max_length=8)
 
 
 class PlanNode(Contract):
@@ -106,6 +108,8 @@ class Proposal(Contract):
     experiment: Experiment | None = None
     evidence_refs: list[str] = Field(default_factory=list, max_length=8)
     diagnosis: str = Field(default="", max_length=500)
+    inquiry: str = Field(default="", max_length=400)
+    interpretation: Interpretation | None = None
     invalidated_hypotheses: list[str] = Field(default_factory=list, max_length=8)
 
 
@@ -124,7 +128,7 @@ class Pending(Contract):
 
 
 class Memory(Contract):
-    schema_version: int = 1
+    schema_version: int = 2
     revision: int = 0
     run_id: str
     game_id: str
@@ -143,6 +147,7 @@ class Memory(Contract):
     history: list[dict] = Field(default_factory=list)
     procedures: list[dict] = Field(default_factory=list)
     evidence_ids: list[str] = Field(default_factory=list)
+    interpretations: list[dict] = Field(default_factory=list)
     last_observation: dict = Field(default_factory=dict)
     last_result: dict = Field(default_factory=dict)
     model_calls: int = 0

@@ -119,6 +119,10 @@ def validate_proposal(p: Proposal, obs: dict, memory: Memory) -> None:
             validate_action(n.action, obs)
         if n.earliest_step is not None and n.latest_step is not None and n.earliest_step > n.latest_step:
             raise ValueError("inverted temporal constraint")
+    if p.status == "need_evidence":
+        if not p.inquiry or p.action or p.plan or p.experiment:
+            raise ValueError("need_evidence requires inquiry and no action/plan/experiment")
+        return
     if p.status != "ok":
         return
     if p.purpose == "probe":

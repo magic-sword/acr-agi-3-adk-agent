@@ -9,7 +9,7 @@ import uuid
 
 from agent.observation import VISUAL_PAYLOAD_KEYS
 
-from .state import Action, Memory, Pending, Perception, Proposal
+from .state import Action, Memory, Pending, Interpretation, Proposal
 from .validation import all_true, evaluate, validate_action, validate_proposal
 
 
@@ -39,6 +39,8 @@ class CognitiveTurn:
         self.boundary = False
         self.duplicate = False
         self.result: dict | None = None
+        self.review: Interpretation | None = None
+        self.inquiry = ""
 
     def enter(self, state: str):
         self.trace.append(state)
@@ -126,12 +128,12 @@ class CognitiveTurn:
             self.obs["changed_cell_count"] = len(changes)
             self.obs["changed_cells"] = changes[:96]
 
-    def apply_perception(self, p: Perception):
+    def validate_interpretation(self, p: Interpretation):
         m, o = self.memory, self.obs
         if p.observation_id != o["observation_id"] or p.memory_revision != m.revision:
-            raise ValueError("stale perception")
+            raise ValueError("stale interpretation")
         if any(f.evidence != o["observation_id"] or not f.visible for f in p.facts):
-            raise ValueError("perception facts must be current visible evidence")
+            raise ValueError("interpretation facts must be current visible evidence")
         for h in p.hypotheses:
             if not set(h.evidence_refs) <= set(m.evidence_ids):
                 raise ValueError("unknown hypothesis evidence")
@@ -141,6 +143,16 @@ class CognitiveTurn:
             raise ValueError("unknown change evidence")
         if p.change in ("mode", "dynamics", "goal") and not p.change_evidence:
             raise ValueError("revision requires evidence")
+        if not set(p.evidence_refs) <= set(m.evidence_ids):
+            raise ValueError("unknown interpretation evidence")
+        if p.summary and not p.evidence_refs:
+            raise ValueError("interpretation summary requires evidence")
+        if p.goal is not None and p.goal != m.goal and not p.evidence_refs:
+            raise ValueError("goal revision requires evidence")
+
+    def apply_interpretation(self, p: Interpretation, state: str):
+        self.validate_interpretation(p)
+        m, o = self.memory, self.obs
         for f in p.facts:
             m.facts[f.key] = f
         # Recently visible facts replace least-recent hidden facts only when bounded memory fills.
@@ -154,17 +166,23 @@ class CognitiveTurn:
             m.hypotheses[h.id] = h
         m.hypotheses = dict(list(m.hypotheses.items())[-32:])
         self.invalidate(affected)
-        if p.goal and p.goal != m.goal:
-            if m.goal:
-                self.revise = True
-                self.invalidate_all()
+        if p.goal is not None and p.goal != m.goal:
+            self.revise = True
+            self.invalidate_all()
             m.goal = p.goal
-        m.unknowns = p.unknowns
+        if p.unknowns is not None:
+            m.unknowns = p.unknowns
         if p.change in ("mode", "dynamics", "goal"):
             self.revise = True
             self.invalidate_all()
         if affected or self.revise:
             m.model_revision += 1
+
+        m.interpretations = (m.interpretations + [{"state": state, **p.model_dump(exclude_none=True)}])[-32:]
+
+    def stage_review(self, review: Interpretation):
+        self.validate_interpretation(review)
+        self.review = review
 
     def verify(self):
         self.enter("VERIFY")
@@ -174,11 +192,16 @@ class CognitiveTurn:
         if (m.last_observation and o["step"] <= m.last_observation["step"]) or m.stop_reason in (
                 "invalid_observation", "out_of_order_observation", "unacknowledged_action_or_missing_observation"):
             return
+        # Visual review supplies current facts for predicates; UPDATE publishes the interpretation.
+        evidence_memory = m.model_copy(deep=True)
+        if self.review:
+            for fact in self.review.facts:
+                evidence_memory.facts[fact.key] = fact
         candidates = ([m.pending] if m.pending else []) + m.deferred
         m.pending, m.deferred = None, []
         for pending in candidates:
-            effects = [evaluate(p, o, m, pending.baseline_hash) for p in pending.effects]
-            invariants = [evaluate(p, o, m, pending.baseline_hash) for p in pending.invariants]
+            effects = [evaluate(p, o, evidence_memory, pending.baseline_hash) for p in pending.effects]
+            invariants = [evaluate(p, o, evidence_memory, pending.baseline_hash) for p in pending.invariants]
             late = o["step"] >= pending.deadline_step
             # A later intervention prevents attribution, even when a visible effect matches.
             confounded = bool(pending.intervening_actions)
@@ -195,8 +218,12 @@ class CognitiveTurn:
                     "evidence": o["observation_id"], "confounded": confounded}
             if pending.experiment:
                 item["alternatives"] = {
-                    label: [evaluate(v, o, m, pending.baseline_hash) for v in predicates]
+                    label: [evaluate(v, o, evidence_memory, pending.baseline_hash) for v in predicates]
                     for label, predicates in pending.experiment.alternatives.items()}
+            if pending.experiment:
+                item['matched_alternatives'] = [label for label, values in item['alternatives'].items()
+                                                if values and all(v is True for v in values)]
+            item['before_observation_id'] = pending.observation_id
             self.verification.append(item)
             if outcome == "unknown" and not late:
                 m.deferred.append(pending)
@@ -210,6 +237,8 @@ class CognitiveTurn:
         if self.duplicate:
             return
         m, o = self.memory, self.obs
+        if self.review:
+            self.apply_interpretation(self.review, "VERIFY")
         if o["state"] == "WIN":
             self.consolidate("environment_win")
             self.stop("environment_win")
@@ -276,23 +305,31 @@ class CognitiveTurn:
             return "REVISE"
         if self.ready_node() is not None:
             return "ACT"
-        return "PROBE" if not self.memory.goal or self.memory.unknowns else "PLAN"
+        return "PLAN"
 
-    def revise_model(self):
-        self.enter("REVISE")
-        # Preserve completed/independent nodes for the planner; no ungrounded reset.
-        self.memory.model_revision += 1
-
-    def accept(self, p: Proposal):
-        validate_proposal(p, self.obs, self.memory)
-        if p.status != "ok":
-            raise ValueError(f"model could not propose a grounded action: {p.status}")
-        for hid in p.invalidated_hypotheses:
-            self.memory.hypotheses[hid].status = "suspended"
-        self.invalidate(set(p.invalidated_hypotheses))
-        if p.plan:
-            self.memory.plan = p.plan
-        self.proposal = p
+    def accept(self, p: Proposal, state: str = "PLAN"):
+        # A rejected proposal must not partially change facts, goals or plans.
+        original, old_revise = self.memory, self.revise
+        self.memory = original.model_copy(deep=True)
+        try:
+            if p.interpretation:
+                self.apply_interpretation(p.interpretation, state)
+            validate_proposal(p, self.obs, self.memory)
+            if p.status == "exhausted":
+                raise ValueError("model exhausted proposal")
+            for hid in p.invalidated_hypotheses:
+                self.memory.hypotheses[hid].status = "suspended"
+            self.invalidate(set(p.invalidated_hypotheses))
+            if p.plan:
+                self.memory.plan = p.plan
+            if p.status == "need_evidence":
+                self.inquiry = p.inquiry
+                self.proposal = None
+            else:
+                self.proposal = p
+        except Exception:
+            self.memory, self.revise = original, old_revise
+            raise
 
     def act(self):
         self.enter("ACT")
@@ -382,6 +419,7 @@ class CognitiveTurn:
             self.result = {"status": "done" if m.lifecycle == "DONE" else "stopped", "reason": m.stop_reason}
         entry = {"observation_id": o.get("observation_id"), "step": o.get("step"),
                  "trace": self.trace[:], "verification": self.verification,
+                 "interpretation": self.review.model_dump(exclude_none=True) if self.review else None,
                  "node_id": self.node_id, "action": self.result,
                  "effects": [p.model_dump() for p in self.effects],
                  "invariants": [p.model_dump() for p in self.invariants],
