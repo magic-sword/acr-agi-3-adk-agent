@@ -10,6 +10,7 @@ EVAL_STEPS ?= 12
 EVAL_LEVELS ?= 1
 EVAL_SECONDS ?= 90
 EVAL_HARD_SECONDS ?= 110
+PYTHON ?= python3
 FRAMEWORK_REPO := https://github.com/arcprize/ARC-AGI-3-Agents.git
 FRAMEWORK_DIR := vendor/ARC-AGI-3-Agents
 
@@ -29,6 +30,7 @@ help:
 	  'make eval-model GAME=ls20   Play locally using Qwen3-VL and ADK' \
 	  'make benchmark-prepare      Cache public evaluation games (no submission)' \
 	  'make benchmark              Bounded local gateway evaluation + diagnostic report' \
+	  'make visualize              Render current workflow + skill connections (no Docker/model)' \
 	  'make test                   Check ARC action IDs and ADK model replies' \
 	  'make model-runtime          Build portable llama-server for Kaggle bundle' \
 	  'make verify                Short two-game smoke test' \
@@ -113,3 +115,7 @@ benchmark-prepare: cache-dir
 
 benchmark: cache-dir
 	$(RUN) python scripts/benchmark_local.py --games $(EVAL_GAMES) --steps $(EVAL_STEPS) --levels $(EVAL_LEVELS) --seconds $(EVAL_SECONDS) --hard-seconds $(EVAL_HARD_SECONDS)
+
+.PHONY: visualize
+visualize:
+	$(PYTHON) scripts/visualize_agent.py

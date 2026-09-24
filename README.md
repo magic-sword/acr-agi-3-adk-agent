@@ -82,6 +82,23 @@ This runs the notebook packager's source snapshot through an official **local HT
 
 ## Cognitive workflow settings
 
+Run `make visualize` to generate the current state-machine diagram and state-to-skill
+connection matrix. It needs only Python 3.10+ on the host; Docker, a model server,
+and network access are not required. Open
+[`outputs/visualizations/agent/index.html`](outputs/visualizations/agent/index.html)
+in a browser, or preview the standalone
+[`architecture.svg`](outputs/visualizations/agent/architecture.svg).
+The HTML includes expandable current source for routing conditions and state handlers;
+`architecture.json` records connections and source hashes.
+
+Each invocation reads `Workflow.edges`, the skill mappings and selector, and engine
+internal-state calls from the current source, then replaces these generated files.
+REVISE's composed skills and internal CONSOLIDATE calls are shown separately.
+Connections indicate skills available to the model, not observed runtime tool use.
+Outputs live under the already Git-ignored `outputs/` directory. If workflow syntax
+changes beyond what the extractor supports, generation fails instead of silently
+substituting a fixed diagram. On failure, any previous output retains its old timestamp.
+
 ```bash
 COGNITION_LOG_DIR=outputs/cognition make eval-model GAME=ls20 STEPS=20
 ```

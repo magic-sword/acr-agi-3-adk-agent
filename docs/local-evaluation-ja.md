@@ -2,6 +2,8 @@
 
 [初回測定結果と改善候補（2026-09-24）](local-evaluation-20260924-ja.md)
 
+[現行エージェントの再測定とログ分析（2026-09-24 19:48 JST）](local-evaluation-20260924-current-ja.md)
+
 ## 実行
 
 ```bash
