@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from scripts.agent_monitor import Journal, Timeline, Run, discover_runs, dashboard_html, safe_asset, screen_html
+from scripts.agent_monitor import read_journal, Timeline, Run, discover_evaluations, discover_runs, dashboard_html, safe_asset, screen_html
 from agent.cognition.workflow import CognitiveRuntime
 from agent.local_vlm import LocalVisionLlm
 from test_skill_learning import obs
@@ -13,17 +13,19 @@ from test_decide_run import call, act
 
 
 class ReplayTests(unittest.TestCase):
-    def test_partial_utf8_line_is_retried_and_truncation_clears_events(self):
+    def test_partial_final_line_is_not_a_completed_event(self):
         with tempfile.TemporaryDirectory() as d:
             path=Path(d)/'r.states.jsonl'
-            line=json.dumps({'event':'state_entered','input':'観測','sequence':1},ensure_ascii=False).encode()+b'\n'
+            line=json.dumps({'event':'state_entered','state':'DECIDE','input':'観測','sequence':1},ensure_ascii=False).encode()+b'\n'
             path.write_bytes(line[:-3])
-            j=Journal(path);j.refresh();self.assertEqual(j.rows,[])
-            with path.open('ab') as f:f.write(line[-3:])
-            j.refresh();self.assertEqual(j.rows[0]['input'],'観測')
-            j.refresh();self.assertEqual(len(j.rows),1)
-            t=Timeline(Run(Path(d),'r'));t.refresh();self.assertEqual(len(t.events),1)
-            path.write_text('');self.assertTrue(t.refresh());self.assertEqual(t.events,[])
+            rows,invalid=read_journal(path);self.assertEqual(rows,[])
+            path.write_bytes(line)
+            t=Timeline(Run(Path(d),'r')).load()
+            self.assertEqual(len(t.events),1)
+            path.write_text('')
+            # Saved playback remains fixed until explicitly loaded again.
+            self.assertEqual(len(t.events),1)
+            t.load();self.assertEqual(t.events,[])
 
     def test_replay_does_not_leak_future_output_or_ack_or_frame(self):
         with tempfile.TemporaryDirectory() as d:
@@ -36,7 +38,7 @@ class ReplayTests(unittest.TestCase):
                     ('observations',{'event':'observation_received','step':1,'grid':[[1]]})]
             for i,(kind,row) in enumerate(events):
                 with (root/f'r.{kind}.jsonl').open('a') as f:f.write(json.dumps(dict(row,sequence=i+1))+'\n')
-            t=Timeline(Run(root,'r'));t.refresh()
+            t=Timeline(Run(root,'r'));t.load()
             s=t.snapshot(1);self.assertEqual(s['phase'],'処理中');self.assertIsNone(s['output']);self.assertIsNone(s['action'])
             self.assertEqual(s['current']['step'],0)
             self.assertIn('未送信',t.snapshot(3)['action_status'])
@@ -53,8 +55,7 @@ class ReplayTests(unittest.TestCase):
             # A tool's execution label must not replace the actual graph state.
             (root/'r.tools.jsonl').write_text(json.dumps({'event':'tool_started','state':'RUN',
                 'tool':'test','sequence':3})+'\n')
-            self.assertEqual(len(discover_runs(root)),1)
-            t=Timeline(discover_runs(root)[0]);t.refresh();s=t.snapshot(2)
+            t=Timeline(Run(root,'r'));t.load();s=t.snapshot(2)
             self.assertEqual(s['state'],'DECIDE');self.assertIsNone(s['output'])
             html=dashboard_html(s,root)
             self.assertNotIn('<script>',html);self.assertIn('&lt;script&gt;',html)
@@ -71,13 +72,13 @@ class ReplayTests(unittest.TestCase):
             r=CognitiveRuntime('test','local/qwen3-vl-4b-instruct',log_dir=d)
             self.addCleanup(r.close)
             def answer(model,payload):
-                timeline=Timeline(Run(Path(d),r.session_id));timeline.refresh()
+                timeline=Timeline(Run(Path(d),r.session_id));timeline.load()
                 s=timeline.snapshot(len(timeline.events)-1)
                 self.assertEqual(s['state'],'DECIDE');self.assertEqual(s['phase'],'処理中')
                 self.assertIsNone(s['output'])
                 return call('submit_decision',act())
             with patch.object(LocalVisionLlm,'_complete',answer):r.decide(obs())
-            timeline=Timeline(Run(Path(d),r.session_id));timeline.refresh()
+            timeline=Timeline(Run(Path(d),r.session_id));timeline.load()
             rows=[e for e in timeline.events if e['_journal']=='states']
             self.assertEqual([(e['event'],e['state']) for e in rows],
                              [('state_entered','DECIDE'),('state_exited','DECIDE'),
@@ -85,43 +86,52 @@ class ReplayTests(unittest.TestCase):
             sequence=[e['sequence'] for e in timeline.events]
             self.assertEqual(sequence,sorted(set(sequence)))
 
-    def test_notebook_widget_seek_and_follow_are_distinct(self):
-        from scripts.notebook_monitor import AgentMonitor
-        with tempfile.TemporaryDirectory() as d:
-            path=Path(d)/'r.states.jsonl'
-            path.write_text(json.dumps({'event':'state_entered','state':'DECIDE','sequence':1})+'\n')
-            w=AgentMonitor(d);self.addCleanup(w.close)
-            w.follow.value=True
-            with path.open('a') as f:f.write(json.dumps({'event':'state_exited','state':'DECIDE','sequence':2,'output':{'x':1}})+'\n')
-            w.refresh();self.assertEqual(w.slider.value,1)
-            w.slider.value=0;self.assertFalse(w.follow.value)
-            w.refresh();self.assertEqual(w.slider.value,0)
-            self.assertIn('まだ記録',w.panels[1].value)
+    def fixture(self, root, evaluation='20260925T100000Z',game='ls20'):
+        folder=root/evaluation;directory=folder/game/'cognition';directory.mkdir(parents=True)
+        (folder/'manifest.json').write_text('{}')
+        (directory.parent/'result.json').write_text('{}')
+        for kind,rows in {
+            'observations':[{'event':'observation_received','sequence':1,'step':0,'grid':[[8,9]],'observation_id':'o0'}],
+            'states':[{'event':'state_entered','state':'DECIDE','sequence':2,'step':0,'input':{'task':'test'}},
+                      {'event':'state_exited','state':'DECIDE','sequence':4,'step':0,'output':{'done':True}}],
+            'requests':[{'event':'model_request','sequence':3,'step':0,'request':{'large':'data'}}]
+        }.items():
+            (directory/f'r.{kind}.jsonl').write_text(''.join(json.dumps(r)+'\n' for r in rows))
+        return folder
 
-    def test_stop_only_owned_process_group(self):
-        import asyncio,os,time
-        from scripts.notebook_monitor import AgentMonitor
-        async def exercise():
-            with tempfile.TemporaryDirectory() as d:
-                root=Path(d);(root/'scripts').mkdir()
-                (root/'scripts/benchmark_local.py').write_text(
-                    'import subprocess,sys,time\nfrom pathlib import Path\n'
-                    'p=subprocess.Popen([sys.executable,"-c","import time; time.sleep(60)"])\n'
-                    'Path("worker-pid").write_text(str(p.pid))\ntime.sleep(60)\n')
-                w=AgentMonitor(root,project=root)
-                try:
-                    self.assertTrue(w.stop_button.disabled)
-                    w.stop()  # Read-only monitors cannot stop another evaluation.
-                    w.start(game='ls20',model=False,seconds=10)
-                    deadline=time.monotonic()+5
-                    while not (root/'worker-pid').exists() and time.monotonic()<deadline:
-                        await asyncio.sleep(.05)
-                    child=int((root/'worker-pid').read_text())
-                    w.stop()
-                    await asyncio.sleep(.3)
-                    self.assertIsNotNone(w.process.poll())
-                    stat=Path(f'/proc/{child}/stat')
-                    self.assertTrue(not stat.exists() or stat.read_text().split()[2]=='Z')
-                finally:
-                    w.close(stop=True)
-        asyncio.run(exercise())
+    def test_dropdowns_load_only_the_selected_benchmark_game(self):
+        from scripts.notebook_monitor import BenchmarkReplay
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);one=self.fixture(root);two=self.fixture(root,'20260925T110000Z','ft09')
+            self.assertEqual(discover_evaluations(root),[two,one])
+            with patch.object(Timeline,'load',autospec=True,side_effect=AssertionError('must not eagerly load')):
+                w=BenchmarkReplay(root)
+                self.addCleanup(w.close)
+                self.assertIsNone(w.timeline)
+                w.evaluation.value=str(one)
+                self.assertIn('ls20',w.game.options[0][0])
+            w.load();self.assertEqual(w.timeline.run.directory.parent.name,'ls20')
+            w.evaluation.value=str(two);self.assertIsNone(w.timeline)
+            w.load();self.assertEqual(w.timeline.run.directory.parent.name,'ft09')
+            self.assertFalse(hasattr(w,'start'));self.assertFalse(hasattr(w,'_watch'))
+
+    def test_playback_is_cached_and_detail_is_rendered_only_when_opened(self):
+        from scripts.notebook_monitor import BenchmarkReplay
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);self.fixture(root)
+            w=BenchmarkReplay(root);self.addCleanup(w.close)
+            with patch('scripts.notebook_monitor.json_html',return_value='detail') as detail:
+                w.load();self.assertEqual(detail.call_count,0)
+                self.assertEqual(w.slider.max,0)  # One game step, four individual events.
+                w.mode.value='イベント';self.assertEqual(w.slider.max,3)
+                with patch('scripts.notebook_monitor.picture',side_effect=AssertionError('unchanged image rebuilt')):
+                    w.slider.value=1;w.slider.value=2
+                self.assertEqual(detail.call_count,0)
+                w.details.selected_index=3;self.assertEqual(detail.call_count,1)
+                self.assertFalse(w.play.playing)
+                w.play.playing=True;self.assertIsNone(w.details.selected_index)
+            s=w.timeline.snapshot(1)
+            self.assertIsNone(s['output'])
+            self.assertEqual(w.timeline.snapshot(3)['output'],{'done':True})
+            self.assertIsNone(s['output'])  # Later snapshots must not mutate the past.
+            self.assertIs(s,w.timeline.snapshot(1))

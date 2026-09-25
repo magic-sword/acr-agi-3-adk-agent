@@ -1,4 +1,4 @@
-"""Read-only, incremental replay of agent journals. No ADK/model dependencies."""
+"""Read-only playback of saved agent journals. No ADK/model dependencies."""
 from __future__ import annotations
 
 import base64
@@ -25,89 +25,77 @@ class Run:
         return f'{game} · {self.run_id[:10]} · {self.directory.parent.parent.name}'
 
 
-def discover_runs(root):
-    """A benchmark root, cognition directory, or a journal may be supplied."""
+def discover_evaluations(root):
+    """List benchmark IDs with a finished, replayable game; never scan frame trees."""
     root = Path(root).expanduser().resolve()
-    if root.is_file():
-        run_id = root.name.split('.')[0]
-        return [Run(root.parent, run_id)] if (root.parent / f'{run_id}.states.jsonl').is_file() else []
-    if not root.exists():
+    if not root.is_dir():
         return []
-    paths = list(root.rglob('*.states.jsonl'))
-    paths.sort(key=lambda p: (p.stat().st_mtime_ns, str(p)))
-    return [Run(p.parent, p.name.removesuffix('.states.jsonl')) for p in paths]
+    candidates = [root] if (root/'manifest.json').is_file() else [p for p in root.iterdir() if p.is_dir()]
+    return sorted((p for p in candidates if (p/'manifest.json').is_file() and discover_runs(p)),
+                  key=lambda p: p.name, reverse=True)
 
 
+def discover_runs(evaluation):
+    """Read only the shallow benchmark/game/cognition structure."""
+    evaluation = Path(evaluation)
+    return [Run(p.parent, p.name.removesuffix('.states.jsonl'))
+            for p in sorted(evaluation.glob('*/cognition/*.states.jsonl'))
+            if (p.parent.parent/'result.json').is_file()]
 
-class Journal:
-    """Never consume an incomplete line. Truncation/replacement resets this file."""
-    def __init__(self, path):
-        self.path, self.offset, self.identity = Path(path), 0, None
-        self.rows, self.invalid_lines = [], 0
 
-    def refresh(self):
-        try:
-            stat = self.path.stat()
-        except FileNotFoundError:
-            return False
-        identity = (stat.st_dev, stat.st_ino)
-        reset = self.identity != identity or stat.st_size < self.offset
-        if reset:
-            self.rows, self.offset, self.invalid_lines = [], 0, 0
-        self.identity = identity
-        changed = reset
-        with self.path.open('rb') as stream:
-            stream.seek(self.offset)
-            while True:
-                start = stream.tell()
-                line = stream.readline()
-                if not line or not line.endswith(b'\n'):
-                    self.offset = start
-                    break
-                self.offset = stream.tell()
-                try:
-                    row = json.loads(line)
-                    if not isinstance(row, dict):
-                        raise ValueError('not an object')
-                except (ValueError, UnicodeDecodeError):
-                    self.invalid_lines += 1
-                    continue
-                self.rows.append(row)
-                changed = True
-        return changed
+def read_journal(path):
+    rows, invalid = [], 0
+    if not path.exists():
+        return rows, invalid
+    with path.open('rb') as stream:
+        for line in stream:
+            if not line.endswith(b'\n'):
+                break  # Preserve an interrupted run without inventing a completed event.
+            try:
+                row = json.loads(line)
+                if not isinstance(row,dict):
+                    raise ValueError('not an object')
+                rows.append(row)
+            except (ValueError,UnicodeDecodeError):
+                invalid += 1
+    return rows, invalid
 
 
 class Timeline:
     def __init__(self, run):
         self.run = run
-        self.journals = {k: Journal(run.directory / f'{run.run_id}.{k}.jsonl') for k in JOURNALS}
-        self.events = []
+        self.events, self.snapshots = [], []
+        self.invalid_lines = 0
 
-    def refresh(self):
-        changed = [j.refresh() for j in self.journals.values()]
-        if any(changed) or not self.events:
-            rows = [dict(row, _journal=kind) for kind, journal in self.journals.items() for row in journal.rows]
-            if any(type(r.get('sequence')) is not int or r['sequence'] < 1 for r in rows):
-                raise ValueError('Every event must have a positive sequence number')
-            if len({r['sequence'] for r in rows}) != len(rows):
-                raise ValueError('Duplicate event sequence number')
-            self.events = sorted(rows, key=lambda r: r['sequence'])
-
-        return any(changed)
+    def load(self):
+        """Load this game once and build the replay index in a single pass."""
+        rows = []
+        self.invalid_lines = 0
+        for kind in JOURNALS:
+            records, invalid = read_journal(self.run.directory/f'{self.run.run_id}.{kind}.jsonl')
+            rows.extend(dict(row,_journal=kind) for row in records)
+            self.invalid_lines += invalid
+        if any(type(r.get('sequence')) is not int or r['sequence'] < 1 for r in rows):
+            raise ValueError('Every event must have a positive sequence number')
+        if len({r['sequence'] for r in rows}) != len(rows):
+            raise ValueError('Duplicate event sequence number')
+        self.events = sorted(rows,key=lambda r:r['sequence'])
+        self.snapshots = list(self._index())
+        return self
 
     def snapshot(self, index):
-        if not self.events:
+        if not self.snapshots:
             return None
-        index = max(0, min(index, len(self.events)-1))
-        prefix = self.events[:index+1]
-        selected = prefix[-1]
+        return self.snapshots[max(0,min(index,len(self.snapshots)-1))]
+
+    def _index(self):
         observations, tools, learning = [], [], []
         state, stage_input, stage_output = '観測待ち', None, None
         phase, context, action, action_step, action_status = '', {}, None, None, '未選択'
         prediction = None
         incoming_action, incoming_status = None, None
         request = response = None
-        for event in prefix:
+        for index,event in enumerate(self.events):
             kind, name = event['_journal'], event.get('event')
             if kind == 'observations':
                 incoming_action = action if action_step is not None and event.get('step') == action_step+1 else None
@@ -148,18 +136,19 @@ class Timeline:
                 tools.append(event)
             if kind == 'learning':
                 learning.append(event)
-        current = observations[-1] if observations else None
-        before = observations[-2] if len(observations) > 1 else None
-        if current and action_step is not None and current.get('step', -1) > action_step:
-            if action_status.startswith('受付済み'):
-                action_status = '受付済み・次の観測あり（効果の成功とは別）'
-        return dict(event=selected, index=index, total=len(self.events), current=current, before=before,
-                    state=state, phase=phase, input=stage_input, output=stage_output,
-                    context=context, action=action, action_step=action_step, action_status=action_status,
-                    prediction=prediction,
-                    incoming_action=incoming_action, incoming_status=incoming_status,
-                    request=request, response=response, tools=tools[-16:], learning=learning[-12:],
-                    recent=prefix[-12:])
+            current = observations[-1] if observations else None
+            before = observations[-2] if len(observations) > 1 else None
+            display_status = action_status
+            if current and action_step is not None and current.get('step', -1) > action_step:
+                if action_status.startswith('受付済み'):
+                    display_status = '受付済み・次の観測あり（効果の成功とは別）'
+            yield dict(event=event, index=index, total=len(self.events), current=current, before=before,
+                        state=state, phase=phase, input=stage_input, output=stage_output,
+                        context=context, action=action, action_step=action_step, action_status=display_status,
+                        prediction=prediction,
+                        incoming_action=incoming_action, incoming_status=incoming_status,
+                        request=request, response=response, tools=tools[-16:], learning=learning[-12:],
+                        recent=self.events[max(0,index-11):index+1])
 
 
 def safe_asset(directory, relative):
@@ -221,9 +210,9 @@ def json_html(value):
     return '<pre style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:480px;overflow:auto">'+escape(pretty(value))+'</pre>'
 
 
-def dashboard_html(snapshot, directory):
+def dashboard_html(snapshot, directory, *, include_images=True):
     if snapshot is None:
-        return '<p>ログを待っています。推論サーバの確認・評価用ソースの準備中は画面がまだ届きません。</p>'
+        return '<p>評価IDとゲームを選択して「読み込む」を押してください。</p>'
     s = snapshot
     e = s['event']
     action = s['action'] or {}
@@ -235,7 +224,7 @@ def dashboard_html(snapshot, directory):
     if 'x' in action:
         action_label += f" ({action.get('x')}, {action.get('y')})"
     cards = []
-    for label, obs in [('直前の観測', s['before']), ('この時点の最新観測', s['current'])]:
+    for label, obs in ([('直前の観測', s['before']), ('この時点の最新観測', s['current'])] if include_images else []):
         mark = action if obs and obs.get('step') == s['action_step'] else None
         if obs is s['before'] and s['incoming_action']:
             mark = s['incoming_action']

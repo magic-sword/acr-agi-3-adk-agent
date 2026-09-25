@@ -1,282 +1,272 @@
-"""Jupyter widgets for live observation and replay of exactly the same journals."""
+"""On-demand Jupyter replay of a selected saved benchmark. No live runner or polling."""
 from __future__ import annotations
 
-import asyncio
-from datetime import datetime, timezone
+from bisect import bisect_left
 from html import escape
-import math
+import io
 import json
-import os
 from pathlib import Path
-import re
-import signal
-import subprocess
-import sys
-import time
 
 import ipywidgets as W
 from IPython.display import display
+from PIL import Image, ImageDraw
 
-from scripts.agent_monitor import Timeline, discover_runs, dashboard_html, json_html, safe_asset, screen_html
+from scripts.agent_monitor import (Timeline, discover_evaluations, discover_runs, dashboard_html,
+                                  json_html, safe_asset, PALETTE)
 
 
-class AgentMonitor:
-    def __init__(self, root, *, project=None, interval=1.0):
-        self.project = Path(project or Path(__file__).resolve().parents[1]).resolve()
-        if not math.isfinite(interval) or interval < .2:
-            raise ValueError('interval must be at least 0.2 seconds')
-        self.interval, self.root = interval, Path(root).expanduser().resolve()
+def picture(observation, directory, action=None):
+    """A single PNG, avoiding thousands of SVG nodes for a pixel grid."""
+    if observation is None:
+        return b''
+    origin, scale = (0,0), 6
+    data = None
+    if observation.get('image_path'):
+        path = safe_asset(directory,observation['image_path'])
+        data = path.read_bytes()
+        view = observation.get('viewport') or {}
+        origin, scale = view.get('origin'), view.get('scale')
+    if data is None:
+        grid = observation.get('grid')
+        if not grid:
+            return b''
+        image = Image.new('RGB',(len(grid[0]),len(grid)))
+        pixels = [tuple(int(PALETTE[v][i:i+2],16) for i in (1,3,5)) if type(v) is int else tuple(v[:3])
+                  for row in grid for v in row]
+        image.putdata(pixels)
+        image = image.resize((image.width*6,image.height*6),Image.Resampling.NEAREST)
+    else:
+        image = None
+    if action and action.get('action') in ('CLICK','ACTION6') and origin is not None and scale:
+        x,y = action.get('x'),action.get('y')
+        if type(x) is int and type(y) is int:
+            image = Image.open(io.BytesIO(data)).convert('RGB') if image is None else image
+            cx,cy = origin[0]+(x+.5)*scale,origin[1]+(y+.5)*scale
+            radius = 2*scale
+            draw = ImageDraw.Draw(image)
+            draw.ellipse((cx-radius,cy-radius,cx+radius,cy+radius),outline='white',width=3)
+            draw.ellipse((cx-radius+1,cy-radius+1,cx+radius-1,cy+radius-1),outline='#ff315b',width=1)
+    if image is None:
+        return data
+    stream=io.BytesIO();image.save(stream,format='PNG')
+    return stream.getvalue()
+
+
+class BenchmarkReplay:
+    def __init__(self, root):
+        self.root = Path(root).expanduser().resolve()
         self.timeline, self.runs = None, {}
-        self.process = self.process_log = None
-        self._task, self._updating, self._closed = None, False, False
-        self._last_discovery, self._last_poll = 0., ''
-        self.run_select = W.Dropdown(description='走行', layout=W.Layout(width='100%'))
-        self.follow = W.Checkbox(value=False, description='最新を追従', indent=False)
-        self.refresh_button = W.Button(description='再読込', icon='refresh')
-        self.stop_button = W.Button(description='実行を停止', icon='stop', disabled=True, button_style='warning')
-        self.play = W.Play(value=0, min=0, max=0, interval=400, description='再生', disabled=True)
-        self.slider = W.IntSlider(value=0, min=0, max=0, description='イベント', continuous_update=False,
-                                  layout=W.Layout(width='75%'))
-        self.speed = W.Dropdown(options=[('ゆっくり',1000),('標準',400),('速い',100)], value=400,
-                                description='再生速度', layout=W.Layout(width='220px'))
-        self.prev_step, self.next_step = W.Button(description='前の操作'), W.Button(description='次の操作')
-        self.status, self.board = W.HTML(), W.HTML()
+        self._updating, self._closed = False, False
+        self._positions, self._image_keys = [], [None,None]
+        self._frames, self._animation_key = [], None
+        self.evaluation = W.Dropdown(description='評価ID',layout=W.Layout(width='100%'))
+        self.game = W.Dropdown(description='ゲーム',layout=W.Layout(width='100%'))
+        self.load_button = W.Button(description='読み込む',icon='folder-open',button_style='primary')
+        self.refresh_button = W.Button(description='評価一覧を更新',icon='refresh')
+        self.mode = W.Dropdown(description='再生単位',options=['操作','イベント'],layout=W.Layout(width='210px'))
+        self.play = W.Play(min=0,max=0,value=0,interval=1000,repeat=False,disabled=True)
+        self.slider = W.IntSlider(min=0,max=0,value=0,description='位置',continuous_update=False,layout=W.Layout(width='75%'))
+        self.speed = W.Dropdown(description='間隔',options=[('2秒',2000),('1秒',1000),('0.5秒',500)],value=1000,layout=W.Layout(width='180px'))
+        self.previous,self.next = W.Button(description='前へ'),W.Button(description='次へ')
+        self.status,self.board = W.HTML(),W.HTML()
+        self.images = [W.Image(format='png',layout=W.Layout(width='100%',height='340px',object_fit='contain')) for _ in range(2)]
+        self.captions = [W.HTML(),W.HTML()]
+        for image in self.images:
+            image.add_class('arc-replay-image')
+        screens = W.HBox([W.VBox([label,img],layout=W.Layout(width='50%')) for label,img in zip(self.captions,self.images)])
         self.panels = [W.HTML() for _ in range(6)]
-        self.animation = W.HTML()
-        self.animation_slider = W.IntSlider(min=0,max=0,description='フレーム')
-        self.animation_play = W.Play(min=0,max=0,interval=150,disabled=True)
-        self._animation_key, self._frames = None, []
-        self._animation_link = W.jslink((self.animation_play,'value'),(self.animation_slider,'value'))
-        self.animation_slider.observe(lambda _: self._render_animation(),names='value')
-        self.tabs = W.Tab(children=[*self.panels,W.VBox([W.HBox([self.animation_play,self.animation_slider]),self.animation])])
-        for i, title in enumerate(('状態の入力', '状態の出力', '選択イベント', 'HTTP入力', 'モデル応答', 'ツール・学習')):
-            self.tabs.set_title(i, title)
-        self.tabs.set_title(6,'記録済みアニメーション')
-        self.process_output = W.HTML()
-        self.log_panel = W.Accordion(children=[self.process_output])
-        self.log_panel.set_title(0,'起動・終了ログ')
-        self.log_panel.selected_index = None
-        self.widget = W.VBox([W.HTML('<h3>Agent Observatory</h3><p>画面・状態・操作を同じ時点で追跡します。'
-                                   'モデルが出力した記録を表示し、出力されていない内部思考は補いません。</p>'),
-                              self.run_select, W.HBox([self.follow,self.refresh_button,self.stop_button]),
-                              W.HBox([self.play,self.slider]), W.HBox([self.prev_step,self.next_step,self.speed]),
-                              self.status,self.board,self.tabs,self.log_panel])
+        self.animation = W.Image(format='png',layout=W.Layout(width='384px',height='384px',object_fit='contain'))
+        self.animation_caption = W.HTML()
+        self.animation_slider = W.IntSlider(min=0,max=0,description='フレーム',continuous_update=False)
+        self.details = W.Accordion(children=[*self.panels,W.VBox([self.animation_slider,self.animation_caption,self.animation])])
+        for i,name in enumerate(('状態の入力','状態の出力','選択イベント','HTTP入力','モデル応答','ツール・学習','記録済みアニメーション')):
+            self.details.set_title(i,name)
+        self.details.selected_index = None
+        self.widget = W.VBox([W.HTML('<h3>ベンチマーク再生</h3><style>.arc-replay-image img{image-rendering:pixelated}</style>'),
+                              self.evaluation,self.game,W.HBox([self.load_button,self.refresh_button]),
+                              W.HBox([self.mode,self.speed,self.previous,self.next]),W.HBox([self.play,self.slider]),
+                              self.status,screens,self.board,self.details])
         self._link = W.jslink((self.play,'value'),(self.slider,'value'))
-        self.run_select.observe(self._choose_run, names='value')
-        self.slider.observe(self._seek, names='value')
-        self.speed.observe(lambda change: setattr(self.play,'interval',change['new']), names='value')
-        self.follow.observe(self._follow_changed, names='value')
-        self.refresh_button.on_click(lambda _: self.refresh(discover=True))
-        self.stop_button.on_click(lambda _: self.stop())
-        self.prev_step.on_click(lambda _: self.step(-1))
-        self.next_step.on_click(lambda _: self.step(1))
-        self.refresh(discover=True)
+        self.evaluation.observe(self._select_evaluation,names='value')
+        self.game.observe(lambda _: self._clear(),names='value')
+        self.load_button.on_click(lambda _: self.load())
+        self.refresh_button.on_click(lambda _: self.refresh_evaluations())
+        self.slider.observe(lambda _: self.render() if not self._updating else None,names='value')
+        self.mode.observe(lambda _: self._set_positions(),names='value')
+        self.speed.observe(lambda change: setattr(self.play,'interval',change['new']),names='value')
+        self.previous.on_click(lambda _: self._move(-1))
+        self.next.on_click(lambda _: self._move(1))
+        self.play.observe(self._playing,names='playing')
+        self.details.observe(self._open_detail,names='selected_index')
+        self.animation_slider.observe(lambda _: self._render_animation() if not self._updating else None,names='value')
+        self.refresh_evaluations()
 
-    def _choose_run(self, change):
+    def refresh_evaluations(self):
+        previous=self.evaluation.value
+        evaluations=discover_evaluations(self.root)
+        self._updating=True
+        try:
+            self.evaluation.options=[(p.name,str(p)) for p in evaluations]
+            self.evaluation.value=previous if previous in [str(p) for p in evaluations] else str(evaluations[0]) if evaluations else None
+        finally:
+            self._updating=False
+        self._select_evaluation(None)
+
+    def _select_evaluation(self, _):
         if self._updating:
             return
-        self.timeline = Timeline(self.runs[change['new']]) if change['new'] in self.runs else None
-        self.refresh()
+        runs=discover_runs(self.evaluation.value) if self.evaluation.value else []
+        self.runs={r.run_id:r for r in runs}
+        self._updating=True
+        try:
+            self.game.options=[(r.directory.parent.name+' · '+r.run_id[:10],r.run_id) for r in runs]
+            self.game.value=runs[0].run_id if runs else None
+        finally:
+            self._updating=False
+        self._clear()
 
-    def _seek(self, change):
-        if not self._updating:
-            self.follow.value = False
-            self.render()
-
-    def _follow_changed(self, change):
-        if change['new']:
-            self.play.playing = False
-            self.refresh()
-
-    def step(self, direction):
-        if not self.timeline or not self.timeline.events:
+    def _clear(self):
+        if self._updating:
             return
-        self.follow.value = False
-        current = self.timeline.events[self.slider.value].get('step')
-        indices = range(self.slider.value+1,len(self.timeline.events)) if direction>0 else range(self.slider.value-1,-1,-1)
-        for i in indices:
-            if self.timeline.events[i].get('step') != current:
-                self.slider.value = i
-                return
+        self.play.playing=False
+        self._updating=True
+        try:
+            self.slider.value=self.play.value=0
+            self.slider.max=self.play.max=0
+        finally:
+            self._updating=False
+        self.timeline=None
+        self._positions=[]
+        self._image_keys=[None,None]
+        self._frames,self._animation_key=[],None
+        self.details.selected_index=None
+        for panel in self.panels:
+            panel.value=''
+        for img,label in zip(self.images,self.captions):
+            img.value=b'';label.value=''
+        self.animation.value=b''
+        self.play.disabled=True
+        self.load_button.disabled=not self.runs
+        self.board.value=''
+        self.status.value='<p>評価IDとゲームを選択して「読み込む」を押してください。</p>' if self.runs else '<p>再生可能な評価がありません。make benchmark の終了後に「評価一覧を更新」を押してください。</p>'
 
-    def refresh(self, *, discover=False):
-        if self._closed:
+    def load(self):
+        run=self.runs.get(self.game.value)
+        if run is None:
             return
-        changed = False
-        if discover or not self.runs or time.monotonic()-self._last_discovery > 5:
-            runs = discover_runs(self.root)
-            mapped = {str(r.directory / r.run_id):r for r in runs}
-            if mapped != self.runs:
-                self.runs = mapped
-                previous = self.run_select.value
-                self._updating = True
-                try:
-                    self.run_select.options = [(r.label,k) for k,r in mapped.items()]
-                    self.run_select.value = previous if previous in mapped else next(reversed(mapped),None)
-                finally:
-                    self._updating = False
-                self.timeline = Timeline(mapped[self.run_select.value]) if mapped else None
-                changed = True
-            self._last_discovery = time.monotonic()
-        if self.timeline:
-            changed = self.timeline.refresh() or changed
-            maximum = max(0,len(self.timeline.events)-1)
-            self._updating = True
-            try:
-                self.play.max = self.slider.max = maximum
-                if self.follow.value:
-                    self.slider.value = maximum
-                self.play.disabled = maximum == 0
-            finally:
-                self._updating = False
-        self.stop_button.disabled = self.process is None or self.process.poll() is not None
-        self._last_poll = datetime.now().strftime('%H:%M:%S')
+        self._clear()
+        self.status.value='<p>選択したゲームの記録を読み込んでいます。</p>'
+        try:
+            self.timeline=Timeline(run).load()
+            self._set_positions()
+        except (OSError,ValueError) as exc:
+            self.timeline=None
+            self.status.value='<p>読込エラー: '+escape(str(exc))+'</p>'
+
+    def _set_positions(self):
+        if self._updating or not self.timeline:
+            return
+        self.play.playing=False
+        old=self._positions[self.slider.value] if self._positions and self.slider.value<len(self._positions) else 0
+        events=self.timeline.events
+        if self.mode.value=='イベント':
+            self._positions=list(range(len(events)))
+        else:
+            # End of each recorded step; keep the final observation and stop visible.
+            self._positions=[i for i,e in enumerate(events) if i==len(events)-1 or e.get('step')!=events[i+1].get('step')]
+        self._updating=True
+        try:
+            self.slider.value=self.play.value=0
+            self.slider.max=self.play.max=max(0,len(self._positions)-1)
+            self.slider.value=min(bisect_left(self._positions,old),self.slider.max)
+            self.play.disabled=len(self._positions)<2
+        finally:
+            self._updating=False
         self.render()
-        if self.process_log and self.process_log.exists():
-            with self.process_log.open('rb') as stream:
-                stream.seek(max(0,self.process_log.stat().st_size-8000))
-                tail = stream.read().decode('utf-8',errors='replace')
-            self.process_output.value = json_html(tail or 'プロセスを起動しました。出力を待っています。')
-        return changed
+
+    def _move(self, delta):
+        self.play.playing=False
+        self.slider.value=max(0,min(self.slider.max,self.slider.value+delta))
+
+    def _playing(self, change):
+        if change['new']:
+            self.details.selected_index=None
+
+    def _open_detail(self, change):
+        if change['new'] is not None:
+            self.play.playing=False
+            self._render_detail()
+
+    def snapshot(self):
+        if self.timeline and self._positions:
+            return self.timeline.snapshot(self._positions[self.slider.value])
 
     def render(self):
-        s = self.timeline.snapshot(self.slider.value) if self.timeline else None
-        mode = '最新を追従中' if self.follow.value else '履歴再生（位置を固定）'
-        process = ''
-        if self.process:
-            code = self.process.poll()
-            process = ' · 評価プロセス実行中' if code is None else f' · 評価プロセス終了: code={code}'
-        invalid = sum(j.invalid_lines for j in self.timeline.journals.values()) if self.timeline else 0
-        self.status.value = (f'<p><b>{mode}{process}</b> · 最終読込 {self._last_poll} '
-                             f'· {escape(str(self.root))}<br>記録の時刻はUTC。再生速度は表示用で、ゲームを進めません。'
-                             + (f' 不正な完了行を{invalid}件スキップしました。' if invalid else '')+'</p>')
-        directory = self.timeline.run.directory if self.timeline else self.root
-        self.board.value = dashboard_html(s,directory)
-        values = ([s['input'], s['output'] if s['output'] is not None else 'この時点で状態の出力はまだ記録されていません。',
-                   s['event'],s['request'],s['response'],{'tools':s['tools'],'learning':s['learning']}]
-                  if s else ['記録を待っています。']*6)
-        for panel, value in zip(self.panels,values):
-            panel.value = json_html(value)
-        observation = (s or {}).get('current') or {}
-        key = (str(directory),observation.get('observation_id'),observation.get('animation_archive_path'))
-        if key != self._animation_key:
-            self._animation_key, self._frames = key, []
-            self.animation_play.playing = False
-            if observation.get('animation_archive_path'):
+        if self._closed or self._updating:
+            return
+        s=self.snapshot()
+        if s is None:
+            self.status.value='<p>再生できるイベントがありません。</p>'
+            return
+        directory=self.timeline.run.directory
+        self.status.value=f'<p><b>記録の再生</b> · {escape(directory.parent.parent.name)} · {escape(directory.parent.name)} · {self.slider.value+1}/{len(self._positions)}<br>再生はゲームやモデルを実行しません。詳細を開くと一時停止します。</p>'
+        if self.timeline.invalid_lines:
+            self.status.value+=f'<p>不正な完了行を{self.timeline.invalid_lines}件除外しました。</p>'
+        for i,(label,obs) in enumerate([('直前の観測',s['before']),('この時点の最新観測',s['current'])]):
+            action=s['incoming_action'] if i==0 else s['action'] if obs and obs.get('step')==s['action_step'] else None
+            key=(obs.get('observation_id',obs.get('sequence')) if obs else None,json.dumps(action,sort_keys=True))
+            if key!=self._image_keys[i]:
+                self.images[i].value=picture(obs,directory,action)
+                self._image_keys[i]=key
+            self.captions[i].value=f'<b>{label}</b> · step {obs.get("step","—") if obs else "—"}'
+        self.board.value=dashboard_html(s,directory,include_images=False)
+        if self.details.selected_index is not None:
+            self._render_detail()
+
+    def _render_detail(self):
+        s=self.snapshot();index=self.details.selected_index
+        if s is None or index is None:
+            return
+        if index==6:
+            obs=s['current'] or {}
+            key=obs.get('observation_id')
+            if key!=self._animation_key:
+                self._animation_key,self._frames=key,[]
+                if obs.get('animation_archive_path'):
+                    self._frames=json.loads(safe_asset(self.timeline.run.directory,obs['animation_archive_path']).read_text()).get('frames',[])
+                self._updating=True
                 try:
-                    self._frames = json.loads(safe_asset(directory,observation['animation_archive_path']).read_text()).get('frames',[])
-                except (OSError,ValueError):
-                    pass
-            self.animation_play.max = self.animation_slider.max = max(0,len(self._frames)-1)
-            self.animation_slider.value = 0
-            self.animation_play.disabled = len(self._frames)<2
+                    self.animation_slider.value=0
+                    self.animation_slider.max=max(0,len(self._frames)-1)
+                finally:
+                    self._updating=False
             self._render_animation()
+            return
+        values=[s['input'],s['output'] if s['output'] is not None else 'この時点の出力はまだ記録されていません。',
+                s['event'],s['request'],s['response'],{'tools':s['tools'],'learning':s['learning']}]
+        self.panels[index].value=json_html(values[index])
 
     def _render_animation(self):
-        if not self._frames:
-            self.animation.value = '<p>この観測には途中フレームの記録がありません。</p>'
+        if self.details.selected_index!=6:
             return
-        index = min(self.animation_slider.value,len(self._frames)-1)
-        frame = self._frames[index]
-        # Stored RGB frames are converted only for presentation; the game is not stepped.
-        if frame and frame[0] and isinstance(frame[0][0],list):
-            import base64,io
-            from PIL import Image
-            image = Image.new('RGB',(len(frame[0]),len(frame)))
-            image.putdata([tuple(pixel[:3]) for row in frame for pixel in row])
-            stream=io.BytesIO();image.save(stream,format='PNG')
-            picture='<img style="width:384px;image-rendering:pixelated" src="data:image/png;base64,'+base64.b64encode(stream.getvalue()).decode()+'">'
-        else:
-            picture=screen_html({'grid':frame},self.root)
-        self.animation.value = ('<p>記録済みの遷移 · '+str(index+1)+'/'+str(len(self._frames))+
-                                ' フレーム。表示間隔は実時間ではありません。</p>'+picture)
-
-    async def _watch(self):
-        while not self._closed:
-            await asyncio.sleep(self.interval)
-            try:
-                self.refresh()
-            except Exception as exc:
-                self.status.value = '<p>ログ読込エラー: '+escape(str(exc))+'（次の更新で再試行）</p>'
+        if not self._frames:
+            self.animation.value=b'';self.animation_caption.value='途中フレームの記録なし'
+            return
+        index=self.animation_slider.value
+        self.animation.value=picture({'grid':self._frames[index]},self.root)
+        self.animation_caption.value=f'記録済み遷移: {index+1}/{len(self._frames)} フレーム'
 
     def show(self):
         display(self.widget)
-        if self._task is None or self._task.done():
-            try:
-                self._task = asyncio.get_running_loop().create_task(self._watch())
-            except RuntimeError:
-                self.status.value += '<p>自動更新にはJupyterカーネルが必要です。再読込ボタンは利用できます。</p>'
         return self
 
-    def start(self, *, game='ls20', steps=30, seconds=180, model=True, learning=True):
-        """Start the existing benchmark in an owned process group, without blocking the kernel."""
-        if self._closed:
-            raise RuntimeError('monitor is closed')
-        if self.process and self.process.poll() is None:
-            raise RuntimeError('this monitor already has a running evaluation')
-        if not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)?',game) or type(steps) is not int or steps<1:
-            raise ValueError('supply one game ID and positive integer steps')
-        if not math.isfinite(seconds) or seconds<=0:
-            raise ValueError('seconds must be positive and finite')
-        stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
-        output = self.project/'outputs/evaluations'/f'{stamp}-monitor'
-        logs = self.project/'outputs/monitor-process'
-        logs.mkdir(parents=True,exist_ok=True)
-        self.process_log = logs/f'{stamp}.log'
-        command = [sys.executable,'-u',str(self.project/'scripts/benchmark_local.py'),
-                   '--games',game,'--steps',str(steps),'--seconds',str(seconds),
-                   '--hard-seconds',str(seconds+30),'--output',str(output)]
-        if not model:
-            command.append('--offline-policy')
-        if not learning:
-            command.append('--no-learning')
-        with self.process_log.open('w') as log:
-            self.process = subprocess.Popen(command,cwd=self.project,stdout=log,stderr=subprocess.STDOUT,
-                                            start_new_session=True)
-        self.root = output
-        self.timeline, self.runs = None, {}
-        self._updating = True
-        try:
-            self.run_select.options = []
-            self.slider.value = self.play.value = 0
-            self.slider.max = self.play.max = 0
-            self.play.playing = False
-        finally:
-            self._updating = False
-        self.follow.value = True
-        self.refresh(discover=True)
-        return output
-
-    def stop(self):
-        """Stop only the evaluation launched by this instance, including its worker."""
-        if self.process is None or self.process.poll() is not None:
-            return
-        proc = self.process
-        try:
-            os.killpg(proc.pid,signal.SIGTERM)
-        except ProcessLookupError:
-            return
-        # No blocking wait on the notebook UI thread.
-        async def reap():
-            await asyncio.sleep(2)
-            if proc.poll() is None:
-                try:
-                    os.killpg(proc.pid,signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                await asyncio.to_thread(proc.wait)
-        try:
-            asyncio.get_running_loop().create_task(reap())
-        except RuntimeError:
-            proc.wait(timeout=3)
-        self.refresh()
-
-    def close(self, *, stop=False):
-        if stop:
-            self.stop()
-        self._closed = True
-        if self._task:
-            self._task.cancel()
+    def close(self):
+        self.play.playing=False
+        self._closed=True
         self._link.unlink()
-        self._animation_link.unlink()
-        self.widget.close()
+        def dispose(widget):
+            for child in getattr(widget,'children',()):
+                dispose(child)
+            widget.close()
+        dispose(self.widget)
+        self.timeline=None

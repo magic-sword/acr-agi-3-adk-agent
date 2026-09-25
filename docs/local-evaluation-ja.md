@@ -2,7 +2,7 @@
 
 現行エージェントは[DECIDE/RUNとスキル学習](skill-learning-runtime-ja.md)。
 
-画面・操作・状態の入出力を並べて調べる場合は、[JupyterLab観測ノートブック](../notebooks/agent_observatory.ipynb)を使う。[ライブ追従と過去再生の手順](agent-monitor-ja.md)。
+画面・操作・状態の入出力を並べて調べる場合は、[JupyterLab観測ノートブック](../notebooks/agent_observatory.ipynb)を使う。[評価IDを選択して再生する手順](agent-monitor-ja.md)。
 
 ```bash
 make benchmark-prepare
