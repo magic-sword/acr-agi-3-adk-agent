@@ -2,22 +2,19 @@
 from __future__ import annotations
 
 import os
-from .cognition.validation import parse_json, validate_action
 from .cognition.workflow import CognitiveRuntime
-
-
-def _parse_model_answer(text: str, observation: dict) -> dict:
-    """Compatibility helper for simple action clients; never grants implicit RESET."""
-    return validate_action(parse_json(text), observation).model_dump(exclude_none=True)
 
 
 def create_runtime(game_id: str) -> CognitiveRuntime:
     return CognitiveRuntime(
         game_id, os.getenv("ADK_MODEL") or None,
-        max_calls=int(os.getenv("COGNITION_MAX_CALLS", "3")),
+        max_calls=int(os.getenv("COGNITION_MAX_CALLS", "4")),
+        max_http_requests=int(os.getenv("COGNITION_MAX_HTTP_REQUESTS", "8")),
         max_resets=int(os.getenv("COGNITION_MAX_RESETS", "2")),
         seconds=float(os.getenv("COGNITION_SECONDS", "600")),
         log_dir=os.getenv("COGNITION_LOG_DIR") or None,
+        learning=os.getenv("COGNITION_LEARNING", "1") == "1",
+        skill_library=os.getenv("COGNITION_SKILL_LIBRARY") or None,
     )
 
 

@@ -1,172 +1,107 @@
-# ARC-AGI-3 Google ADK starter
+# ARC-AGI-3 skill-learning agent
 
-Develop locally in JupyterLab, play ARC-AGI-3 games with a Google ADK agent, and build a Kaggle Notebook from the same Python source. The agent uses an ADK 2.0 cognitive `Workflow` with persistent game memory, prediction checks, hypothesis revision, experiments and dependency plans. Without a model it runs deterministic control probes; `make eval-model` selects Qwen3-VL-4B-Instruct through ADK's `LlmAgent`. This is an initial adaptive workflow, not a trained or benchmarked game solver. See the [implementation guide](docs/adk-cognitive-implementation-ja.md) for behavior, limits and validation.
+A local Google ADK 2.0 agent with one decision controller and a `DECIDE ↔ RUN` loop.
+It explores visual games, proposes executable skill candidates from acknowledged experience,
+tests candidates through real game actions, and promotes only versions passing host evaluation.
+Qwen3-VL-4B-Instruct runs locally. Without a model, the driver issues deterministic control probes.
 
-## Server setup
+See the [implementation and limits](docs/skill-learning-runtime-ja.md),
+[design and research](docs/autonomous-skill-learning-design-ja.md), and
+[evaluation guide](docs/local-evaluation-ja.md).
+See the [migration validation results](docs/skill-learning-validation-ja.md) for verified behavior and remaining model limitations.
 
-Requires Docker Compose, NVIDIA Container Toolkit, and SSH port forwarding for JupyterLab. The Kaggle GPU image provides JupyterLab and common dependencies. Local wheels pin Google ADK 2.0.0, Google Gen AI 1.72.0 and Google Auth 2.49.2. The local build installs pinned ARC packages from `third_party/wheels/` without accessing PyPI; `arc-agi` requires Python 3.12 or later.
+## Setup
 
-Run the `make` commands as the same SSH user that edits this repository (for example, `prog`). Compose then runs JupyterLab and one-off containers with that user's UID and GID, so files written through the bind mount are editable in both JupyterLab and the remote IDE. Cache files go under the ignored `.cache/model-cache/` directory.
+Requires Docker Compose, NVIDIA Container Toolkit, and SSH forwarding for JupyterLab.
+The development image uses Python 3.12+, pinned ADK/GenAI/ARC wheels in `third_party/wheels/`,
+and the official ARC framework under ignored `vendor/`.
+Run commands as your normal SSH user; Compose uses that UID/GID.
 
 ```bash
-cp .env.example .env             # keep your existing .env if already configured
+cp .env.example .env            # preserve an existing .env
 make build
-make setup                     # clone official ARC-AGI-3-Agents under ignored vendor/
+make setup
 make check
-make lab                       # JupyterLab at http://localhost:8889 via SSH tunnel
-```
-
-If you previously ran JupyterLab as root inside the container, repair the existing files once after pulling this change:
-
-```bash
-make down
-make repair-perms              # fixes generated notebook, .virtual_documents, vendor, and outputs
-make notebook                  # regenerates the local/Kaggle compatible notebook
-make lab
-```
-
-`make repair-perms` runs a one-off root container solely to transfer ownership of known generated paths to your SSH user. It does not change the ownership of the whole repository. Open the notebook again after restarting JupyterLab.
-
-`make setup` downloads the official framework once and narrows its registry imports to the random agent. First local play may download and cache game environments; later runs can reuse the cache. Setup needs GitHub access. The Kaggle competition rerun uses the competition's offline wheel and framework dataset instead. If the base image lacks an underlying scientific dependency, the build's import check names the missing module; the wheel set assumes the current Kaggle GPU image.
-
-## Local agent loop
-
-```bash
-make eval GAME=ls20 STEPS=50
-make verify                    # ls20 and vc33, 50 actions each
-make eval                      # all available games
-```
-
-`agent/my_agent.py` owns the ARC execution boundary and stops without sending a synthetic action at WIN, budget exhaustion or unrecoverable errors. Each game owns one `CognitiveRuntime`, ADK `Runner`, session and event loop. `agent/cognition/` implements the state machine and skill contracts. Without a model, it issues deterministic legal control probes. `make eval` prints the local aggregate score and never accesses Kaggle's hidden competition set.
-
-Edit `agent/**/*.py` as the source of the agent. The generated `notebooks/submission.ipynb` can be opened and executed in local JupyterLab: its wheel installation runs only when the Kaggle competition wheels exist, and its gateway and placeholder submission steps run only in the appropriate Kaggle environment. For local gameplay, use `make eval`; running the notebook locally prepares the submission code but does not play a game. `make notebook` bundles the pinned ADK-related wheels for offline installation and regenerates the notebook from all `agent/**/*.py` modules and overwrites edits made directly in the generated notebook. Jupyter's `.virtual_documents/` and the generated notebook are ignored by Git.
-
-## Local vision model
-
-Download the [official Qwen3-VL-4B-Instruct GGUF weights](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF) (~3 GB), then start llama.cpp with an NVIDIA GPU:
-
-```bash
-make model-download
+make lab                       # localhost:8889 via SSH forwarding
+make model-download            # first-time model download
 make model-up
-make model-check                 # sends a real image request
-make test                        # cognition, ARC boundary, model contract and packaging tests
+make model-check
+```
+
+Caches live in `.cache/model-cache/`. For files left by earlier root containers,
+`make repair-perms` fixes ownership of the known generated paths.
+No API key or internet is needed during local model inference.
+
+## Run and evaluate
+
+```bash
+make eval GAME=ls20 STEPS=20    # deterministic driver probe, no model
 make eval-model GAME=ls20 STEPS=50
+make test
+make benchmark-prepare         # cache public games
+make benchmark                 # three games, 12 actions / 90 seconds each
+make visualize                 # outputs/agent-visualization/index.html
 ```
 
-The GGUF files are stored in ignored `.cache/model-cache/qwen3-vl-4b/`; they are never committed. Docker Compose exposes the model on the server's loopback port 8080. `agent/local_vlm.py` implements Google ADK's `BaseLlm` protocol and passes PNG frames with action history to `LlmAgent`; the workflow returns one validated legal action or a stop decision. Model proposals are parsed as typed observations, experiments and dependency plans; action names and click coordinates are checked again before execution. ARC reports available actions as integer IDs; the adapter presents the displayed controller button names to the model. `CLICK` uses the host cursor, positioned through `move_cursor(x, y)` with integer coordinates in `[0,63]`. The execution boundary translates these inputs to canonical engine actions; legacy clients can still supply explicit ACTION6 coordinates. No API key, LiteLLM installation, or internet connection is used during inference. `make model-up` needs access to GHCR for its first image pull. `make eval-model` sets `ADK_MODEL` for that run only; plain `make eval` remains the deterministic baseline.
+`make benchmark` records a source snapshot, model/environment hashes, official SDK scores,
+actual actions, observations, model requests and skill lifecycle events under `outputs/evaluations/`.
+It never uploads or submits to Kaggle. Short public-game runs are not leaderboard estimates.
 
-To use an existing compatible server, set `VLM_API_BASE=http://host.docker.internal:8080/v1` in `.env` and run `ADK_MODEL=local/qwen3-vl-4b-instruct make eval GAME=ls20`; the server must present the `qwen3-vl-4b-instruct` alias and support OpenAI vision chat completions. JupyterLab may use the same endpoint through its Compose network.
+Learning starts with an empty procedural library per game. Two fixed method skills,
+`design-experiment` and `skill-creator`, are loaded on demand through ADK.
+Learned procedures are scoped to a game version; they are not Python or shell code.
+The first implementation supports up to eight guarded steps and measurable pixel/level effects.
+Every step yields to the driver for a fresh observation. Unexpected effects stop reuse.
 
-## Visual observation and recorded animation
-
-The visual-observation skill renders the final received frame with an input controller, coordinate rulers, and a host cursor. `observe_current` reads this screen; `move_cursor(x, y)` previews a position in original game pixels without clicking or spending an external action. The action skill proposes `CLICK` without x/y; the host uses the current cursor position. Other proposals use the displayed `UP`, `DOWN`, `LEFT`, `RIGHT`, `ACT`, and `UNDO` names.
-
-Intermediate frames are **not automatically replayed** on each observation. `animation.event_id` identifies the completed transition and its source action. `list_observations` and `get_observation` retrieve retained evidence; `compare_observations` returns labeled before/after images and paginated pixel differences. The latest 128 observations are retained independently of logging. Cross-level/RESET comparisons are rejected. `observe_animation(event_id, start_frame)` retrieves four consecutive historical frames at a time from retained events, explicitly labeled as replay, without advancing game time. The local vision transport uses ordered PNG sheets, not animated GIF input. With `COGNITION_LOG_DIR` enabled, each source batch is saved as `frames/<run>-<step>.json`; explicit single-play GIF export is available with:
+Candidates need actual seed evidence, two successful distinct fresh trials beyond their seed
+examples, negative guard checks and regression checks. Unknown results never count as success.
+This validates limited observed effects, not a general causal law or game-solving ability.
 
 ```bash
-python agent/rendering.py replay EVENT.json history.gif
+# Explicit transfer evaluation: freeze a previously generated library.
+docker compose run --rm --no-deps dev python scripts/benchmark_local.py \
+  --games ls20 --no-learning --skill-library outputs/cognition/RUN/skills/library.json
 ```
 
-Playback uses synthetic timing because the frame data has no duration information. Replaying a recorded lava flow does not mean lava is flowing again. Only the next external action returns new game evidence.
+Use an actual generated `library.json` path in place of the example. Imported libraries are
+explicit inputs; normal benchmark trials do not share learning implicitly.
 
-## Bounded local evaluation
+## Configuration and logs
 
-```bash
-make benchmark-prepare           # cache ls20, vc33 and ft09 once
-make model-up
-make benchmark                   # 1 level / 12 actions / 90 seconds per game
-make benchmark EVAL_GAMES=ls20,vc33 EVAL_STEPS=40 EVAL_SECONDS=180 EVAL_HARD_SECONDS=200
-```
+- `COGNITION_MAX_CALLS=4`: judgments per observation, including creation/evaluation work.
+- `COGNITION_MAX_HTTP_REQUESTS=8`: shared HTTP budget per observation.
+- `COGNITION_SECONDS=600`: total game runtime budget; benchmarks override it.
+- `COGNITION_MAX_RESETS=2`: host-owned episode restarts.
+- `COGNITION_LEARNING=1`: permit candidate creation/testing/evaluation.
+- `COGNITION_SKILL_LIBRARY`: optional frozen library; unset by default.
+- `COGNITION_LOG_DIR=outputs/cognition`: logging location; empty disables persistence.
+- `VLM_API_BASE=http://vlm:8080/v1`: OpenAI-compatible local endpoint.
 
-This runs the notebook packager's source snapshot through an official **local HTTP competition gateway** and the same Qwen3-VL policy. It saves SDK scorecards, timing/token metrics, model responses, frame images, action acknowledgments and diagnostic reports under `outputs/evaluations/`. Each game has a separate process with a hard timeout. No Kaggle upload or submission occurs. Public-game scores retain the full game's level denominator and are not leaderboard estimates. See the [evaluation guide](docs/local-evaluation-ja.md) for limits, logs and production differences.
-
-## Cognitive workflow settings
-
-The workflow is **OBSERVE → DECIDE → COMMIT**. OBSERVE records evidence;
-DECIDE compares the previous result, updates a short notebook and chooses one action;
-COMMIT validates and publishes the decision. The only required submission fields are
-`action` and `prediction`. An unknown goal does not block a useful trial. Previous and
-current frames are supplied together, with optional tools for older evidence.
-See the [design](docs/adk-cognitive-state-machine-ja.md) and
-[evaluation](docs/local-evaluation-simple-loop-ja.md).
-
-
-Run `make visualize` to generate the current state-machine diagram and state-to-skill
-connection matrix. It needs only Python 3.10+ on the host; Docker, a model server,
-and network access are not required. Open
-[`outputs/visualizations/agent/index.html`](outputs/visualizations/agent/index.html)
-in a browser, or preview the standalone
-[`architecture.svg`](outputs/visualizations/agent/architecture.svg).
-The HTML includes expandable current source for routing conditions and state handlers;
-`architecture.json` records connections and source hashes.
-
-Each invocation reads `Workflow.edges`, the skill mappings and selector, and engine
-internal-state calls from the current source, then replaces these generated files.
-The diagram shows only the active workflow and connected skills; internal helpers and
-unconnected skill definitions are available in expandable details.
-Connections indicate skills available to the model, not observed runtime tool use.
-Outputs live under the already Git-ignored `outputs/` directory. If workflow syntax
-changes beyond what the extractor supports, generation fails instead of silently
-substituting a fixed diagram. On failure, any previous output retains its old timestamp.
+Game images contain the board and coordinate rulers. Button names are text metadata.
+There is no host cursor or controller panel to mistake for game objects.
+`CLICK` takes explicit original-pixel coordinates, with the host validating bounds and availability.
+Historical frame tools never advance game time.
 
 ```bash
-COGNITION_LOG_DIR=outputs/cognition make eval-model GAME=ls20 STEPS=20
 python3 scripts/analyze_agent.py outputs/cognition
 ```
 
-Local Compose runs save logs in `outputs/cognition` by default; an explicitly empty
-`COGNITION_LOG_DIR` disables logging. Direct `CognitiveRuntime` callers enable it with
-`log_dir`. Open `outputs/cognition/decisions.html` after running the analyzer to inspect
-each decision's reason, reflection, prediction, notebook, actual skill loads and tool results.
-These are reported decision summaries, not a reconstruction of private model reasoning.
-Skill loading proves retrieval, not correct application of the method.
+The HTML viewer links decisions, actual execution, and skill learning. `<run>.learning.jsonl`
+records experience, drafts, trials, evaluation, promotion and suspension.
+`<run>/skills/library.json` stores immutable versions and evaluation evidence.
+Requests, tool execution, observations and driver acknowledgements have separate journals.
+These are observable decision artifacts, not a reconstruction of private model reasoning.
 
-- `<run>.jsonl`: committed turns, three workflow states, separate internal helpers,
-  decision summaries, actual tool executions, and previous action/outcome links.
-- `<run>.tools.jsonl`: timestamped tool start/result events written immediately,
-  including failed skill loads and final completion responses. A start without a
-  finish means the outcome is unknown; it is not evidence of success.
-- `<run>.model.jsonl`: model attempts, HTTP exchanges, validation and usage.
-- `<run>.observations.jsonl` and `frames/`: actual observations for checking claims.
-
-Missing reasons remain explicitly unrecorded; the analyzer does not invent them.
-Frame changes are observations, not proof that a prediction was correct. The logs
-can link a submitted action to the next observation, but do not prove execution
-without that observation or a driver/gateway acknowledgement.
-
-`COGNITION_MAX_CALLS=3` bounds model attempts per observation (normally one; extra attempts repair failures). Each DECIDE attempt allows at most 3 HTTP requests. `COGNITION_MAX_RESETS=2` bounds retries after GAME_OVER, and `COGNITION_SECONDS=600` bounds each game's reasoning time. JSONL traces and memory snapshots do not automatically restore an external game after a crash. The VLM context size is 16,384 tokens; restart it with `make model-up` after updating. An already-running JupyterLab container needs `make lab` after saving work to use the rebuilt ADK image.
-
-## Offline Kaggle model bundle
-
-The competition rerun cannot download models or a server binary. Build a **separate Kaggle Dataset** containing the two GGUF files and a CUDA llama.cpp runtime. This build uses Docker and checks out a pinned llama.cpp revision; the CUDA 12.8 build image may need a compatible host driver. The bundle is about 3 GB plus runtime libraries:
+## Offline notebook
 
 ```bash
-make model-download
-make model-runtime
-# Inspect the bundle: both GGUF files, llama-server, lib*.so, dataset-metadata.json.
-ls -lh .cache/model-cache/qwen3-vl-4b/
-make auth
-# Upload once (or use "kaggle datasets version -p ... -m ..." when updating).
-docker compose run --rm --no-deps dev bash -ec 'IFS= read -r KAGGLE_API_TOKEN < .kaggle/access_token; export KAGGLE_API_TOKEN; kaggle datasets create -p .cache/model-cache/qwen3-vl-4b'
+make notebook                  # regenerate from agent source and skill resources
 ```
 
-The dataset slug in `.cache/model-cache/qwen3-vl-4b/dataset-metadata.json` and `notebooks/kernel-metadata.json` is `magicsword001/arc-agi-3-qwen3-vl-4b`; update **both** if your Kaggle username differs. Attach that dataset to the notebook before `make push`. The notebook checks for both GGUF files and the runtime, starts the server on `127.0.0.1:8080`, and sends an image request during Save & Run; in the competition rerun, ADK uses this same server. Errors are visible in `/kaggle/working/llama-server.log`. This full GPU path requires an actual Kaggle Save & Run check; Docker images, driver versions, and inference speed can change.
+`notebooks/submission.ipynb` is generated; edit `agent/` instead. The notebook bundles source,
+method skills and pinned ADK wheels. Kaggle reruns use the competition's offline framework
+and model bundle. Local execution prepares the code; `make eval` plays locally.
 
-## Kaggle Notebook
-
-Keep your existing `notebooks/kernel-metadata.json` with your Kaggle username and the competition source. Put the personal API token in `.kaggle/access_token` (one line, chmod 600). These secrets stay outside Git.
-
-```bash
-make notebook                  # inspect notebooks/submission.ipynb before upload
-make auth                      # validate token
-make push                      # Kaggle Save & Run; uploads the generated notebook
-make status                    # inspect the Kaggle run
-```
-
-`make push` uploads a Notebook version after the model dataset exists under the configured slug. After its Save & Run completes, manually select `submission.parquet` in Kaggle's **Submit to Competition** UI to trigger the hidden rerun. The Notebook is generated from the agent sources, writes a placeholder parquet only during Save & Run, and uses Qwen3-VL during the competition rerun. Generated `notebooks/submission.ipynb`, credentials, caches, and the vendored framework are ignored by Git.
-
-If the Kaggle runtime changes its installed Google ADK version or competition dataset paths, rerun `make notebook` and inspect the generated cells before pushing. This repository follows the official [ARC-AGI-3 Kaggle Starter](https://github.com/arcprize/ARC-AGI-3-Kaggle-Starter) execution contract and uses the [Google ADK](https://adk.dev/) runtime.
-
-Thirteen optional reasoning skills use native ADK loaders with an inline name/description catalog and on-demand bodies/references. State instructions live in `agent/cognition/instructions.py`; commit, budgets, rendering and control translation belong to host code. See [skill connection and checks](docs/adk-native-skills-ja.md).
-
-DECIDE finishes through the validated `submit_decision` tool. ADK can perform multiple evidence lookups before submission; Workflow retains routing and action execution. No separate final JSON response is required. `make visualize` also shows the state-to-completion-tool mapping.
+`make push` explicitly builds and uploads the notebook when requested. `make status` checks
+an existing kernel run. Authentication uses the local ignored `.kaggle/access_token`.
+The present refactor does not run either publishing command.

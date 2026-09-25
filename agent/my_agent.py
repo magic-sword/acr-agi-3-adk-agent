@@ -35,7 +35,7 @@ def available_action_names(actions: list[Any] | None) -> list[str]:
 
 
 def frame_observation(game_id: str, frame: FrameData, step: int, remaining: int,
-                      *, with_image: bool, cursor: dict | None = None, source_action: dict | None = None) -> dict:
+                      *, with_image: bool, source_action: dict | None = None) -> dict:
     observation = {
         "game_id": game_id, "state": frame.state.name, "step": step,
         "levels_completed": frame.levels_completed,
@@ -52,7 +52,7 @@ def frame_observation(game_id: str, frame: FrameData, step: int, remaining: int,
         # UI/cursor changes never count as game changes, including RGB inputs.
         observation["frame_hash"] = hashlib.sha256(image.tobytes() + str(image.size).encode()).hexdigest()
         if with_image:
-            attach_visuals(observation, [np.asarray(f).tolist() for f in frame.frame], cursor, source_action)
+            attach_visuals(observation, [np.asarray(f).tolist() for f in frame.frame], source_action)
     return observation
 
 
@@ -75,7 +75,7 @@ class MyAgent(Agent):
         observation = frame_observation(self.game_id, frame, self.action_counter,
                                         max(0, self.MAX_ACTIONS + 1 - self.action_counter),
                                         with_image=bool(os.getenv("ADK_MODEL")),
-                                        cursor=self._runtime.cursor, source_action=self._last_action)
+                                        source_action=self._last_action)
         if self.evaluation_max_levels is not None and frame.levels_completed >= self.evaluation_max_levels:
             observation["evaluation_stop_reason"] = "level_limit"
         return observation
@@ -94,10 +94,6 @@ class MyAgent(Agent):
         if action is GameAction.ACTION6:
             data.update(x=result["x"], y=result["y"])
         self._last_action = {"action": action.name, **{k: v for k, v in data.items() if k in ("x", "y")}}
-        if action is GameAction.ACTION6:
-            self._runtime.cursor = {"x": result["x"], "y": result["y"]}
-        elif action is GameAction.RESET:
-            self._runtime.cursor = None
         action.set_data(data)
         action.reasoning = {"policy": "adk-cognition", "reason": result["reason"],
                             "decision_id": result["decision_id"]}
@@ -118,10 +114,19 @@ class MyAgent(Agent):
                 except PolicyStopped as exc:
                     logging.info("%s: %s", self.game_id, exc)
                     break
-                frame = self.take_action(action)
+                self._runtime.record_execution("action_dispatched")
+                try:
+                    frame = self.take_action(action)
+                except Exception as exc:
+                    self._runtime.record_execution("action_outcome_unknown", error=f"{type(exc).__name__}: {exc}"[:500])
+                    raise
                 self.action_counter += 1
                 if frame is None:
+                    self._runtime.record_execution("action_outcome_unknown", error="no returned frame")
                     raise RuntimeError("action outcome unavailable; refusing automatic resend")
+                self._runtime.record_execution("action_acknowledged", game_state=frame.state.name,
+                                               levels_completed=frame.levels_completed,
+                                               next_step=self.action_counter)
                 self.append_frame(frame)
                 logging.info("%s - %s: count %s, levels completed %s", self.game_id,
                              action.name, self.action_counter, frame.levels_completed)

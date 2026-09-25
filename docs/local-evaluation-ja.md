@@ -1,92 +1,53 @@
-# 提出枠を使わない短時間ローカル評価
+# ローカル評価
 
-[初回測定結果と改善候補（2026-09-24）](local-evaluation-20260924-ja.md)
-
-[現行エージェントの再測定とログ分析（2026-09-24 19:48 JST）](local-evaluation-20260924-current-ja.md)
-
-[観測と解釈を分離したリファクタの検証](local-evaluation-cognitive-refactor-ja.md)
-
-## 実行
+現行エージェントは[DECIDE/RUNとスキル学習](skill-learning-runtime-ja.md)。
 
 ```bash
-make benchmark-prepare  # 初回だけ: 公開ゲームを取得
+make benchmark-prepare
 make model-up
 make benchmark
+make benchmark EVAL_GAMES=ls20 EVAL_STEPS=40 EVAL_SECONDS=180 EVAL_HARD_SECONDS=200
 ```
 
-既定は **ls20 / vc33 / ft09、各1レベル・最大12操作・判断時間90秒**。いずれかの条件に達すると停止する。各ゲームを別プロセスで順番に実行し、初期化・終了処理を含め110秒で強制終了する。3ゲームのワーカー時間は最大約330秒で、モデル読み込み・事前取得・ファイルハッシュ計算は別時間。
+既定は公開3ゲーム、各12操作・1レベル・90秒、ワーカー上限110秒。公式ローカルHTTPゲートウェイとSDKのスコアを使い、ノートブックと同じソースをスナップショットして各ゲームを新しいプロセスで動かす。Kaggleへの提出は行わない。短縮IDが曖昧なら完全なゲーム版IDを指定する。
 
 ```bash
-# 特定のゲームで、最初の2レベルまで、最大40操作・180秒
-make benchmark EVAL_GAMES=ls20,vc33 EVAL_LEVELS=2 EVAL_STEPS=40 \
-  EVAL_SECONDS=180 EVAL_HARD_SECONDS=200
-
-# レベル上限なし、手数と時間だけで制限
-make benchmark EVAL_LEVELS=0 EVAL_STEPS=50
-
-# 推論を使わず評価ドライバだけ確認
-# これはモデル性能の測定ではない
-docker compose run --rm --no-deps dev python scripts/benchmark_local.py \
-  --offline-policy --games ls20 --steps 2 --seconds 10 --hard-seconds 25
+# 学習を止めた対照条件
+ docker compose run --rm --no-deps dev python scripts/benchmark_local.py --games ls20 --no-learning
+# 以前の学習成果を固定し、明示的に再利用
+ docker compose run --rm --no-deps dev python scripts/benchmark_local.py \
+   --games ls20 --no-learning --skill-library outputs/cognition/RUN/skills/library.json
+# ドライバだけの確認（モデル性能を測る条件ではない）
+ docker compose run --rm --no-deps dev python scripts/benchmark_local.py \
+   --offline-policy --games ls20 --steps 2 --seconds 10 --hard-seconds 25
 ```
 
-`--games`にはバージョン付きの完全IDも指定できる。複数バージョンをキャッシュしている場合、曖昧な短縮IDでは実行せず完全IDを求める。同じ条件の比較には、手数・レベル・時間・モデル設定・ゲーム版を揃える。
-
-このコマンド群にKaggleへのアップロードや提出処理は含まれない。`benchmark-prepare`だけ公開環境の取得にネットワークを使い、測定中のゲームはキャッシュした環境を公式SDKで実行する。モデルはローカルのQwen3-VLサーバを使う。
-
-## 本番と揃える部分
-
-- ノートブック生成器の`SOURCES`と同じファイルを評価ディレクトリへコピーし、そのスナップショットの`MyAgent`を読み込む。ゲーム中に編集しても、その評価のソースは変わらない。
-- 同じADK認知Workflow、ローカルVLMアダプタ、画像前処理、操作の検証を使う。レベル上限だけ評価用の設定として付加し、本番の既定動作は変えない。
-- `arc-agi`の公式HTTPサーバをlocalhostに立て、`competition_mode=True`で実行する。エージェント側は`OperationMode.ONLINE`で、このローカルゲートウェイにだけ接続する。ゲームは同じSDKのOFFLINEモードで実行する。
-- 初期化RESET、操作要求、実際の応答をHTTP経由で記録し、最後にスコアカードを閉じる。スコアは自作の計算式ではなく、インストールした公式SDKの値をそのまま保存する。
-- 1ゲームごとに記憶を作り直す。今回の短時間評価は1ゲーム1回で、試行の良い結果だけを選び直す処理はない。
-
-公式スターターも公開ゲームのローカル実行を開発用経路として提供している。[公式スターター](https://github.com/arcprize/ARC-AGI-3-Kaggle-Starter)
-
-## 同一ではない部分
-
-非公開ゲーム、Kaggleのゲートウェイイメージ、GPU、同梱するllama.cppバイナリの完全一致は保証しない。現在の本番起動経路はSwarmでゲームを並行実行するが、この評価は時間と診断を分離するため直列実行する。スループットや待ち時間は本番と異なる。
-
-`manifest.json`に公開ゲームの版、環境ファイルとエージェントソースのSHA-256、Python・SDKバージョン、GPU、モデルサーバの設定、ローカルに保存されたモデル重みのハッシュを残す。ローカル重みのハッシュはサーバが実際にそのファイルをロードしたことの証明ではない。外部の互換サーバを指定した場合は特にサーバ側の記録と照合する。
-
-また、**1レベルで止めても、SDKスコアの分母はゲーム全体のまま**。未実施レベルの影響を除いて高い点に見せる再正規化は行わない。短時間測定ではSDKスコアと到達レベル・操作数を併読する。12操作はクリアを保証する長さではない。
+`RUN`は実際のログの実行IDに置き換える。学習・候補の失敗試験も時間・操作の費用に含む。ライブラリを渡さなければ毎ゲーム空から開始する。学習効果の評価では、学習に使わなかった課題・配置で、固定ライブラリの有無を比較する。追加試行予算を与える場合は明示し、通常条件へ混ぜない。
 
 ## 出力
 
-`outputs/evaluations/<UTC日時>/`に保存する。`--output`で新規ディレクトリ名を指定でき、既存結果は上書きしない。
+`outputs/evaluations/<UTC日時>/`に保存する。既存結果は上書きしない。
 
-|ファイル|用途|
+|ファイル|内容|
 |---|---|
-|`report.md`|比較表、ログから得られる改善調査のヒント|
-|`summary.csv` / `summary.json`|ゲーム別スコア、操作数、時間、停止理由、モデル呼出し、応答形式の成功率|
-|`manifest.json`|実行条件、バージョン、ハッシュ、本番との差分|
-|`package/`|評価した提出用ソースのスナップショット|
-|`<game>/scorecard.json`|公式SDKの生スコア。レベル別の操作数・人間基準値も保存|
-|`<game>/result.json`|ゲーム単位の詳細な性能指標と診断|
-|`<game>/gateway.jsonl`|実際に要求・確認された操作と応答。最初のRESETは初期化|
-|`<game>/worker.log`|HTTPゲートウェイ、例外、実行ログ|
-|`<game>/cognition/<run>.jsonl`|各手の状態遷移・予測照合・行動・判断時間・検証エラー|
-|`<game>/cognition/<run>.model.jsonl`|モデル入力記憶、生応答、JSON型検証、推論秒数、トークン数|
-|`<game>/cognition/<run>.observations.jsonl`|その時点の実フレームの色ID、操作候補、到達レベル|
-|`<game>/cognition/frames/`|モデルに渡したPNG画像|
-|`<game>/cognition/<run>.json`|最新の認知記憶|
+|manifest.json / package/|予算、モデル・依存関係・ゲーム・ソース・入力ライブラリのハッシュと評価対象ソース|
+|report.md / summary.json / summary.csv|公式SDKスコア、操作、時間、停止理由、診断|
+|各ゲームのscorecard.json / gateway.jsonl|公式スコアと操作の実際の応答|
+|cognition/*.jsonl / *.json|各手のDECIDE/RUN、作業記憶と停止状態|
+|cognition/*.model.jsonl|判断入力、生応答、HTTP往復、時間・トークン|
+|cognition/*.requests.jsonl / request-images/|実際に送信したテキスト・ツール定義・画像|
+|cognition/*.tools.jsonl|ツール開始と終了、読み込んだメタスキル|
+|cognition/*.artifacts.jsonl|受理した判断と選択した操作。実行受付とは別|
+|cognition/*.execution.jsonl|実行送信、受付、結果不明|
+|cognition/*.observations.jsonl / frames/|実画面・色IDと記録アニメーション|
+|cognition/*.learning.jsonl|経験・候補作成・試行・評価・昇格・停止|
+|cognition/<run>/skills/|仕様、評価証拠、再利用可能なlibrary.json|
+|cognition/decisions.html|自動生成した判断とスキル獲得のビューア|
 
-`schema_valid_rate`はJSON型契約を満たす割合で、意味的に正しい判断の割合ではない。操作・前提条件の検証失敗は判断ログの`errors`で確認する。トークン数はモデルサーバが`usage`を返した呼出しだけを集計し、取得件数も併記する。
+`schema_valid_rate`は提出契約の受理率で、意味的な正答率ではない。`model_calls`とスキル参照等を含む`model_http_requests`を分ける。トークンはusageを取得した要求のみ。
 
-`actions`はエージェントが送った操作数で、環境の初期化RESETは含まない。SDK側の操作集計は生スコアカードを正とする。強制終了時はゲートウェイで確認できた操作数を復元し、未確認の実行中操作があり得ることを明記する。スコアを取得できなかった場合は`null`とし、0点に置き換えない。全ゲーム分のスコアが揃わなければ全体平均も`null`とする。
+スキルの作成数だけで改善とは評価しない。実際の再利用、効果の一致、誤適用、中断、旧版への回帰、最終課題の達成、総費用を併読する。
 
-## 改善の調べ方
+1レベルで止めてもSDKのスコア分母はゲーム全体。未取得のスコアはnull、全件揃わなければ全体平均もnull。ワーカー強制終了ではゲートウェイの受付済み操作から復元するが、実行中の結果不明が残り得る。
 
-1. `stop_reason`で、手数／時間／レベル上限と、モデルの形式不良や内部エラーを区別する。
-2. `state_visits`でPLANに進めているか、PROBEを反復しているかを見る。
-3. `model.jsonl`の`context.unknowns`、`context.goal`、生応答から、探索後に仮説が更新されているか確認する。
-4. `gateway.jsonl`とPNGで、クリック位置や移動操作が狙った対象に作用しているか確認する。
-5. `verification`の反証と、その後のREVISE・計画変更を照合する。不可視・遅延・予測未設定のunknownを単純な失敗率に数えない。
-6. モデル呼出しのp50/p95とトークン数を見て、操作数を増やす前に推論費用が予算を消費していないか確認する。
-
-自動生成の改善ヒントはログ上の兆候であり、因果分析や正解ルールの推定ではない。初回の結果を基準として保存し、改善後も同じ公開ゲーム・上限で比較する。
-
-ネイティブスキル接続後は、`model_calls`を状態判断の呼び出し数、`model_http_requests`をスキル読み込みを含むHTTP往復数として区別する。`skill_tool_calls`でスキルツールの要求数、各判断の`exchanges`で生応答とツール結果を確認できる。[接続仕様](adk-native-skills-ja.md)。
-
-観測分離後はOBSERVEをモデル呼出しとして集計しない。`reasoning_calls_by_state`、`evidence_tool_calls`、`interpretation_count`、`interpretations_with_facts`で判断の配置と証拠参照を確認する。解釈の有無・事実の件数は正しさを保証する指標ではない。旧ログ用の`parsed_perceptions`等は旧構成の比較用に残る。
+公開環境の短時間試験であり、非公開環境、KaggleのGPU・並行実行・推論サーバとの同一性は保証しない。旧方式の評価は[履歴](history/README.md)を参照。

@@ -43,12 +43,11 @@ class EvidenceStore:
 
     def view(self, observation_id):
         record = self.get(observation_id)
-        result = {k: v for k, v in record.items() if k not in VISUAL_PAYLOAD_KEYS | {'grid', 'changed_cells'}}
-        result.update(view='recorded_observation', time_advanced=False,
-                      cursor_is_recorded_host_overlay=True)
+        result = {k: v for k, v in record.items() if k not in VISUAL_PAYLOAD_KEYS | {'changed_cells'}}
+        result.update(view='recorded_observation', time_advanced=False)
         if record.get('grid'):
             result['_image_png_base64'] = png_base64(render_current(
-                record['grid'], record.get('available_actions', []), record.get('cursor'),
+                record['grid'],
                 label=f'RECORDED observation: step {record["step"]} (not live)'))
         elif record.get('image_png_base64'):
             result['_image_png_base64'] = record['image_png_base64']
@@ -72,7 +71,7 @@ class EvidenceStore:
         intervening = [r for r in self.list() if before['step'] < r['step'] <= after['step']]
         # Model gets both labeled endpoints via the normal image transport.
         from PIL import Image, ImageDraw
-        images = [render_current(r['grid'], r.get('available_actions', []), r.get('cursor'),
+        images = [render_current(r['grid'],
                                  label=f'RECORDED step {r["step"]} (not live)')
                   for r in (before, after)]
         sheet = Image.new('RGB', (sum(i.width for i in images), max(i.height for i in images)+40), 'white')
@@ -95,11 +94,10 @@ class EvidenceStore:
         record = self.get(entry['observation_id'])
         if not record.get('_visual_frames'):
             raise ValueError('Intermediate frames unavailable')
-        sheet, next_frame = render_animation_page(record['_visual_frames'], record['available_actions'],
-                                                  record['cursor'], event_id, start_frame)
+        sheet, next_frame = render_animation_page(record['_visual_frames'], event_id, start_frame)
         return {'observation_id': entry['observation_id'], 'event': record['animation'],
                 'view': 'historical_replay_not_live', 'start_frame': start_frame,
-                'next_start_frame': next_frame, 'cursor_is_recorded_host_overlay': True,
+                'next_start_frame': next_frame,
                 'time_advanced': False, '_image_png_base64': png_base64(sheet)}
 
     def close(self):

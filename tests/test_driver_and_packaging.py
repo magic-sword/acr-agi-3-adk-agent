@@ -40,10 +40,30 @@ class DriverTests(unittest.TestCase):
             player = MyAgent(card_id="test", game_id="unknown", agent_name="test", ROOT_URL="",
                              record=False, arc_env=env)
         player.MAX_ACTIONS = 1
-        player.main()
+        with patch.object(player._runtime, 'record_execution', wraps=player._runtime.record_execution) as events:
+            player.main()
+        self.assertEqual([c.args[0] for c in events.call_args_list],
+                         ['action_dispatched', 'action_acknowledged'] * 2)
         self.assertEqual(env.calls, 2)
         self.assertEqual(player._runtime.memory.stop_reason, "budget_exhausted")
         self.assertEqual(player._runtime.memory.revision, 3)
+        self.assertTrue(player._runtime.closed)
+
+    def test_execution_failure_is_recorded_without_acknowledgement_or_resend(self):
+        f = FrameDataRaw(frame=[np.asarray([[0]], dtype=np.int8)],
+                         state=GameState.NOT_FINISHED, available_actions=[1])
+        class Env:
+            observation_space = f
+        with patch.dict('os.environ', {'ADK_MODEL': ''}):
+            player = MyAgent(card_id='test', game_id='unknown', agent_name='test', ROOT_URL='',
+                             record=False, arc_env=Env())
+        with patch.object(player, 'take_action', side_effect=RuntimeError('response lost')) as take, \
+             patch.object(player._runtime, 'record_execution', wraps=player._runtime.record_execution) as events:
+            with self.assertRaisesRegex(RuntimeError, 'response lost'):
+                player.main()
+        take.assert_called_once()
+        self.assertEqual([c.args[0] for c in events.call_args_list],
+                         ['action_dispatched', 'action_outcome_unknown'])
         self.assertTrue(player._runtime.closed)
 
     def test_notebook_contains_all_modules_and_offline_adk(self):
@@ -52,6 +72,7 @@ class DriverTests(unittest.TestCase):
             if cell["cell_type"] == "code":
                 compile(cell["source"], f"cell_{i}", "exec")
         self.assertIn("agent/cognition/workflow.py", SOURCES)
+        self.assertIn("agent/cognition/library.py", SOURCES)
         self.assertIn("agent/cognition/skills.py", SOURCES)
         self.assertTrue(all(w.is_file() for w in ADK_WHEELS))
         self.assertIn("google-adk==2.0.0", str(notebook))

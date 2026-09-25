@@ -1,62 +1,64 @@
-"""State-scoped result submission; ADK ends the tool loop, Workflow owns routing."""
-from copy import copy
-
+"""Model submissions propose work. Only RUN applies changes or selects actions."""
 from google.adk.tools import BaseTool
 from google.genai import types
 
-from agent.controls import controller_context
-from .state import Decision
-
-COMPLETION_TOOLS = {'DECIDE': 'submit_decision'}
-
-
-def submission_schema(state, buttons=None):
-    if state != 'DECIDE':
-        raise ValueError(f'{state} is not a model reasoning state')
-    schema = Decision.model_json_schema()
-    action = schema.get('$defs', {}).get('Action', {})
-    for field in ('x', 'y'):
-        action.get('properties', {}).pop(field, None)
-    if 'action' in action.get('properties', {}):
-        action['properties']['action']['enum'] = (buttons if buttons is not None else
-            ['UP', 'DOWN', 'LEFT', 'RIGHT', 'ACT', 'CLICK', 'UNDO'])
-    return schema
-
-
 class CompletionTool(BaseTool):
-    def __init__(self, runtime, state):
-        super().__init__(name=COMPLETION_TOOLS[state], description=(
-            f'Submit the completed {state} result. On validation error, correct and retry. '
-            'Acceptance ends this reasoning state; Workflow handles routing and game execution. '
-            'Call alone, never alongside another tool.'))
-        self.runtime, self.state = runtime, state
+    def __init__(self, runtime, name, contract):
+        super().__init__(name=name, description=(
+            'Submit one next job. Call alone. Invalid submissions can be corrected. '
+            'propose_skill creates a candidate only; the host owns testing and promotion.'
+            if name=='propose_skill' else
+            'Update working memory and choose act, invoke, trial, evaluate, or stop. Call alone. '
+            'CLICK requires explicit original-pixel x,y. trial spends real game actions.'))
+        self.runtime, self.contract = runtime, contract
 
     def _get_declaration(self):
-        turn = self.runtime.turn
-        buttons = (controller_context({'available_actions': turn.obs.get('available_actions', [])})
-                   ['available_actions'] if turn else None)
+        schema = self.contract.model_json_schema()
+        if self.name == 'submit_decision':
+            catalog = self.runtime.library.catalog()
+            kinds = ['act', 'stop']
+            if any(s['status']=='active' for s in catalog):
+                kinds.append('invoke')
+            if self.runtime.learning and any(s['status']=='candidate' for s in catalog):
+                kinds.extend(['trial', 'evaluate'])
+            schema['properties']['kind']['enum'] = kinds
+            schema['properties']['kind']['description'] = 'act includes exploring unknown rules. trial is ONLY for an existing candidate skill ID.'
+            # Keep common fields at the root: the local tool grammar can lose them
+            # when a root oneOf branch is selected. Null is explicit for non-act jobs.
+            schema['required'].append('action')
+            schema['properties']['action']['description'] = 'An object with action set to one legal button when kind=act; null for every other kind.'
+            if kinds == ['act', 'stop']:
+                schema['properties'].pop('skill_id')
+                schema['properties'].pop('arguments')
+            from agent.controls import ACTION_TO_BUTTON
+            allowed = [ACTION_TO_BUTTON[a] for a in self.runtime.obs.get('available_actions', []) if a in ACTION_TO_BUTTON and a!='RESET']
+            action = schema['$defs']['Action']
+            if allowed:
+                action['properties']['action']['enum'] = allowed
+            if allowed and 'CLICK' not in allowed:
+                action['properties'].pop('x', None)
+                action['properties'].pop('y', None)
+            if allowed == ['CLICK']:
+                action['required'] = ['action', 'x', 'y']
+                for axis, dimension in [('x','width'),('y','height')]:
+                    action['properties'][axis] = {'type':'integer', 'minimum':0,
+                        'maximum':self.runtime.obs.get(dimension,64)-1}
         return types.FunctionDeclaration(name=self.name, description=self.description,
-                                         parameters_json_schema=submission_schema(self.state, buttons))
+                                         parameters_json_schema=schema)
 
     async def run_async(self, *, args, tool_context):
-        runtime, state = self.runtime, self.state
-        if runtime._submission is not None:
-            return {'accepted': False, 'error': 'A result has already been submitted'}
+        if self.runtime.submission is not None:
+            return {'accepted':False,'error':'a job has already been submitted'}
         try:
-            if runtime.turn.time_left() <= 0:
-                raise ValueError('reasoning time budget exhausted')
-            result = Decision.model_validate(args)
-            # Check against an isolated transaction; no memory/cursor/game side effects.
-            trial = copy(runtime.turn)
-            trial.memory = runtime.turn.memory.model_copy(deep=True)
-            trial.accept_decision(result)
-        except ValueError as exc:
-            response = {'accepted': False, 'error': str(exc)[:2000],
-                        'instruction': 'Correct the submission and call this tool again.'}
-            runtime._submission_attempts.append({'tool': self.name, **response})
-            return response
-        runtime._submission = result
+            proposal = self.contract.model_validate(args)
+            self.runtime.validate_job(proposal)
+        except ValueError as e:
+            correction = 'Correct the reported field error. Every decision needs kind, prediction, and action (null for a non-act job).'
+            if self.name == 'submit_decision' and args.get('kind') == 'act':
+                correction = ('kind=act requires action={"action":"<one legal button>"}. '
+                              'CLICK additionally requires action.x and action.y; other buttons omit both coordinates.')
+            return {'accepted':False,'error':str(e)[:1500],
+                    'correction':correction}
+        self.runtime.submission = proposal
         tool_context.actions.skip_summarization = True
-        response = {'accepted': True, 'state': state, 'observation_id': runtime.turn.obs['observation_id']}
-        runtime._submission_attempts.append({'tool': self.name, **response})
-        return response
+        return {'accepted':True,'state':'DECIDE','next':'RUN'}

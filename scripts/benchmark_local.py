@@ -21,6 +21,7 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts.eval_reporting import diagnostics, write_report, read_jsonl
+from scripts.analyze_agent import render as render_decisions
 
 
 def write_json(path, value):
@@ -91,6 +92,8 @@ def run_worker(spec_path):
     # Load exactly the source snapshot used by the notebook packager.
     sys.path[:0] = [spec['package'], str(ROOT / 'vendor/ARC-AGI-3-Agents')]
     os.environ.update(ADK_MODEL=spec['model'], COGNITION_LOG_DIR=str(out / 'cognition'),
+                      COGNITION_LEARNING='1' if spec.get('learning', True) else '0',
+                      COGNITION_SKILL_LIBRARY=spec.get('skill_library') or '',
                       COGNITION_SECONDS=str(spec['seconds']), OPERATION_MODE='offline',
                       AGENTOPS_API_KEY='', WANDB_MODE='disabled')
     from arc_agi import Arcade, OperationMode
@@ -184,6 +187,15 @@ def recover_interrupted(out, game_id, wall_seconds):
             **diagnostics(out / 'cognition')}
 
 
+def freeze_library(source, output):
+    """Copy an explicit library once so workers never read a moving external file."""
+    if source is None:
+        return None
+    target = output / 'input-library.json'
+    shutil.copyfile(source, target)
+    return target
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--games', default='ls20,vc33,ft09')
@@ -194,6 +206,8 @@ def main():
     parser.add_argument('--output', type=Path)
     parser.add_argument('--prepare', action='store_true', help='download public environments, then exit; no model run')
     parser.add_argument('--offline-policy', action='store_true', help='test harness without VLM; not a model performance run')
+    parser.add_argument('--no-learning', action='store_true')
+    parser.add_argument('--skill-library', type=Path, help='Explicit frozen host-evaluated library.json')
     parser.add_argument('--worker', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.worker:
@@ -212,6 +226,7 @@ def main():
     stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
     out = (args.output or ROOT / 'outputs/evaluations' / stamp).resolve()
     out.mkdir(parents=True, exist_ok=False)
+    frozen_library = freeze_library(args.skill_library, out)
     from scripts.build_notebook import SOURCES
     package = out / 'package'
     hashes = {}
@@ -221,14 +236,18 @@ def main():
         shutil.copyfile(source, target)
         hashes[rel] = sha256(target)
     manifest = {'created_utc': stamp, 'games': [d['game_id'] for _, d in selected],
+                'learning': not args.no_learning,
+                'skill_library': str(frozen_library) if frozen_library else None,
                 'limits': {'steps': args.steps, 'levels': args.levels, 'seconds': args.seconds, 'hard_seconds': args.hard_seconds},
                 'agent_model': model, 'server_info': server_info, 'source_sha256': hashes,
                 'git_revision': git('rev-parse', 'HEAD'), 'git_dirty': bool(git('status', '--porcelain')),
                 'framework_revision': git('-C', 'vendor/ARC-AGI-3-Agents', 'rev-parse', 'HEAD'),
                 'python': sys.version, 'packages': {n: importlib.metadata.version(n) for n in ('google-adk', 'google-genai', 'arc-agi', 'arcengine')},
-                'cognition_settings': {k: os.getenv(k, default) for k, default in [('COGNITION_MAX_CALLS', '3'), ('COGNITION_MAX_RESETS', '2')]},
+                'cognition_settings': {k: os.getenv(k, default) for k, default in [
+                    ('COGNITION_MAX_CALLS', '4'), ('COGNITION_MAX_HTTP_REQUESTS', '8'), ('COGNITION_MAX_RESETS', '2')]},
                 'scoring_source_sha256': sha256(Path(importlib.metadata.distribution('arc-agi').locate_file('arc_agi/scorecard.py'))),
                 'gateway': 'official arc-agi SDK, localhost HTTP, competition_mode=True, one game per scorecard',
+                'skill_library_sha256': sha256(frozen_library) if frozen_library else None,
                 'seed': 0, 'execution': 'sequential fresh worker/session for each game',
                 'differences_from_kaggle': [
                     'Public cached games only; limits shorten the game but scoring retains the full level denominator.',
@@ -255,6 +274,8 @@ def main():
                 manifest['environment_sha256'][game_id + '/' + file.name] = sha256(file)
         write_json(out / 'manifest.json', manifest)
         spec = {'game_id': game_id, 'output': str(dest), 'package': str(package),
+                'learning': not args.no_learning,
+                'skill_library': str(frozen_library) if frozen_library else None,
                 'environments': str(dest / 'environments'), 'model': model,
                 'steps': args.steps, 'levels': args.levels, 'seconds': args.seconds}
         write_json(dest / 'spec.json', spec)
@@ -283,6 +304,8 @@ def main():
         elif result.get('stop_reason') == 'level_limit':
             result['limit_reached'] = 'levels'
         write_json(dest / 'result.json', result)
+        if (dest / 'cognition').is_dir():
+            (dest / 'cognition' / 'decisions.html').write_text(render_decisions(dest / 'cognition'), encoding='utf-8')
         results.append(result)
         write_report(out, results)
         print(f"  levels={result.get('levels_completed')} actions={result.get('actions')} score={result.get('sdk_score_full_game')} stop={result['stop_reason']}", flush=True)

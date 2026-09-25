@@ -64,7 +64,7 @@ class EvaluationReports(unittest.TestCase):
     def test_diagnostics_separate_schema_errors_and_repeated_actions(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
-            turns = [{'trace': ['PROBE', 'ACT'], 'action': {'status': 'action', 'action': 'ACTION1'},
+            turns = [{'trace': ['DECIDE', 'RUN'], 'action': {'status': 'action', 'action': 'ACTION1'},
                       'frame_hash': 'same', 'errors': [], 'verification': [], 'decision_seconds': 3}] * 2
             (root / 'run.jsonl').write_text('\n'.join(map(json.dumps, turns)))
             calls = [{'schema_valid': True, 'seconds': 2, 'usage': {'prompt_tokens': 8, 'completion_tokens': 2},
@@ -98,15 +98,12 @@ class EvaluationReports(unittest.TestCase):
         self.assertIsNone(percentile([], .95))
         self.assertEqual(percentile([4], .95), 4)
 
-    def test_empty_perception_diagnostic_excludes_failed_responses(self):
+
+    def test_frozen_input_library_does_not_change_with_source(self):
+        from scripts.benchmark_local import freeze_library
         with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            calls = [
-                {'state': 'OBSERVE', 'schema_valid': True, 'response': '{"facts": [], "goal": ""}'},
-                {'state': 'OBSERVE', 'schema_valid': True, 'response': '{"facts": ["visible object"], "goal": ""}'},
-                {'state': 'OBSERVE', 'schema_valid': False, 'response': ''},
-            ]
-            (root / 'run.model.jsonl').write_text('\n'.join(map(json.dumps, calls)))
-            result = diagnostics(root)
-            self.assertEqual(result['parsed_perceptions'], 2)
-            self.assertEqual(result['empty_perceptions'], 1)
+            root=Path(d); source=root/'source.json'; source.write_text('{"version":1}')
+            output=root/'run';output.mkdir()
+            snapshot=freeze_library(source,output)
+            source.write_text('{"version":2}')
+            self.assertEqual(json.loads(snapshot.read_text()),{'version':1})

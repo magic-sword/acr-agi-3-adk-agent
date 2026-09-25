@@ -17,8 +17,9 @@
 
 参照資料:
 
-- [分析から導いたADK認知ステートマシンの設計](adk-cognitive-state-machine-ja.md)
-- [各状態で必要なスキルの仕様](adk-cognitive-skills-ja.md)
+- [分析から導いたADK認知ステートマシンの設計](skill-learning-runtime-ja.md)
+- [認識・計画・実行の分け方と中間記録の検討（設計検討）](history/adaptive-cognitive-loop-review-ja.md)
+- [各状態で必要なスキルの仕様](skill-learning-runtime-ja.md)
 - [25環境別の具体例・時刻・記録ID](human-vcgt-environment-evidence-ja.md)
 - [全340記録の一覧と定性分析対象](vcgt-record-inventory.csv)
 - [機械集計結果・取得条件](vcgt-analysis-metadata.json)
@@ -184,11 +185,11 @@ flowchart TD
 
 ## 分析から現行実装への反映
 
-初期実装ではVERIFY・PLAN・PROBE・REVISEを分割したが、短時間の評価では操作前の形式検証と推論往復が大きな負担になった。現行実装は[OBSERVE → DECIDE → COMMIT](adk-cognitive-state-machine-ja.md)へ簡素化し、DECIDEが前の予測との比較・仮説修正・次の一手をまとめて判断する。
+初期実装ではVERIFY・PLAN・PROBE・REVISEを分割したが、短時間の評価では操作前の形式検証と推論往復が大きな負担になった。その後OBSERVE → DECIDE → COMMITへ簡素化した。現行は[ASSESS → 条件付きDELIBERATE → ACT](skill-learning-runtime-ja.md)で、状況更新と一手の調整をまとめ、必要なときだけ方針を更新する。認識・方針・操作の成果物を実際の入力と対象解決に使い、その受け渡しを保存する。
 
 上記10パターンを10状態へ対応付ける必要はない。観測は不変な証拠として保存し、目標・作用・見えない位置・残る部分目標は短い作業メモで保持する。曖昧なら一つ試し、結果を次の判断へ返す。専門的な方法が必要な場合だけスキルや過去の証拠を読む。
 
-この分担も設計仮説である。行動まで進めることと正しいルールを発見してクリアすることを分けて評価する。[簡素化の評価記録](local-evaluation-simple-loop-ja.md)。
+この分担も設計仮説である。行動まで進めることと正しいルールを発見してクリアすることを分けて評価する。[簡素化の評価記録](history/local-evaluation-simple-loop-ja.md)。
 
 ## 汎用性をどう評価するか
 

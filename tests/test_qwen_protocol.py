@@ -53,31 +53,3 @@ class QwenProtocolTests(unittest.TestCase):
             parts, protocol = self.adapter.decode({'content': text}, allowed={'observe_current'})
             self.assertEqual(protocol, 'text')
             self.assertEqual(parts[0].text, text)
-
-    def test_native_call_reaches_adk_and_result_returns_with_same_id(self):
-        requests = []
-        def respond(model, payload):
-            requests.append(payload)
-            if len(requests) == 1:
-                message = {'content': native('list_observations')}
-            else:
-                tool = next(m for m in payload['messages'] if m['role']=='tool')
-                assistant = next(m for m in payload['messages'] if m.get('tool_calls'))
-                self.assertEqual(tool['tool_call_id'], assistant['tool_calls'][0]['id'])
-                self.assertEqual(len(json.loads(tool['content'])['observations']), 1)
-                context = next(json.loads(p['text']) for m in payload['messages']
-                    if m['role']=='user' and isinstance(m['content'], list)
-                    for p in m['content'] if p.get('type')=='text')
-                message = {'content': native('submit_decision', {
-                    'action': {'action': 'UP'}, 'prediction': 'Test whether the target moves.'})}
-            return {'choices':[{'message':message,'finish_reason':'stop'}]}
-        with patch.object(LocalVisionLlm, '_complete', respond):
-            runtime = CognitiveRuntime('test','local/qwen3-vl-4b-instruct')
-            try:
-                result = runtime.decide({'game_id':'test','state':'NOT_FINISHED','step':0,
-                    'available_actions':['ACTION1'],'remaining_actions':2,'grid':[[0]]})
-                self.assertEqual(result['action'], 'ACTION1')
-                self.assertEqual(len(requests), 2)
-                self.assertEqual(runtime._agent('DECIDE').model._exchanges[0]['decoded_protocol'], 'qwen_hermes_text')
-            finally:
-                runtime.close()

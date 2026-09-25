@@ -12,4 +12,5 @@ environment_files/
 outputs/
 vendor/
 recordings/
+reference/
 logs.log

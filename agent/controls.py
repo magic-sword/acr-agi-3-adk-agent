@@ -7,24 +7,13 @@ ACTION_TO_BUTTON = {action: button for button, action in BUTTON_TO_ACTION.items(
 
 
 def ground_button(value: dict, observation: dict) -> dict:
-    """Resolve a visible button; CLICK samples the current cursor at action selection.
-
-    Legacy ACTION names are accepted by the caller for existing host clients.
-    A click never invents a default position or accepts a second coordinate source.
-    """
+    """Translate a button name; CLICK always needs explicit original-pixel coordinates."""
     value = dict(value)
     name = value.get('action')
     if isinstance(name, str):
         name = name.strip().upper()
     if not isinstance(name, str) or name not in BUTTON_TO_ACTION:
         return value
-    if name == 'CLICK':
-        if value.get('x') is not None or value.get('y') is not None:
-            raise ValueError('CLICK uses the current cursor; omit x and y')
-        cursor = observation.get('cursor')
-        if not isinstance(cursor, dict) or any(type(cursor.get(k)) is not int for k in ('x', 'y')):
-            raise ValueError('CLICK requires a current cursor; use move_cursor first')
-        value.update(x=cursor['x'], y=cursor['y'])
     value['action'] = BUTTON_TO_ACTION[name]
     return value
 

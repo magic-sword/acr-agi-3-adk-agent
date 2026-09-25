@@ -3,6 +3,36 @@ from __future__ import annotations
 
 import hashlib
 import json
+import base64
+from copy import deepcopy
+
+
+def request_snapshot(payload, directory):
+    """Keep the actual request text/schema; content-address image bytes separately."""
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    snapshot = deepcopy(payload)
+    for message in snapshot['messages']:
+        if not isinstance(message.get('content'), list):
+            continue
+        for part in message['content']:
+            if part.get('type') != 'image_url':
+                continue
+            url = part['image_url']['url']
+            if not url.startswith('data:'):
+                continue
+            header, encoded = url.split(',', 1)
+            data = base64.b64decode(encoded)
+            image_hash = hashlib.sha256(data).hexdigest()
+            relative = f'request-images/{image_hash}.bin'
+            if directory is not None:
+                path = directory / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if not path.exists():
+                    path.write_bytes(data)
+            part['image_url'] = {'sha256': image_hash, 'path': relative,
+                                 'mime_type': header[5:].split(';')[0],
+                                 'detail': part['image_url'].get('detail')}
+    return {'request_sha256': digest, 'request': snapshot}
 
 
 def compact(value):

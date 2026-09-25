@@ -51,6 +51,7 @@ class LocalVisionLlm(BaseLlm):
     _last_metrics: dict = PrivateAttr(default_factory=dict)
     _exchanges: list = PrivateAttr(default_factory=list)
     _request_count: int = PrivateAttr(default=0)
+    _request_observer: object = PrivateAttr(default=None)
 
     def begin_invocation(self):
         self._request_count = 0
@@ -96,7 +97,7 @@ class LocalVisionLlm(BaseLlm):
                     if response.parts:
                         raise ValueError('Multimodal function responses are not supported')
                     result = dict(response.response or {})
-                    if response.name in {'observe_current', 'move_cursor', 'observe_animation', 'get_observation', 'compare_observations'}:
+                    if response.name in {'observe_animation', 'get_observation', 'compare_observations'}:
                         encoded = result.pop('_image_png_base64', None)
                         if encoded:
                             visual_results.extend([
@@ -181,6 +182,8 @@ class LocalVisionLlm(BaseLlm):
                   'tool_results': [m for m in payload['messages'] if m['role'] == 'tool']}
         self._exchanges.append(record)
         try:
+            if self._request_observer is not None:
+                record['request_sha256'] = self._request_observer(payload)
             result = await asyncio.to_thread(self._complete, payload)
             choice = result['choices'][0]
             message = choice['message']

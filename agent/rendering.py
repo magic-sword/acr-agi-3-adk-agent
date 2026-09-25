@@ -1,6 +1,6 @@
-"""Deterministic game/cursor/controller rendering; never steps the environment.
+"""Deterministic game-only rendering; never steps the environment.
 
-CLI input: JSON with frames, available_actions, cursor and event_id.
+CLI input: JSON with frames and event_id.
 current writes only the final PNG; replay writes a single-play historical GIF.
 """
 from __future__ import annotations
@@ -15,7 +15,6 @@ from pathlib import Path
 # Support both packaged imports and direct CLI execution from any directory.
 if __package__ in (None, ''):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from agent.controls import ACTION_TO_BUTTON
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -39,56 +38,18 @@ def frame_image(frame):
     raise ValueError(f'Unsupported frame shape: {pixels.shape}')
 
 
-def validate_cursor(cursor, width, height):
-    if cursor is None:
-        return {'x': width // 2, 'y': height // 2}
-    if any(type(cursor.get(k)) is not int for k in ('x', 'y')):
-        raise ValueError('cursor requires integer x,y')
-    if not (0 <= cursor['x'] < width and 0 <= cursor['y'] < height):
-        raise ValueError('cursor outside original frame')
-    return {'x': cursor['x'], 'y': cursor['y']}
-
-
-def render_current(frame, available_actions, cursor=None, *, label='CURRENT: final received frame'):
+def render_current(frame, *, label='CURRENT: game pixels'):
     board = frame_image(frame)
-    cursor = validate_cursor(cursor, *board.size)
     ox, oy = ORIGIN
     bw, bh = board.width * SCALE, board.height * SCALE
-    panel = max(ox + bw + 24, 430)
-    image = Image.new('RGB', (panel + 310, max(oy + bh + 62, 370)), '#18202b')
+    image = Image.new('RGB', (max(260, ox+bw+12), oy+bh+24), '#18202b')
     image.paste(board.resize((bw, bh), Image.Resampling.NEAREST), (ox, oy))
     d = ImageDraw.Draw(image)
     d.text((12, 10), label, fill='white')
-    d.text((ox, oy + bh + 16), f"Cursor x={cursor['x']} y={cursor['y']} (original pixels)", fill='white')
-    d.text((ox, oy + bh + 32), 'Host cursor overlay; center is the target. No click sent.', fill='white')
-    for x in sorted(set(range(0, board.width, 8)) | {board.width - 1}):
-        d.text((ox + x * SCALE, oy - 16), str(x), fill='white')
-    for y in sorted(set(range(0, board.height, 8)) | {board.height - 1}):
-        d.text((3, oy + y * SCALE), str(y), fill='white')
-    cx, cy = ox + cursor['x'] * SCALE + SCALE // 2, oy + cursor['y'] * SCALE + SCALE // 2
-    # Open reticle preserves the target cell's center color, including at edges.
-    for color, radius in [('black', 9), ('white', 7)]:
-        d.ellipse((cx-radius, cy-radius, cx+radius, cy+radius), outline=color, width=2)
-    d.text((panel, 32), 'CONTROLLER (host UI)', fill='white')
-    buttons = [('RESET', 196, 65), ('ACTION1', 82, 65), ('ACTION3', 0, 125),
-               ('ACTION2', 82, 185), ('ACTION4', 164, 125),
-               ('ACTION5', 0, 250), ('ACTION6', 98, 250),
-               ('ACTION7', 196, 250)]
-    for action, x, y in buttons:
-        x += panel
-        enabled = action in available_actions
-        d.rounded_rectangle((x, y, x+88, y+50), radius=9,
-                            fill='#356384' if enabled else '#30353c', outline='white' if enabled else '#666666')
-        d.text((x+6, y+7), ACTION_TO_BUTTON[action], fill='white' if enabled else '#888888')
-        d.text((x+6, y+29), 'button', fill='white' if enabled else '#888888')
-        if action in ('ACTION1', 'ACTION2', 'ACTION3', 'ACTION4'):
-            # Directional silhouettes supplement textual labels.
-            dx, dy = {'ACTION1': (0,-1), 'ACTION2': (0,1), 'ACTION3': (-1,0), 'ACTION4': (1,0)}[action]
-            ax, ay = x+70, y+15
-            d.polygon([(ax+dx*9, ay+dy*9), (ax-dy*6-dx*4, ay+dx*6-dy*4),
-                       (ax+dy*6-dx*4, ay-dx*6-dy*4)], fill='white' if enabled else '#888888')
-    d.text((panel, 316), 'Dim = unavailable. Labels describe inputs.', fill='white')
-    d.text((panel, 332), 'Game effects require observed evidence.', fill='white')
+    for x in sorted(set(range(0, board.width, 8)) | {board.width-1}):
+        d.text((ox+x*SCALE, oy-16), str(x), fill='white')
+    for y in sorted(set(range(0, board.height, 8)) | {board.height-1}):
+        d.text((3, oy+y*SCALE), str(y), fill='white')
     return image
 
 
@@ -98,11 +59,11 @@ def png_base64(image):
     return base64.b64encode(buffer.getvalue()).decode('ascii')
 
 
-def render_animation_page(frames, available_actions, cursor, event_id, start_frame=0):
+def render_animation_page(frames, event_id, start_frame=0):
     if type(start_frame) is not int or not 0 <= start_frame < len(frames):
         raise ValueError('start_frame outside recorded animation')
     end = min(start_frame + 4, len(frames))
-    images = [render_current(frames[i], available_actions, cursor,
+    images = [render_current(frames[i],
               label=f'HISTORY REPLAY {event_id} | frame {i+1}/{len(frames)} | NOT LIVE')
               for i in range(start_frame, end)]
     sheet = Image.new('RGB', (images[0].width * min(2, len(images)), images[0].height * ((len(images)+1)//2)))
@@ -111,8 +72,8 @@ def render_animation_page(frames, available_actions, cursor, event_id, start_fra
     return sheet, end if end < len(frames) else None
 
 
-def save_replay(frames, available_actions, cursor, event_id, path):
-    images = [render_current(frame, available_actions, cursor,
+def save_replay(frames, event_id, path):
+    images = [render_current(frame,
               label=f'HISTORY REPLAY {event_id} | {i+1}/{len(frames)} | NOT LIVE')
               for i, frame in enumerate(frames)]
     # No loop extension: play once, hold final frame. Duration is presentation-only.
@@ -128,9 +89,9 @@ def main():
     data = json.loads(args.input.read_text())
     frames = data['frames']
     if args.mode == 'current':
-        render_current(frames[-1], data['available_actions'], data.get('cursor')).save(args.output, format='PNG')
+        render_current(frames[-1]).save(args.output, format='PNG')
     else:
-        save_replay(frames, data['available_actions'], data.get('cursor'), data['event_id'], args.output)
+        save_replay(frames, data['event_id'], args.output)
 
 
 if __name__ == '__main__':

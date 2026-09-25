@@ -40,103 +40,42 @@ def tool_requests(exchange):
 
 
 def diagnostics(directory: Path) -> dict:
-    turns, calls = [], []
-    for path in directory.glob('*.jsonl'):
-        if path.name.endswith('.model.jsonl'):
-            calls += read_jsonl(path)
-        elif not path.name.endswith(('.observations.jsonl', '.tools.jsonl')):
-            turns += read_jsonl(path)
-    action_turns = [t for t in turns if t.get('action', {}).get('status') == 'action']
-    counts = Counter(state for t in turns for state in t.get('trace', []))
-    verification = Counter(v['result'] for t in turns for v in t.get('verification', []))
+    calls = [r for p in directory.glob('*.model.jsonl') for r in read_jsonl(p)]
+    tools = [r for p in directory.glob('*.tools.jsonl') for r in read_jsonl(p) if r.get('event')=='tool_finished']
+    learning = [r for p in directory.glob('*.learning.jsonl') for r in read_jsonl(p)]
+    turns = [r for p in directory.glob('*.jsonl') if p.name.count('.')==1 for r in read_jsonl(p)]
+    actions = [t for t in turns if t.get('action',{}).get('status')=='action']
     valid = sum(bool(c.get('schema_valid')) for c in calls)
-    tokens = {key: sum((c.get('usage') or {}).get(key, 0) for c in calls)
-              for key in ('prompt_tokens', 'completion_tokens', 'total_tokens')}
-    measured_usage = sum(isinstance(c.get('usage'), dict) for c in calls)
-    http_requests = sum(c.get('http_requests', 1) for c in calls)
-    skill_calls = Counter(
-        call['function']['name'] for c in calls for exchange in c.get('exchanges', [])
-        for call in tool_requests(exchange)
-        if call.get('function', {}).get('name') in
-        ('list_skills', 'load_skill', 'load_skill_resource', 'run_skill_script'))
     latency = [c['seconds'] for c in calls if 'seconds' in c]
-    errors = [error for t in turns for error in t.get('errors', [])]
-    perceptions = []
-    for call in calls:
-        if call.get('state') == 'OBSERVE' and call.get('schema_valid'):
-            try:
-                parsed = json.loads(call.get('response', ''))
-                if isinstance(parsed, dict):
-                    perceptions.append(parsed)
-            except (ValueError, TypeError):
-                pass
-    interpretations = []
-    reasoning_states = Counter()
-    evidence_tools = Counter()
-    for call in calls:
-        reasoning_states[call.get('state', 'unknown')] += 1
-        for exchange in call.get('exchanges', []):
-            for tool in tool_requests(exchange):
-                name = tool['function']['name']
-                if name in ('list_observations', 'get_observation', 'compare_observations', 'observe_animation', 'observe_current', 'move_cursor'):
-                    evidence_tools[name] += 1
-        if call.get('schema_valid'):
-            try:
-                parsed = json.loads(call.get('response', ''))
-                interpretation = parsed if call.get('state') == 'VERIFY' else parsed.get('interpretation')
-                if isinstance(interpretation, dict):
-                    interpretations.append(interpretation)
-            except (ValueError, TypeError, AttributeError):
-                pass
-    empty_perceptions = sum(not p.get('facts') and not p.get('goal') for p in perceptions)
-    repeats = 0
-    for previous, current in zip(action_turns, action_turns[1:]):
-        same_action = all(previous['action'].get(k) == current['action'].get(k) for k in ('action', 'x', 'y'))
-        if previous.get('frame_hash') and previous['frame_hash'] == current.get('frame_hash') and same_action:
-            repeats += 1
+    measured = sum(isinstance(c.get('usage'),dict) for c in calls)
+    tokens = {k:sum((c.get('usage') or {}).get(k,0) for c in calls)
+              for k in ('prompt_tokens','completion_tokens','total_tokens')}
+    requests = [t['function']['name'] for c in calls for e in c.get('exchanges',[]) for t in tool_requests(e)]
+    repeats = sum(bool(a.get('frame_hash')) and a.get('frame_hash')==b.get('frame_hash') and
+                  all(a['action'].get(k)==b['action'].get(k) for k in ('action','x','y'))
+                  for a,b in zip(actions,actions[1:]))
+    errors = [e for t in turns for e in t.get('errors',[])]
+    events = Counter(r.get('event') for r in learning)
+    outcomes = Counter(r.get('outcome') for r in learning if r.get('event')=='skill_execution_finished')
     hints = []
-    if empty_perceptions:
-        hints.append(f'解析可能な観測応答 {len(perceptions)}件中{empty_perceptions}件でfactsとgoalが空。画像中の対象・変化が記憶に取り込まれているか確認。')
-    if calls and valid < len(calls):
-        hints.append(f'モデル応答の型・通信エラー {len(calls)-valid}/{len(calls)}。model.jsonlのresponse/errorを確認。')
-    if counts['PROBE'] and not counts['PLAN']:
-        hints.append('PROBEのみでPLANに到達していない。目標仮説と重要なunknownsが更新されているか確認。')
-    if repeats:
-        hints.append(f'同じ盤面で同じ操作を選んだ連続箇所 {repeats}件。実験の重複または操作が効かない原因を確認。')
-    if verification['contradicted']:
-        hints.append(f'予測の反証 {verification["contradicted"]}件。観測差分とREVISE後の仮説を確認。')
-    if any('stale' in e.lower() for e in errors):
-        hints.append('観測ID・記憶revisionの不一致あり。モデルによるIDの転記と応答契約を確認。')
-    if calls and valid == len(calls) and errors:
-        hints.append('JSON型検証後の意味・操作検証エラーあり。判断ログerrorsとmodel.jsonlを照合。')
-    executions = [tool for turn in turns for tool in turn.get('tool_executions', [])]
-    loaded_skills = Counter(tool['arguments'].get('skill_name', 'unknown') for tool in executions
-                            if tool['tool'] == 'load_skill' and tool['status'] == 'success')
-    decisions = [t['decision'] for t in turns if t.get('decision')]
-    missing_reasons = sum(not d.get('action', {}).get('reason', '').strip() for d in decisions)
-    if missing_reasons:
-        hints.append(f'判断理由の未記録 {missing_reasons}/{len(decisions)}件。予測だけでは選択理由を復元できません。')
-    return {
-        'loaded_skills': dict(loaded_skills),
-        'tool_execution_errors': sum(t['status'] == 'error' for t in executions),
-        'decisions_missing_reason': missing_reasons,
-        'reasoning_calls_by_state': dict(reasoning_states),
-        'evidence_tool_calls': dict(evidence_tools),
-        'interpretation_count': len(interpretations),
-        'interpretations_with_facts': sum(bool(p.get('facts')) for p in interpretations),
-        'model_calls': len(calls), 'schema_valid_calls': valid,
-        'model_http_requests': http_requests, 'skill_tool_calls': dict(skill_calls),
-        'schema_valid_rate': valid / len(calls) if calls else None,
-        'model_seconds': sum(latency), 'model_latency_p50': percentile(latency, .5),
-        'model_latency_p95': percentile(latency, .95),
-        'decision_latency_p50': percentile([t['decision_seconds'] for t in turns if 'decision_seconds' in t], .5),
-        'tokens': tokens if measured_usage else None, 'usage_recorded_calls': measured_usage,
-        'state_visits': dict(counts), 'verification': dict(verification),
-        'validation_errors': errors, 'unchanged_action_repeats': repeats,
-        'committed_actions': len(action_turns),
-        'parsed_perceptions': len(perceptions), 'empty_perceptions': empty_perceptions,
-        'hints': hints,
-    }
+    if repeats: hints.append(f'無変化で同じ操作を選ぶ連続箇所: {repeats}。仮説と対象の更新を確認。')
+    if valid<len(calls): hints.append('モデル要求・提出に失敗あり。model.jsonlを確認。')
+    if events['skill_drafted'] and not events['skill_promoted']: hints.append('候補は未昇格。固定評価と実試行結果を確認。')
+    return {'model_calls':len(calls), 'schema_valid_calls':valid,
+        'model_http_requests':sum(c.get('http_requests',1) for c in calls),
+        'schema_valid_rate':valid/len(calls) if calls else None,
+        'model_seconds':sum(latency), 'model_latency_p50':percentile(latency,.5),
+        'model_latency_p95':percentile(latency,.95),
+        'decision_latency_p50':percentile([t['decision_seconds'] for t in turns if 'decision_seconds' in t],.5),
+        'tokens':tokens if measured else None, 'usage_recorded_calls':measured,
+        'state_visits':dict(Counter(s for t in turns for s in t.get('trace',[]))),
+        'reasoning_calls_by_state':dict(Counter(c.get('state') for c in calls)),
+        'skill_tool_calls':dict(Counter(n for n in requests if n in ('load_skill','load_skill_resource','propose_skill','read_skill'))),
+        'loaded_skills':dict(Counter(t['arguments'].get('skill_name') for t in tools if t['tool']=='load_skill' and t['status']=='success')),
+        'tool_execution_errors':sum(t.get('status')=='error' for t in tools),
+        'learning_events':dict(events), 'skill_execution_outcomes':dict(outcomes),
+        'validation_errors':errors, 'unchanged_action_repeats':repeats,
+        'committed_actions':len(actions), 'hints':hints}
 
 
 def write_report(root: Path, results: list[dict]) -> dict:
@@ -164,7 +103,7 @@ def write_report(root: Path, results: list[dict]) -> dict:
              '|---|---:|---:|---:|---:|---|---:|']
     for r in results:
         score = f"{r['sdk_score_full_game']:.3f}" if r.get('sdk_score_full_game') is not None else '未取得'
-        lines.append(f"|[{r['game_id']}]({r['game_id']}/result.json)|{r.get('levels_completed', '—')}|{r.get('actions', '—')}|{score}|"
+        lines.append(f"|[{r['game_id']}]({r['game_id']}/cognition/decisions.html)|{r.get('levels_completed', '—')}|{r.get('actions', '—')}|{score}|"
                      f"{r.get('wall_seconds', 0):.1f}|{r.get('stop_reason', 'error')} {r.get('limit_reached', '')}|{r.get('model_calls', 0)}|")
     lines += ['', '## 改善の調査箇所', '']
     for r in results:
@@ -178,6 +117,11 @@ def write_report(root: Path, results: list[dict]) -> dict:
               '- `cognition/*.model.jsonl`: 入力記憶・モデル生応答・型検証・時間・トークン数。',
               '- `cognition/*.jsonl`: 各手の予測照合・遷移・検証エラー。',
               '- `cognition/*.tools.jsonl`: ツール実行前後の記録。読み込んだスキル名・成否・引数・結果。',
+              '- `cognition/*.artifacts.jsonl`: 判断の更新と選択された操作。未実行も区別。',
+              '- `cognition/*.learning.jsonl`: 経験・候補作成・実試行・評価・昇格・停止。',
+              '- `cognition/<run>/skills/library.json`: 版と評価証拠を含むライブラリ。',
+              '- `cognition/*.requests.jsonl` と `request-images/`: 実HTTP入力と画像参照。',
+              '- `cognition/*.execution.jsonl`: ドライバの送信・受付・結果不明イベント。',
               '- `cognition/*.observations.jsonl` と `cognition/frames/`: 実観測の色ID・PNG。',
               '- `gateway.jsonl`: 公式ゲートウェイへの操作と実際の戻り値。',
               '- `worker.log`: 実行ログと例外。', '']

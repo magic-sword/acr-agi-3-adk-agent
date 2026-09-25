@@ -1,14 +1,15 @@
-"""ADK 2.0 graph with persistent session state and bounded local-model calls."""
+"""One ADK decision controller; RUN owns effects and evidence-gated learning."""
 from __future__ import annotations
-
 import asyncio
 import base64
+from copy import deepcopy
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
 import threading
 import time
-from datetime import datetime, timezone
+import uuid
 
 from google.adk import Context, Event, Workflow
 from google.adk.agents import LlmAgent
@@ -18,357 +19,498 @@ from google.adk.sessions import InMemorySessionService
 from google.adk.workflow import node
 from google.genai import types
 
-from agent.controls import controller_context
-from agent.observation import VISUAL_PAYLOAD_KEYS, render_current, png_base64, validate_cursor
-from agent.local_vlm import LocalVisionLlm, MAX_REQUESTS_PER_INVOCATION
-from .engine import CognitiveTurn, new_memory
+from agent.controls import controller_context, ACTION_TO_BUTTON
+from agent.observation import VISUAL_PAYLOAD_KEYS
+from agent.local_vlm import LocalVisionLlm
+from .audit import append_record, compact, tool_status, request_snapshot
+from .completion import CompletionTool
 from .evidence import EvidenceStore
-from .instructions import instruction
-from .skills import skill_toolset, selected_skills
-from .state import Decision, Memory
-from .completion import CompletionTool, COMPLETION_TOOLS, submission_schema
-from .planning import PlanOrderTool
-from .audit import append_record, compact, tool_status
+from .instructions import INSTRUCTION
+from .library import SkillLibrary, check_all, step_action, digest
+from .skills import skill_toolset
+from .state import Decision, Draft, Memory
+from .validation import validate_action
 
-APP_NAME = "arc_cognition"
-
+APP_NAME = 'arc_skill_learning'
 
 class CognitiveRuntime:
-    """One instance per game run; one event loop, writer and ADK session.
-
-    The caller must use decision_id to avoid re-executing a retried decision.
-    Journals are diagnostic snapshots, not an exactly-once restart protocol.
-    """
-
-    def __init__(self, game_id: str, model: str | None = None, *, max_calls: int = 3,
-                 max_resets: int = 2, seconds: float = 600, log_dir: str | None = None):
-        if model not in (None, "local/qwen3-vl-4b-instruct"):
-            raise ValueError(f"Unsupported ADK_MODEL: {model}")
-        if seconds <= 0 or not 1 <= max_calls <= 8 or max_resets < 0:
-            raise ValueError("invalid cognition budget")
-        self.model = model
-        self.memory = new_memory(game_id)
-        self.max_calls, self.max_resets = max_calls, max_resets
+    def __init__(self, game_id, model=None, *, max_calls=4, max_resets=2, seconds=600,
+                 log_dir=None, max_http_requests=8, learning=True, skill_library=None):
+        if model not in (None, 'local/qwen3-vl-4b-instruct'):
+            raise ValueError('unsupported model')
+        if seconds <= 0 or not 1 <= max_calls <= 12 or not 1 <= max_http_requests <= 32 or max_resets < 0:
+            raise ValueError('invalid runtime budget')
+        self.model, self.learning = model, learning
+        self.max_calls, self.max_http_requests, self.max_resets = max_calls, max_http_requests, max_resets
         self.deadline = time.monotonic() + seconds
-        self.log_dir = Path(log_dir) if log_dir else None
-        self.loop = asyncio.new_event_loop()
-        self.lock = threading.Lock()
-        self.service = InMemorySessionService()
+        self.memory = Memory(run_id=uuid.uuid4().hex, game_id=game_id)
         self.session_id = self.memory.run_id
-        self.turn: CognitiveTurn | None = None
-        self.initialized = False
-        self.closed = False
-        self.agents = {}
-        self._submission = None
-        self._submission_attempts = []
-        self.cursor = None
+        self.log_dir = Path(log_dir) if log_dir else None
+        self.loop, self.lock = asyncio.new_event_loop(), threading.Lock()
+        self.service = InMemorySessionService()
         self.evidence = EvidenceStore()
+        self.obs, self.previous, self.outcome = {}, {}, None
+        self.calls = self.http_requests = 0
+        self.errors, self.trace, self.tool_executions = [], [], []
+        self.submission = self.job = self.result = None
+        self.initialized = self.closed = False
+        directory = self.log_dir / self.session_id / 'skills' if self.log_dir else None
+        self.library = SkillLibrary(game_id, directory, source=skill_library, emit=self._learning_event)
+        self.controller = None
         self.workflow = self._build_graph()
         self.runner = Runner(agent=self.workflow, app_name=APP_NAME, session_service=self.service)
 
-    def _agent(self, state: str):
-        selected_skills(state)
-        key = state
-        if key not in self.agents:
-            self.agents[key] = LlmAgent(
-                name=f"reasoner_{key.lower()}", include_contents="none",
-                model=LocalVisionLlm(model="qwen3-vl-4b-instruct",
-                                     api_base=os.getenv("VLM_API_BASE", "http://vlm:8080/v1"),
-                                     max_output_tokens=1000,
-                                     max_requests=3,
-                                     timeout_seconds=90, completion_tools=(COMPLETION_TOOLS[state],)),
-                instruction=instruction(state, submission_schema(state)),
-                before_tool_callback=self._before_tool,
-                after_tool_callback=self._after_tool,
-                on_tool_error_callback=self._tool_error,
-                tools=[CompletionTool(self, state), skill_toolset(state), self.observe_current, self.list_observations,
-                       self.get_observation, self.compare_observations, self.move_cursor, self.observe_animation,
-                       PlanOrderTool()],
-            )
-        return self.agents[key]
+    def time_left(self):
+        return max(0, self.deadline - time.monotonic())
 
-    def _tool_event(self, event, record):
-        append_record(self.log_dir, self.session_id, "tools", {
-            "event": event, "timestamp": datetime.now(timezone.utc).isoformat(), **record})
+    def _record(self, kind, event, **data):
+        append_record(self.log_dir, self.session_id, kind, {
+            'event': event, 'timestamp': datetime.now(timezone.utc).isoformat(),
+            'run_id': self.session_id, 'game_id': self.memory.game_id,
+            'observation_id': self.obs.get('observation_id'), 'step': self.obs.get('step'),
+            **data})
+
+    def _learning_event(self, event, **data):
+        self._record('learning', event, **data)
+
+    def _agent(self):
+        if self.controller is None:
+            completion = [CompletionTool(self, 'submit_decision', Decision)]
+            if self.learning and self.library.experiences:
+                completion.append(CompletionTool(self, 'propose_skill', Draft))
+            self.controller = LlmAgent(name='decision_controller', include_contents='none',
+                model=LocalVisionLlm(model='qwen3-vl-4b-instruct',
+                    api_base=os.getenv('VLM_API_BASE', 'http://vlm:8080/v1'), max_output_tokens=1800,
+                    completion_tools=tuple(t.name for t in completion)),
+                instruction=INSTRUCTION,
+                tools=[*completion, skill_toolset(), self.list_observations, self.get_observation,
+                       self.compare_observations, self.observe_animation, self.read_skill],
+                before_tool_callback=self._before_tool, after_tool_callback=self._after_tool,
+                on_tool_error_callback=self._tool_error)
+        if self.learning and self.library.experiences and not any(
+                isinstance(t, CompletionTool) and t.name=='propose_skill' for t in self.controller.tools):
+            self.controller.tools.append(CompletionTool(self, 'propose_skill', Draft))
+            self.controller.model.completion_tools = ('submit_decision','propose_skill')
+        return self.controller
 
     def _before_tool(self, tool, args, tool_context):
-        t = self.turn
-        record = {"run_id": self.session_id, "game_id": t.memory.game_id,
-                  "observation_id": t.obs["observation_id"], "step": t.obs["step"],
-                  "state": "DECIDE", "call_index": t.calls,
-                  "tool_call_id": tool_context.function_call_id,
-                  "tool": tool.name, "arguments": compact(args), "status": "started",
-                  "started_seconds": time.monotonic() - t.started_at}
-        t.tool_executions.append(record)
-        self._tool_event("tool_started", record)
-
-    def _finish_tool(self, tool_context, response):
-        t = self.turn
-        record = next(r for r in reversed(t.tool_executions)
-                      if r["tool_call_id"] == tool_context.function_call_id
-                      and r["call_index"] == t.calls and r["status"] == "started")
-        record.update(status=tool_status(response), result=compact(response),
-                      seconds=time.monotonic() - t.started_at - record["started_seconds"])
-        self._tool_event("tool_finished", record)
+        record = {'state': 'DECIDE', 'call_index': self.calls,
+                  'tool_call_id': tool_context.function_call_id, 'tool': tool.name,
+                  'arguments': compact(args), 'status': 'started'}
+        self.tool_executions.append(record)
+        self._record('tools', 'tool_started', **record)
 
     def _after_tool(self, tool, args, tool_context, tool_response):
-        self._finish_tool(tool_context, tool_response)
+        record = next(r for r in reversed(self.tool_executions)
+                      if r['tool_call_id'] == tool_context.function_call_id and r['status'] == 'started')
+        record.update(status=tool_status(tool_response), result=compact(tool_response))
+        self._record('tools', 'tool_finished', **record)
 
     def _tool_error(self, tool, args, tool_context, error):
-        self._finish_tool(tool_context, {"error": f"{type(error).__name__}: {error}"[:2000]})
-        # Returning None preserves ADK's normal error handling.
-
-    def observe_current(self) -> dict:
-        """Read the final received game frame with cursor/controller. Never replay history or advance time."""
-        o = self.turn.obs
-        return {"observation_id": o["observation_id"], "view": "current_final_frame",
-                "cursor": o.get("cursor"), "animation": controller_context(o.get("animation")),
-                "available_buttons": controller_context({"available_actions": o.get("available_actions", [])})["available_actions"],
-                "_image_png_base64": o.get("image_png_base64")}
-
-    def move_cursor(self, x: int, y: int) -> dict:
-        """Preview a host cursor at original game pixel x,y; does NOT click or advance the game."""
-        o = self.turn.obs
-        if not o.get("_visual_frames"):
-            return {"error": "No source frame available for cursor preview"}
-        try:
-            cursor = validate_cursor({"x": x, "y": y}, o["width"], o["height"])
-        except ValueError as exc:
-            return {"error": str(exc)}
-        self.cursor = o["cursor"] = cursor
-        o["image_png_base64"] = png_base64(render_current(o["_visual_frames"][-1], o["available_actions"], cursor))
-        return self.observe_current()
+        self._after_tool(tool, args, tool_context, {'error': str(error)[:500]})
 
     def list_observations(self) -> dict:
-        """List retained real observation IDs, steps, boundaries and source actions."""
-        return {"observations": self.evidence.list(), "capacity": self.evidence.capacity,
-                "current_id": self.turn.obs.get("observation_id"), "time_advanced": False}
+        """List actual retained observation references; does not advance the game."""
+        return {'observations': self.evidence.list()}
 
     def get_observation(self, observation_id: str) -> dict:
-        """Retrieve a retained historical screen by ID. This is not a new game observation."""
+        """Read a recorded observation, not a new game state."""
         try:
             return controller_context(self.evidence.view(observation_id))
-        except ValueError as exc:
-            return {"error": str(exc)}
+        except ValueError as e:
+            return {'error': str(e)}
 
     def compare_observations(self, before_id: str, after_id: str, offset: int = 0) -> dict:
-        """Inspect labeled before/after screens and paginated pixel differences; not inferred effects."""
+        """Read recorded before/after images and measured pixel differences."""
         try:
             return controller_context(self.evidence.compare(before_id, after_id, offset))
-        except ValueError as exc:
-            return {"error": str(exc)}
+        except ValueError as e:
+            return {'error': str(e)}
 
     def observe_animation(self, event_id: str, start_frame: int = 0) -> dict:
-        """Retrieve a retained action's intermediate frames. Replay never advances game time."""
+        """Inspect historical intermediate frames. This never advances game time."""
         try:
             return controller_context(self.evidence.animation(event_id, start_frame))
-        except ValueError as exc:
-            return {"error": str(exc)}
+        except ValueError as e:
+            return {'error': str(e)}
+
+    def read_skill(self, skill_id: str) -> dict:
+        """Read an executable version, its observed evidence and evaluation status."""
+        try:
+            r = self.library.get(skill_id)
+            return {'skill_id': skill_id, 'spec': r['spec'], 'status': r['status'],
+                    'evaluation': r['evaluation'], 'trials': [
+                        {'arguments': t['arguments'], 'outcome': t['outcome']} for t in r['trials']]}
+        except ValueError as e:
+            return {'error': str(e)}
+
+    def validate_job(self, job):
+        if self.time_left() <= 0:
+            raise ValueError('time budget exhausted')
+        if isinstance(job, Draft):
+            if not self.learning:
+                raise ValueError('learning disabled')
+            # Draft validation performs the full evidence check on an isolated library.
+            trial = SkillLibrary(self.memory.game_id)
+            trial.records, trial.experiences = deepcopy(self.library.records), deepcopy(self.library.experiences)
+            trial.sequence = self.library.sequence
+            trial.draft(job)
+            return
+        if job.patch.hypotheses is not None:
+            ids = [h.id for h in job.patch.hypotheses]
+            if len(set(ids)) != len(ids):
+                raise ValueError('duplicate hypothesis IDs')
+            for h in job.patch.hypotheses:
+                if not set(h.evidence_ids) <= self.library.experiences.keys():
+                    raise ValueError('unknown experience reference')
+                if h.status != 'candidate' and not h.evidence_ids:
+                    raise ValueError('supported/refuted hypotheses need evidence')
+        if job.kind == 'act':
+            validate_action(job.action, self.obs)
+        if job.kind in ('trial', 'evaluate') and not self.learning:
+            raise ValueError('learning disabled')
+        if job.skill_id:
+            r = self.library.get(job.skill_id)
+            expected = 'active' if job.kind == 'invoke' else 'candidate'
+            if r['status'] != expected:
+                raise ValueError(f'{job.kind} requires a {expected} skill')
+            if job.kind != 'evaluate':
+                if job.kind == 'trial' and len(r['trials']) >= 8:
+                    raise ValueError('candidate trial limit reached; revise from evidence')
+                step_action(self.library.spec(job.skill_id), 0, job.arguments, self.obs)
 
     def _context(self):
-        t, m = self.turn, self.turn.memory
-        o = {k: v for k, v in t.obs.items() if k not in VISUAL_PAYLOAD_KEYS | {"grid", "recent_actions"}}
-        previous = self.memory.pending
-        # Match each past action to the following actual frame, not the change before that action.
-        trials = []
-        for index in range(max(0, len(m.history) - 4), len(m.history)):
-            entry = m.history[index]
-            after = m.history[index + 1] if index + 1 < len(m.history) else t.obs
-            same_level = entry.get("levels_completed") == after.get("levels_completed")
-            comparable = (same_level and entry.get("frame_hash") and after.get("frame_hash")
-                          and entry.get("action", {}).get("action") != "RESET"
-                          and not (index == len(m.history) - 1 and t.boundary))
-            decision = entry.get("decision", {})
-            trials.append({"step": entry["step"], "action": entry.get("action"),
-                           "prediction": decision.get("prediction"),
-                           "observed_frame_changed": (entry["frame_hash"] != after["frame_hash"])
-                           if comparable else None})
-        context = {"observation": o, "observation_id": t.obs["observation_id"],
-                   "memory_revision": m.revision, "notebook": m.notebook,
-                   "boundary": t.boundary,
-                   "previous_action": previous.model_dump(exclude_none=True) if previous else None,
-                   "recent_trials": trials,
-                   "errors": t.errors[-1:], "remaining_seconds": round(t.time_left(), 2),
-                   "observation_records": self.evidence.list()[-8:]}
-        return controller_context(context)
+        obs = {k: v for k, v in self.obs.items() if k not in VISUAL_PAYLOAD_KEYS | {'grid', 'cursor'}}
+        experiences = list(self.library.experiences.values())[-6:]
+        recent = [{'id': e['id'], 'action': e['action'], 'acknowledged': e['acknowledged'],
+                   'before_id': e['before']['observation_id'], 'after_id': e['after']['observation_id'],
+                   'frame_changed': e['before'].get('frame_hash') != e['after'].get('frame_hash'),
+                   'boundary': e['boundary']} for e in experiences]
+        return controller_context({'observation': obs, 'task': self.memory.task,
+            'previous_summary': self.memory.summary, 'hypotheses': [h.model_dump() for h in self.memory.hypotheses],
+            'last_result': self.outcome, 'recent_experiences': recent,
+            'skills': self.library.catalog(), 'learning_enabled': self.learning,
+            'last_tool_result': getattr(self, 'job_result', None), 'errors': self.errors[-1:],
+            'remaining_seconds': round(self.time_left(), 2)})
 
-    async def _ask(self, ctx: Context, state: str):
-        t = self.turn
-        if t.calls >= t.max_calls or t.time_left() <= 0:
-            raise ValueError("reasoning budget exhausted")
-        t.calls += 1
+    def _request_record(self, payload):
+        record = request_snapshot(payload, self.log_dir)
+        self._record('requests', 'model_request', state='DECIDE', call_index=self.calls, **record)
+        return record['request_sha256']
+
+    async def _ask(self, ctx):
+        self.calls += 1
+        self.memory.model_calls += 1
+        self.submission = None
         context = self._context()
-        context["reasoning_state"] = state
-        parts = [types.Part(text=json.dumps(context, separators=(",", ":")))]
-        # Supply the immediately preceding real screen without a separate VERIFY call.
-        previous = self.memory.pending
-        if previous and not t.boundary and previous.observation_id in self.evidence.index:
-            before = self.evidence.get(previous.observation_id)
-            parts.append(types.Part(text="BEFORE the previous action: " + previous.observation_id))
-            if before.get("image_png_base64"):
-                parts.append(types.Part.from_bytes(data=base64.b64decode(before["image_png_base64"]), mime_type="image/png"))
-            elif before.get("grid") is not None:
-                parts.append(types.Part(text="Before color-ID grid: " + json.dumps(before["grid"])))
-        parts.append(types.Part(text="CURRENT observation (choose the next action here):"))
-        if t.obs.get("image_png_base64"):
-            parts.append(types.Part.from_bytes(data=base64.b64decode(t.obs["image_png_base64"]), mime_type="image/png"))
-        elif t.obs.get("grid") is not None:
-            parts.append(types.Part(text="Current color-ID grid: " + json.dumps(t.obs["grid"], separators=(",", ":"))))
-        agent = self._agent(state)
-        self._submission = None
-        self._submission_attempts = []
+        parts = [types.Part(text=json.dumps(context, separators=(',', ':')))]
+        for label, obs in [('BEFORE the issued action', self.previous), ('CURRENT original game pixels', self.obs)]:
+            if not obs:
+                continue
+            parts.append(types.Part(text=label + ': ' + str(obs.get('observation_id'))))
+            if obs.get('image_png_base64'):
+                parts.append(types.Part.from_bytes(data=base64.b64decode(obs['image_png_base64']), mime_type='image/png'))
+            elif obs.get('grid') is not None:
+                parts.append(types.Part(text=json.dumps(obs['grid'])))
+        parts.append(types.Part(text='Update only what changed. Choose one next job. '
+            + ('CLICK needs explicit original x,y.' if 'ACTION6' in self.obs['available_actions'] else
+               'Available direction/action buttons do not take coordinates. Omit x and y.')))
+        agent = self._agent()
         agent.model.begin_invocation()
-        agent.model.timeout_seconds = max(1, min(90, int(t.time_left())))
+        agent.model.max_requests = min(4, self.max_http_requests - self.http_requests)
+        agent.model.timeout_seconds = max(1, min(90, int(self.time_left())))
+        agent.model._request_observer = self._request_record
         started = time.monotonic()
-        record = {"run_id": self.session_id, "game_id": t.memory.game_id,
-                  "observation_id": t.obs["observation_id"], "step": t.obs["step"],
-                  "state": state, "call_index": t.calls, "context": context,
-                  "available_skills": selected_skills(state)}
+        record = {'state': 'DECIDE', 'call_index': self.calls, 'context': context}
         try:
-            async with asyncio.timeout(min(92, t.time_left())):
-                await ctx.run_node(agent, node_input=types.Content(role="user", parts=parts))
-            record.update(agent.model._last_metrics)
-            if self._submission is None:
-                raise ValueError("state ended without an accepted completion tool call")
-            parsed = self._submission
-            record["response"] = parsed.model_dump_json()
-            record["completion_tool"] = COMPLETION_TOOLS[state]
-            record["schema_valid"] = True
-            return parsed
-        except Exception as exc:
-            record["error"] = f"{type(exc).__name__}: {exc}"
-            raise
+            async with asyncio.timeout(self.time_left()):
+                await ctx.run_node(agent, node_input=types.Content(role='user', parts=parts))
+            if self.submission is None:
+                raise ValueError('model ended without an accepted submission')
+            record.update(schema_valid=True, response=self.submission.model_dump_json())
+            self.job = self.submission
+        except Exception as e:
+            self.errors.append(f'{type(e).__name__}: {e}'[:500])
+            record['error'] = self.errors[-1]
         finally:
             record.update(agent.model._last_metrics)
-            record['exchanges'] = agent.model._exchanges
-            record['http_requests'] = len(agent.model._exchanges)
-            record['submissions'] = self._submission_attempts
-            record['tool_executions'] = [r for r in t.tool_executions if r['call_index'] == t.calls]
-            record["seconds"] = time.monotonic() - started
-            self._submission = None
-            if self.log_dir:
-                self.log_dir.mkdir(parents=True, exist_ok=True)
-                with (self.log_dir / f"{self.session_id}.model.jsonl").open("a") as log:
-                    log.write(json.dumps(record, ensure_ascii=False) + "\n")
+            record.update(exchanges=agent.model._exchanges, http_requests=len(agent.model._exchanges),
+                          seconds=time.monotonic()-started)
+            self.http_requests += record['http_requests']
+            self._record('model', 'model_decision', **record)
 
-    def _offline_decision(self):
-        t, m = self.turn, self.turn.memory
-        allowed = [a for a in t.obs.get("available_actions", []) if a.startswith("ACTION")]
+    def _stop(self, reason):
+        self.memory.lifecycle = 'DONE' if reason in ('win', 'level_limit') else 'STOPPED'
+        self.memory.stop_reason = reason
+        self.result = {'status': 'stop', 'reason': reason}
+
+    def _select(self, action, prediction, skill=None):
+        action = validate_action(action, self.obs, reset=action.get('action') == 'RESET')
+        did = f'{self.session_id}:{self.obs["step"]}'
+        self.result = {'status': 'action', 'decision_id': did, **action.model_dump(exclude_none=True)}
+        self.memory.pending = {'decision_id': did, 'observation_id': self.obs['observation_id'],
+            'step': self.obs['step'], 'action': action.model_dump(exclude_none=True),
+            'prediction': prediction, 'execution': 'selected', 'skill': deepcopy(skill)}
+        self.memory.lifecycle = 'AWAIT_FRAME'
+        self._record('artifacts', 'action_selected', state='RUN', pending=self.memory.pending)
+
+    def _advance_skill(self):
+        active = self.memory.active_skill
+        if not active:
+            return False
+        try:
+            spec = self.library.spec(active['id'])
+            expected = 'candidate' if active['trial'] else 'active'
+            if self.library.get(active['id'])['status'] != expected:
+                raise ValueError('skill version no longer executable')
+            action = step_action(spec, active['index'], active['arguments'], self.obs)
+            self._select(action, 'Verify the procedure step effects against the next real observation.', active)
+            return True
+        except ValueError as e:
+            self._end_skill('unknown', str(e))
+            return False
+
+    def _end_skill(self, outcome, reason):
+        active = self.memory.active_skill
+        if not active:
+            return
+        if active['trial']:
+            self.library.finish_trial(active['id'], active['arguments'], active['trace'], outcome)
+        elif outcome != 'pass':
+            self.library.suspend(active['id'], reason)
+        self._record('learning', 'skill_execution_finished', skill_id=active['id'],
+                     outcome=outcome, reason=reason, trial=active['trial'])
+        self.job_result = {'skill_id': active['id'], 'outcome': outcome, 'reason': reason}
+        self.memory.active_skill = None
+
+    def _receive(self, observation):
+        obs = deepcopy(observation)
+        if obs.get('game_id') != self.memory.game_id:
+            raise ValueError('wrong game')
+        for key in ('step', 'remaining_actions'):
+            if type(obs.get(key)) is not int or obs[key] < 0:
+                raise ValueError(f'invalid {key}')
+        if obs.get('state') not in ('NOT_PLAYED', 'NOT_FINISHED', 'GAME_OVER', 'WIN'):
+            raise ValueError('invalid game state')
+        if obs.get('grid') is not None:
+            g = obs['grid']
+            if not g or len(g)>64 or not g[0] or len(g[0])>64 or any(
+                    len(row)!=len(g[0]) or any(type(v) is not int or not 0<=v<=15 for v in row) for row in g):
+                raise ValueError('invalid color grid')
+            obs['width'], obs['height'] = len(g[0]), len(g)
+            obs.setdefault('frame_hash', digest(g))
+        obs.setdefault('available_actions', [])
+        obs['observation_id'] = f'{self.session_id}:{obs["step"]}:{obs.get("frame_hash", "none")[:12]}'
+        last = self.memory.last_observation
+        if last and obs['step'] <= last['step']:
+            if obs['step'] == last['step'] and all(obs.get(k) == last.get(k) for k in (
+                    'frame_hash', 'state', 'levels_completed', 'available_actions', 'remaining_actions')):
+                self.result = deepcopy(self.memory.last_result)
+                return False
+            raise ValueError('stale or conflicting observation')
+        self.obs = obs
+        self.previous = self.evidence.get(last['observation_id']) if last and last['observation_id'] in self.evidence.index else {}
+        pending = self.memory.pending
+        boundary = ('reset' if obs.get('full_reset') or pending and pending['action']['action']=='RESET' else
+                    'level' if last and obs.get('levels_completed',0)!=last.get('levels_completed',0) else '')
+        self.outcome = None
+        if pending:
+            consecutive = obs['step'] == pending['step']+1
+            acknowledged = pending['execution']=='action_acknowledged' and consecutive
+            self.outcome = {'action': pending['action'], 'acknowledged': acknowledged,
+                            'prediction_unverified': pending['prediction'], 'boundary': boundary,
+                            'frame_changed': None if boundary else obs.get('frame_hash')!=last.get('frame_hash')}
+            exp = self.library.add_experience(self.previous, pending['action'], obs,
+                acknowledged=acknowledged, boundary_kind=boundary)
+            self.outcome['experience_id'] = exp['id']
+            a,b = self.previous.get('grid'),obs.get('grid')
+            if not boundary and a and b and len(a)==len(b) and all(len(x)==len(y) for x,y in zip(a,b)):
+                changes = [{'x':x,'y':y,'before':a[y][x],'after':v}
+                           for y,row in enumerate(b) for x,v in enumerate(row) if a[y][x]!=v]
+                self.outcome.update(changed_cell_count=len(changes), changed_cells=changes[:24])
+            active = self.memory.active_skill
+            if active:
+                active['trace'].append(exp)
+                spec = self.library.spec(active['id'])
+                check = check_all(spec.steps[active['index']].after, self.previous, obs, active['arguments']) if acknowledged else None
+                allowed_boundary = boundary == 'level' and active['index']==len(spec.steps)-1 and any(
+                    c.kind=='level_increased' for c in spec.steps[active['index']].after)
+                if boundary and not allowed_boundary:
+                    self._end_skill('unknown', 'environment boundary')
+                elif check is not True:
+                    self._end_skill('fail' if check is False else 'unknown', 'effect contradicted or unavailable')
+                else:
+                    active['index'] += 1
+                    if active['index'] >= len(spec.steps):
+                        self._end_skill('pass', 'all observed effects passed')
+            self.memory.pending = None
+            if not acknowledged:
+                self._stop('execution_outcome_unknown')
+        self.evidence.add(obs, boundary=bool(boundary), source_action=pending)
+        self._log_observation()
+        self.memory.last_observation = {k:v for k,v in obs.items() if k not in VISUAL_PAYLOAD_KEYS | {'grid'}}
+        self.memory.revision += 1
+        if self.memory.lifecycle not in ('STOPPED','DONE'):
+            self.memory.lifecycle = 'ACTIVE'
+        if boundary:
+            self.memory.summary = ''
+        return True
+
+    def _log_observation(self):
+        if not self.log_dir:
+            return
+        obs = self.obs
+        record = {k:v for k,v in obs.items() if k not in VISUAL_PAYLOAD_KEYS}
+        frames = self.log_dir / 'frames'
+        frames.mkdir(parents=True, exist_ok=True)
+        if obs.get('image_png_base64'):
+            name = f'{self.session_id}-{obs["step"]:05d}.png'
+            (frames/name).write_bytes(base64.b64decode(obs['image_png_base64']))
+            record['image_path'] = 'frames/'+name
+        if obs.get('_visual_frames'):
+            name = f'{self.session_id}-{obs["step"]:05d}.json'
+            (frames/name).write_text(json.dumps({'frames': obs['_visual_frames'],
+                'available_actions': obs['available_actions'], **obs.get('animation',{})}))
+            record['animation_archive_path'] = 'frames/'+name
+        self._record('observations', 'observation_received', **{k:v for k,v in record.items() if k not in ('game_id','step','observation_id')})
+
+    def _offline_job(self):
+        allowed = [a for a in self.obs['available_actions'] if a.startswith('ACTION')]
         if not allowed:
-            raise ValueError("no legal actions")
-        counts = {a: sum(h.get("action", {}).get("action") == a for h in m.history) for a in allowed}
-        action = min(allowed, key=lambda a: (counts[a], a))
-        data = {"action": action, "reason": "deterministic control-effect probe; no semantic model"}
-        if action == "ACTION6":
-            data.update(x=(t.obs["step"] * 11) % t.obs.get("width", 64),
-                        y=(t.obs["step"] * 7) % t.obs.get("height", 64))
-        return Decision(action=data, prediction="Compare the next real frame for a visible control effect.")
+            self._stop('no_legal_action')
+            return
+        action = allowed[self.obs['step'] % len(allowed)]
+        data = {'action': action, 'reason': 'deterministic control probe'}
+        if action=='ACTION6':
+            data.update(x=self.obs['step']*11 % self.obs.get('width',64), y=self.obs['step']*7 % self.obs.get('height',64))
+        self.job = Decision(kind='act', action=data, prediction='Inspect the next observation; no semantic claim.')
 
     def _build_graph(self):
         @node(rerun_on_resume=True)
-        async def observe(ctx: Context):
-            t = self.turn
-            try:
-                t.observe()
-                if not t.duplicate and t.memory.lifecycle == "ACTIVE":
-                    self.evidence.add(t.obs, boundary=t.boundary,
-                                      source_action=self.memory.pending.model_dump() if self.memory.pending else None)
-                    self._log_observation(t.obs)
-            except Exception as exc:
-                t.errors.append(f"observation {type(exc).__name__}: {exc}"[:500])
-                t.stop("invalid_observation")
-            if not t.duplicate and t.obs.get("observation_id"):
-                # Deterministic bookkeeping only. Reflection and next action share one model call.
-                t.verify()
-                t.update()
-            return Event(route="COMMIT" if t.duplicate or t.memory.lifecycle in ("DONE", "STOPPED") else "DECIDE")
+        async def decide(ctx: Context):
+            self.trace.append('DECIDE')
+            if self.result is not None:
+                return
+            if self.obs['state']=='WIN':
+                self._stop('win')
+            elif self.obs.get('evaluation_stop_reason'):
+                self._stop(self.obs['evaluation_stop_reason'])
+            elif self.time_left()<=0 or self.obs['remaining_actions']<=0:
+                self._stop('budget_exhausted')
+            elif self.obs['state'] in ('NOT_PLAYED','GAME_OVER'):
+                if self.memory.resets >= self.max_resets:
+                    self._stop('reset_budget')
+                else:
+                    self.memory.resets += 1
+                    self._select({'action':'RESET','reason':'start or restart game'}, 'New episode boundary.')
+            elif self._advance_skill():
+                pass
+            elif not self.model:
+                self._offline_job()
+            else:
+                self.job = None
+                while (self.job is None and self.calls < self.max_calls and
+                       self.http_requests < self.max_http_requests and self.time_left()>0):
+                    await self._ask(ctx)
+                if self.job is None:
+                    self._stop('budget_exhausted' if self.time_left()<=0 else 'model_budget')
 
         @node(rerun_on_resume=True)
-        async def decide(ctx: Context):
-            t = self.turn
-            t.enter("DECIDE")
-            if t.obs["state"] in ("NOT_PLAYED", "GAME_OVER"):
-                t.recover()
-            elif not t.obs.get("available_actions") or not any(
-                    a.startswith("ACTION") for a in t.obs["available_actions"]):
-                t.stop("no_legal_action")
-            elif not self.model:
-                t.accept_decision(self._offline_decision())
-            else:
-                # Retries repair malformed submissions, never route through more reasoning states.
-                while t.calls < t.max_calls and t.time_left() > 0:
-                    try:
-                        t.accept_decision(await self._ask(ctx, "DECIDE"))
-                        break
-                    except Exception as exc:
-                        t.errors.append(f"decision {type(exc).__name__}: {exc}"[:500])
-                if t.selected is None:
-                    t.stop("budget_exhausted" if t.time_left() <= 0 else "proposal_unavailable")
-            return Event(output="decided")
+        async def run(ctx: Context):
+            self.trace.append('RUN')
+            if self.result is None:
+                try:
+                    self.validate_job(self.job)
+                    if isinstance(self.job, Draft):
+                        self.job_result = self.library.draft(self.job)
+                    else:
+                        job = self.job
+                        for k,v in job.patch.model_dump(exclude_none=True).items():
+                            if k == 'hypotheses':
+                                self.memory.hypotheses = job.patch.hypotheses
+                            else:
+                                setattr(self.memory,k,v)
+                        self._record('artifacts', 'decision_accepted', state='RUN', decision=job.model_dump())
+                        if job.kind=='act':
+                            self._select(job.action.model_dump(exclude_none=True), job.prediction)
+                        elif job.kind=='stop':
+                            self._stop('model_stopped')
+                        elif job.kind=='evaluate':
+                            self.job_result = self.library.evaluate(job.skill_id)
+                        else:
+                            self.memory.active_skill = {'id':job.skill_id, 'arguments':job.arguments,
+                                'trial':job.kind=='trial', 'index':0, 'trace':[]}
+                            self._record('learning','skill_execution_started', skill_id=job.skill_id,
+                                         trial=job.kind=='trial', arguments=job.arguments)
+                            self._advance_skill()
+                except ValueError as e:
+                    self.errors.append(str(e)[:500])
+                    self.job_result = {'error': str(e)}
+            if self.result is None:
+                return Event(route='DECIDE')
+            return Event(output=self.result, state={'cognition': self.memory.model_dump(mode='json')})
 
-        def commit():
-            result = self.turn.commit()
-            return Event(output=result, state={"cognition": self.turn.memory.model_dump(mode="json")})
+        return Workflow(name='skill_learning_loop', edges=[('START',decide), (decide,run), (run,{'DECIDE':decide})])
 
-        return Workflow(name="cognitive_workflow", edges=[
-            ("START", observe), (observe, {"DECIDE": decide, "COMMIT": commit}),
-            (decide, commit),
-        ])
-
-    def _log_observation(self, obs: dict):
-        if self.log_dir:
-            self.log_dir.mkdir(parents=True, exist_ok=True)
-            record = {k: v for k, v in obs.items() if k not in VISUAL_PAYLOAD_KEYS}
-            if obs.get("image_png_base64"):
-                frames_dir = self.log_dir / "frames"
-                frames_dir.mkdir(exist_ok=True)
-                frame_name = f"{self.session_id}-{obs['step']:05d}.png"
-                (frames_dir / frame_name).write_bytes(base64.b64decode(obs["image_png_base64"]))
-                record["image_path"] = "frames/" + frame_name
-            if obs.get("_visual_frames"):
-                archive_name = f"{self.session_id}-{obs['step']:05d}.json"
-                archive = {"frames": obs["_visual_frames"], "available_actions": obs["available_actions"],
-                           "cursor": obs["cursor"], **obs["animation"]}
-                (frames_dir / archive_name).write_text(json.dumps(archive))
-                record["animation_archive_path"] = "frames/" + archive_name
-            with (self.log_dir / f"{self.session_id}.observations.jsonl").open("a") as log:
-                log.write(json.dumps(record) + "\n")
-
-    async def _decide(self, obs: dict) -> dict:
+    async def _decide(self, observation):
+        self.calls = self.http_requests = 0
+        self.trace, self.errors, self.tool_executions = [], [], []
+        self.job = self.result = None
+        if self.memory.lifecycle in ('DONE','STOPPED'):
+            return self.memory.last_result
+        started = time.monotonic()
+        if not self._receive(observation):
+            return self.result
         if not self.initialized:
-            await self.service.create_session(app_name=APP_NAME, user_id="player", session_id=self.session_id,
-                                              state={"cognition": self.memory.model_dump(mode="json")})
+            await self.service.create_session(app_name=APP_NAME, user_id='player', session_id=self.session_id)
             self.initialized = True
-        self.turn = CognitiveTurn(self.memory, obs, max_calls=self.max_calls,
-                                  max_resets=self.max_resets, deadline=self.deadline)
-        message = types.Content(role="user", parts=[types.Part(text=f'Observe external step {obs.get("step")}')])
-        async for _ in self.runner.run_async(user_id="player", session_id=self.session_id,
-                                             new_message=message,
-                                             run_config=RunConfig(max_llm_calls=self.max_calls * MAX_REQUESTS_PER_INVOCATION)):
-            pass
-        session = await self.service.get_session(app_name=APP_NAME, user_id="player", session_id=self.session_id)
-        self.memory = Memory.model_validate(session.state["cognition"])
-        if self.turn.result is None:
-            raise RuntimeError("workflow did not commit a decision")
-        if self.log_dir and not self.turn.duplicate:
-            self.log_dir.mkdir(parents=True, exist_ok=True)
-            snapshot = self.log_dir / f"{self.session_id}.json"
-            tmp = snapshot.with_suffix(".tmp")
-            tmp.write_text(self.memory.model_dump_json(indent=2))
-            tmp.replace(snapshot)
-            with (self.log_dir / f"{self.session_id}.jsonl").open("a") as f:
-                f.write(json.dumps(self.memory.history[-1]) + "\n")
-        return self.turn.result
+        message = types.Content(role='user', parts=[types.Part(text=f'Observation {self.obs["observation_id"]}')])
+        try:
+            async for _ in self.runner.run_async(user_id='player', session_id=self.session_id,
+                    new_message=message, run_config=RunConfig(max_llm_calls=self.max_http_requests)):
+                pass
+        except Exception as e:
+            self.errors.append(f'{type(e).__name__}: {e}'[:500])
+            self._stop('runtime_error')
+        if self.result is None:
+            self._stop('missing_result')
+        if self.result['status']=='stop' and self.memory.active_skill:
+            self._end_skill('unknown', self.result['reason'])
+        self.memory.last_result = deepcopy(self.result)
+        row = {'step':self.obs['step'], 'observation_id':self.obs['observation_id'],
+               'frame_hash':self.obs.get('frame_hash'), 'trace':self.trace, 'action':self.result,
+               'task':self.memory.task, 'summary':self.memory.summary, 'outcome':self.outcome,
+               'errors':self.errors, 'decision_seconds':time.monotonic()-started,
+               'lifecycle':self.memory.lifecycle, 'stop_reason':self.memory.stop_reason}
+        self.memory.history = (self.memory.history+[row])[-128:]
+        if self.log_dir:
+            self.log_dir.mkdir(parents=True,exist_ok=True)
+            (self.log_dir/f'{self.session_id}.json').write_text(self.memory.model_dump_json(indent=2))
+            with (self.log_dir/f'{self.session_id}.jsonl').open('a') as stream:
+                stream.write(json.dumps(row)+'\n')
+        return self.result
 
-    def decide(self, observation: dict) -> dict:
+    def decide(self, observation):
         with self.lock:
             if self.closed:
-                raise RuntimeError("cognitive runtime is closed")
+                raise RuntimeError('runtime closed')
             return self.loop.run_until_complete(self._decide(observation))
+
+    def record_execution(self, event, **details):
+        pending = self.memory.pending
+        allowed = {'selected': {'action_dispatched'}, 'action_dispatched': {'action_acknowledged','action_outcome_unknown'}}
+        if pending is None or event not in allowed.get(pending['execution'],set()):
+            raise ValueError('invalid execution acknowledgement sequence')
+        pending['execution'] = event
+        self._record('execution', event, state='RUN', decision_id=pending['decision_id'],
+                     action=pending['action'], **details)
 
     def close(self):
         with self.lock:
             if not self.closed:
+                if self.memory.active_skill:
+                    self._end_skill('unknown', 'runtime closed before trial completed')
+                self.library.save()
                 self.loop.run_until_complete(self.loop.shutdown_asyncgens())
                 self.loop.run_until_complete(self.loop.shutdown_default_executor())
                 self.loop.close()
