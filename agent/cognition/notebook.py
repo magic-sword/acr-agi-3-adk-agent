@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 
 GOAL = 'Discover the current game goal and solve it using observed evidence.'
+SYSTEM_BOOKMARKS = {'current_goal', 'latest_result', 'current_subgoal', 'active_experiment', 'latest_review'}
 
 
 class Notebook:
@@ -53,7 +54,7 @@ class Notebook:
         page = self.pages.get(page_id)
         if page is None:
             raise ValueError('unknown note ID')
-        if page['kind'] == 'result':
+        if page['kind'] in ('result', 'subgoal', 'experiment'):
             raise ValueError('observed results are host-owned; write an interpretation note')
         if page['segment'] != self.segment:
             raise ValueError('note belongs to a previous level/reset; create a new scoped note')
@@ -82,7 +83,8 @@ class Notebook:
         else:
             if expected_revision != 0:
                 raise ValueError('new notes use revision zero')
-            if sum(p['kind'] != 'result' and p['status'] == 'open' and p['segment'] == self.segment
+            if sum(p['kind'] in ('goal', 'hypothesis', 'plan', 'interpretation') and
+                   p['status'] == 'open' and p['segment'] == self.segment
                    for p in self.pages.values()) >= 128:
                 raise ValueError('active note limit reached; retire unused notes')
             self.sequence += 1
@@ -105,15 +107,15 @@ class Notebook:
     def bookmark(self, name, note_id):
         if not re.fullmatch(r'[a-z][a-z0-9_-]{0,31}', name):
             raise ValueError('bookmark name must be 1..32 lowercase letters, digits, _ or -')
-        if name in ('current_goal', 'latest_result'):
-            raise ValueError('current_goal and latest_result are maintained automatically')
+        if name in SYSTEM_BOOKMARKS:
+            raise ValueError('system bookmarks are maintained automatically')
         if note_id:
             page = self.pages.get(note_id)
             if not page or page['status'] != 'open' or page['segment'] != self.segment:
                 raise ValueError('bookmark must refer to an open note in the current segment')
-            if name not in self.bookmarks and sum(k not in ('current_goal', 'latest_result')
+            if name not in self.bookmarks and sum(k not in SYSTEM_BOOKMARKS
                                                   for k in self.bookmarks) >= 6:
-                raise ValueError('bookmark limit is eight including goal and result')
+                raise ValueError('custom bookmark limit is six')
         old = self.bookmarks.get(name)
         if note_id:
             self.bookmarks[name] = note_id
@@ -124,22 +126,45 @@ class Notebook:
         self.emit('bookmark_changed', **result)
         return result
 
+    def system_bookmark(self, name, page_id):
+        if name not in SYSTEM_BOOKMARKS:
+            raise ValueError('not a system bookmark')
+        if page_id:
+            self.bookmarks[name] = page_id
+        else:
+            self.bookmarks.pop(name, None)
+        self._save_bookmarks()
+        self.emit('bookmark_changed', name=name, after=page_id or None)
+
+    def goal_path(self, page_id=None):
+        page_id = page_id or self.bookmarks.get('current_subgoal', 'goal')
+        path = []
+        while page_id:
+            page = self.pages[page_id]
+            path.append(page)
+            page_id = page.get('data', {}).get('parent_id')
+        return deepcopy(list(reversed(path)))
+
+    def begin_segment(self, boundary):
+        self.segment += 1
+        self.bookmarks = {'current_goal': 'goal'}
+        self.emit('notebook_boundary', segment=self.segment, boundary=boundary,
+                  bookmarks=deepcopy(self.bookmarks))
+        self._commit('goal', 'goal', 'Current goal', GOAL, [], author='host')
+        self._save_bookmarks()
+
     def record_observation(self, observation, outcome, boundary=''):
         self.observation_id = observation['observation_id']
         self.source_ids.add(self.observation_id)
         if boundary:
-            self.segment += 1
-            self.bookmarks = {'current_goal': 'goal'}
-            self.emit('notebook_boundary', segment=self.segment, boundary=boundary,
-                      bookmarks=deepcopy(self.bookmarks))
-            self._commit('goal', 'goal', 'Current goal', GOAL, [], author='host')
+            self.begin_segment(boundary)
         data = {'observation_id': self.observation_id, 'step': observation['step'],
                 'state': observation['state'], 'boundary': boundary, 'outcome': deepcopy(outcome)}
         refs = [outcome['experience_id']] if outcome else []
         self.source_ids.update(refs)
         page_id = f'result-{observation["step"]}'
         page = self._commit(page_id, 'result', f'Observed step {observation["step"]}',
-                            'Host-recorded observation and issued action; predictions remain unverified.',
+                            'Host-recorded observation and issued action. Experiment verdicts are separate records.',
                             refs, author='host', data=data)
         self.bookmarks['latest_result'] = page_id
         self._save_bookmarks()
@@ -149,7 +174,24 @@ class Notebook:
     def opening(self):
         """Small mandatory view. Never includes the full note collection."""
         result = self.pages.get(self.bookmarks.get('latest_result'))
+        def experiment_view(name):
+            page = deepcopy(self.pages.get(self.bookmarks.get(name)))
+            if page:
+                page['data'].pop('before_pixels', None)
+                page['data'].pop('before_context', None)
+                if name == 'latest_review':
+                    data = page['data']
+                    # Open the verdict, not a copyable old action proposal. The
+                    # full frozen plan is still accessible by experiment ID.
+                    return {'id': page['id'], 'revision': page['revision'], 'segment': page['segment'],
+                            'data': {k: data[k] for k in ('subgoal_id', 'status', 'measurement', 'review', 'reviewer')},
+                            'question': data['plan']['question'],
+                            'expected': data['plan']['expected']}
+            return page
         return deepcopy({'segment': self.segment, 'goal': self.pages['goal'],
+                         'goal_path': self.goal_path(),
+                         'active_experiment': experiment_view('active_experiment'),
+                         'latest_review': experiment_view('latest_review'),
                          'latest_result': result,
                          'bookmarks': [{'name': name, 'id': ref,
                                         'revision': self.pages[ref]['revision'],

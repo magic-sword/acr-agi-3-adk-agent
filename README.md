@@ -1,14 +1,15 @@
 # ARC-AGI-3 skill-learning agent
 
 A local Google ADK 2.0 agent with a shared puzzle notebook and a `DECIDE ↔ RUN` loop.
-It explores visual games, proposes executable skill candidates from acknowledged experience,
+It explores visual games through small subgoals and frozen experiments, reviews each result before
+selecting another action, and proposes executable skill candidates from acknowledged experience. It
 tests candidates through real game actions, and promotes only versions passing host evaluation.
 Qwen3-VL-4B-Instruct runs locally. Without a model, the driver issues deterministic control probes.
 
 See the [implementation and limits](docs/skill-learning-runtime-ja.md),
-[design and research](docs/autonomous-skill-learning-design-ja.md), and
+[experiment-loop design and research](docs/goal-experiment-loop-design-ja.md), and
 [evaluation guide](docs/local-evaluation-ja.md).
-See the [migration validation results](docs/skill-learning-validation-ja.md) for verified behavior and remaining model limitations.
+Earlier design and validation records are clearly separated under [history](docs/history/README.md).
 
 ## Setup
 
@@ -36,7 +37,8 @@ No API key or internet is needed during local model inference.
 
 Open [agent_observatory.ipynb](notebooks/agent_observatory.ipynb) in JupyterLab after a benchmark.
 Choose its evaluation ID and game from the dropdowns, click **読み込む**, then play the saved run.
-A state diagram highlights normal decisions, skill construction, execution and observation waits.
+A state diagram highlights experiment design, result review, skill construction, execution and observation waits.
+The replay pairs each subgoal and pre-action prediction with its measured result and verdict.
 Playback defaults to state transitions; action and full-event modes are also available.
 Playback reads only the selected game, updates images only when needed, and opens detailed logs on demand.
 It does not launch evaluations or poll for updates. See the [replay guide](docs/agent-monitor-ja.md).
@@ -54,11 +56,15 @@ make visualize                 # outputs/agent-visualization/index.html
 actual actions, observations, model requests and skill lifecycle events under `outputs/evaluations/`.
 It never uploads or submits to Kaggle. Short public-game runs are not leaderboard estimates.
 
-Learning starts with an empty procedural library per game. Normal decisions and skill construction
-use separate prompts and share the same versioned puzzle notebook. `notebook` and `design-experiment`
-are available through ADK; `skill-creator` is supplied automatically only for construction jobs.
-The current goal and latest host result are opened automatically; other notes are read through bookmarks.
-See the [notebook design and references](docs/notebook-memory-design-ja.md).
+Learning starts with an empty procedural library per game. `experiment_design`, `experiment_review`
+and `skill_creation` use separate prompts and completion tools with one versioned puzzle notebook.
+Each job automatically receives its method skill. Pixel-region and level expectations are checked by
+host code; semantic expectations get a separate model review. Review jobs cannot select an action.
+The active goal path, experiment and latest verdict are opened automatically; additional notes are
+read through bookmarks. Duplicate unsupported probes require a predeclared bounded retry or a
+changed action/tested scope/relevant observed condition. Unrelated changing pixels do not bypass it. If a host verdict is ignored, a review job reconsiders
+the subgoal once; another duplicate stops with `experiment_redesign_stalled`.
+Tests verify this lifecycle; current short Qwen runs still fail to choose a useful alternative test.
 Learned procedures are scoped to a game version; they are not Python or shell code.
 The first implementation supports up to eight guarded steps and measurable pixel/level effects.
 Every step yields to the driver for a fresh observation. Unexpected effects stop reuse.
@@ -78,7 +84,7 @@ explicit inputs; normal benchmark trials do not share learning implicitly.
 
 ## Configuration and logs
 
-- `COGNITION_MAX_CALLS=4`: judgments per observation, including creation/evaluation work.
+- `COGNITION_MAX_CALLS=4`: judgments per observation, including semantic review and skill construction. Host-only checks do not spend model calls.
 - `COGNITION_MAX_HTTP_REQUESTS=8`: shared HTTP budget per observation.
 - `COGNITION_SECONDS=600`: total game runtime budget; benchmarks override it.
 - `COGNITION_MAX_RESETS=2`: host-owned episode restarts.
@@ -96,7 +102,8 @@ Historical frame tools never advance game time.
 python3 scripts/analyze_agent.py outputs/cognition
 ```
 
-The HTML viewer links decisions, actual execution, and skill learning. `<run>.learning.jsonl`
+The HTML viewer links experiments, their verdicts, actual execution, and skill learning.
+`<run>.experiments.jsonl` records frozen plans, measurements, reviews and interruptions. `<run>.learning.jsonl`
 records experience, drafts, trials, evaluation, promotion and suspension.
 `<run>/skills/library.json` stores immutable versions and evaluation evidence.
 `<run>.notebook.jsonl` records opened/read pages, revisions, withdrawals and bookmarks.

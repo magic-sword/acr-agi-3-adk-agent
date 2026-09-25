@@ -3,7 +3,10 @@ name: notebook
 description: Keep a shared puzzle notebook of scoped goals, hypotheses and plans with evidence links and bookmarks.
 ---
 
-The opening pages already contain the current goal, latest host result and bookmark index.
+The opening pages already contain the goal path, active experiment, latest review, latest host result and bookmark index.
+Experiment submissions create structured subgoal and experiment pages automatically.
+Their frozen predictions and host measurements cannot be edited through note tools.
+Use submit_review during result review to record a verdict and subgoal status.
 Use read_notebook(reference) to open an ID or bookmark. With no reference it returns a six-item
 index; query filters title/text, offset pages through it. include_previous searches earlier levels.
 Read original screenshots/grids with get_observation when a recorded interpretation is uncertain.
@@ -16,7 +19,7 @@ than creating another source of truth. Keep the goal stable unless evidence warr
 Do not repeat the initial scene description after every action. Only record useful changes.
 
 set_bookmark names useful pages (e.g. experiment or skill_evidence). At most six custom bookmarks
-can be open. current_goal and latest_result are maintained by the host. An empty note_id removes
+can be open. current_goal, current_subgoal, active_experiment, latest_review and latest_result are maintained by the host. An empty note_id removes
 a custom bookmark. erase_note withdraws a page with a reason; its past versions remain in the log.
 Host-recorded results cannot be overwritten. Correct interpretations in a separate note.
 Reset/level boundaries start a new segment and clear local bookmarks; older notes remain readable

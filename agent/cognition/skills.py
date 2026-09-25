@@ -49,4 +49,4 @@ def skill_instructions(name: str) -> str:
 def skill_toolset() -> ReasoningSkillToolset:
     root = Path(__file__).resolve().parents[1] / "skills"
     return ReasoningSkillToolset(skills=[load_skill_from_dir(root / name)
-        for name in ("design-experiment", "notebook")])
+        for name in ("notebook",)])

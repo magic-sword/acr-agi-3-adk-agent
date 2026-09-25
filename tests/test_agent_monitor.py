@@ -143,23 +143,23 @@ class ReplayTests(unittest.TestCase):
             root=Path(d)
             events=[
                 ('observations',{'event':'observation_received','step':0,'grid':[[0]]}),
-                ('states',{'event':'state_entered','state':'DECIDE','work':'action','input':{}}),
-                ('states',{'event':'state_exited','state':'DECIDE','work':'action','output':{}}),
-                ('states',{'event':'state_entered','state':'RUN','work':'action','input':{'job':{'kind':'learn'}}}),
+                ('states',{'event':'state_entered','state':'DECIDE','work':'experiment_design','input':{}}),
+                ('states',{'event':'state_exited','state':'DECIDE','work':'experiment_design','output':{}}),
+                ('states',{'event':'state_entered','state':'RUN','work':'experiment_design','input':{'job':{'kind':'learn'}}}),
                 ('states',{'event':'state_exited','state':'RUN','work':'skill_creation','output':{'result':None}}),
                 ('states',{'event':'state_entered','state':'DECIDE','work':'skill_creation','input':{}}),
-                ('tools',{'event':'tool_started','state':'RUN','work':'action','tool':'read_notebook'}),
+                ('tools',{'event':'tool_started','state':'RUN','work':'experiment_design','tool':'read_notebook'}),
                 ('states',{'event':'state_exited','state':'DECIDE','work':'skill_creation','output':{}}),
                 ('states',{'event':'state_entered','state':'RUN','work':'skill_creation','input':{'job':{'spec':{}}}}),
-                ('states',{'event':'state_exited','state':'RUN','work':'action','output':{'result':None}}),
-                ('states',{'event':'state_entered','state':'DECIDE','work':'action','input':{}}),
-                ('states',{'event':'state_entered','state':'RUN','work':'action','input':{'job':{'kind':'act'}}}),
-                ('states',{'event':'state_exited','state':'RUN','work':'action','output':{'result':{'status':'action'}}}),
+                ('states',{'event':'state_exited','state':'RUN','work':'experiment_design','output':{'result':None}}),
+                ('states',{'event':'state_entered','state':'DECIDE','work':'experiment_design','input':{}}),
+                ('states',{'event':'state_entered','state':'RUN','work':'experiment_design','input':{'job':{'kind':'act'}}}),
+                ('states',{'event':'state_exited','state':'RUN','work':'experiment_design','output':{'result':{'status':'action'}}}),
                 ('execution',{'event':'action_dispatched','step':0,'action':{'action':'UP'}}),
                 ('execution',{'event':'action_acknowledged','step':0,'action':{'action':'UP'}}),
                 ('observations',{'event':'observation_received','step':1,'grid':[[1]]}),
-                ('states',{'event':'state_entered','state':'RUN','work':'action','input':{}}),
-                ('states',{'event':'state_exited','state':'RUN','work':'action','output':{'result':{'status':'stop','reason':'win'}}}),
+                ('states',{'event':'state_entered','state':'RUN','work':'experiment_design','input':{}}),
+                ('states',{'event':'state_exited','state':'RUN','work':'experiment_design','output':{'result':{'status':'stop','reason':'win'}}}),
                 ('states',{'event':'runtime_closed','stop_reason':'win'}),
             ]
             for i,(kind,row) in enumerate(events):
@@ -167,9 +167,9 @@ class ReplayTests(unittest.TestCase):
                     f.write(json.dumps(dict(row,sequence=i+1))+'\n')
             t=Timeline(Run(root,'r')).load()
             self.assertEqual([s['machine']['node'] for s in t.snapshots],
-                ['observe','action','action','run','run','build','build','build','run',
-                 'run','action','run','wait','wait','wait','observe','run','end','end'])
-            self.assertEqual(t.snapshot(4)['machine']['work'],'action')
+                ['observe','design','design','run','run','build','build','build','run',
+                 'run','design','run','wait','wait','wait','observe','run','end','end'])
+            self.assertEqual(t.snapshot(4)['machine']['work'],'experiment_design')
             self.assertEqual(t.snapshot(9)['machine']['work'],'skill_creation')
             self.assertEqual(t.snapshot(8)['machine']['job'],'propose_skill')
             self.assertIn('未送信',t.snapshot(12)['machine']['phase'])
@@ -180,7 +180,7 @@ class ReplayTests(unittest.TestCase):
             self.assertEqual(html.count('data-active="true"'),1)
             self.assertIn('data-state="build" data-active="true"',html)
             self.assertIn('スキル作成 · 処理中',html)
-            self.assertNotIn('<script>',state_diagram_html({'node':'action','phase':'<script>x</script>'}))
+            self.assertNotIn('<script>',state_diagram_html({'node':'design','phase':'<script>x</script>'}))
 
     def test_state_replay_skips_same_state_events_and_caches_the_diagram(self):
         from scripts.notebook_monitor import BenchmarkReplay

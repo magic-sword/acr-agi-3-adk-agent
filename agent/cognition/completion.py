@@ -1,10 +1,15 @@
 """Model submissions propose work. Only RUN applies changes or selects actions."""
 from google.adk.tools import BaseTool
 from google.genai import types
+from .experiments import RepeatedExperiment
+from .state import ExperimentRedesign
 
 class CompletionTool(BaseTool):
     def __init__(self, runtime, name, contract):
         super().__init__(name=name, description=(
+            'Submit the verdict for the active observed experiment; no actions are allowed.'
+            if name == 'submit_review' else
+            'Return to experiment design with missing evidence.' if name == 'defer_skill' else
             'Submit one next job. Call alone. Invalid submissions can be corrected. '
             'propose_skill creates a candidate only; the host owns testing and promotion.'
             if name=='propose_skill' else
@@ -17,7 +22,7 @@ class CompletionTool(BaseTool):
         if self.name == 'submit_decision':
             catalog = self.runtime.library.catalog()
             kinds = ['act', 'stop']
-            if self.runtime.learning and self.runtime.library.experiences and self.runtime.work == 'action':
+            if self.runtime.learning and self.runtime.library.experiences and self.runtime.work == 'experiment_design':
                 kinds.append('learn')
             if any(s['status']=='active' for s in catalog):
                 kinds.append('invoke')
@@ -28,6 +33,8 @@ class CompletionTool(BaseTool):
             # Keep common fields at the root: the local tool grammar can lose them
             # when a root oneOf branch is selected. Null is explicit for non-act jobs.
             schema['required'].append('action')
+            schema['required'].append('experiment')
+            schema['properties']['experiment']['description'] = 'Frozen experiment plan for act; null for every other kind.'
             schema['properties']['action']['description'] = 'An object with action set to one legal button when kind=act; null for every other kind.'
             if not any(k in kinds for k in ('invoke', 'trial', 'evaluate')):
                 schema['properties'].pop('skill_id')
@@ -55,9 +62,20 @@ class CompletionTool(BaseTool):
             return {'accepted':False,'error':'a job has already been submitted'}
         try:
             proposal = self.contract.model_validate(args)
+            self.runtime.proposed_job = proposal
             self.runtime.validate_job(proposal)
+        except RepeatedExperiment as exc:
+            # End this invocation and return through the graph with a compact
+            # redesign input. Do not spend all tool rounds repeating a field error.
+            self.runtime.submission = ExperimentRedesign(experiment_id=exc.page['id'],
+                blocked_action=exc.page['data']['action'], reason=str(exc))
+            tool_context.actions.skip_summarization = True
+            return {'accepted': False, 'redesign_required': True, 'next': 'experiment_design',
+                    'experiment_id': exc.page['id'], 'reason': str(exc)}
         except ValueError as e:
-            correction = 'Correct the reported field error. Every decision needs kind, prediction, and action (null for a non-act job).'
+            correction = 'Correct the reported field error using this tool schema.'
+            if self.name == 'submit_decision':
+                correction += ' Every decision needs kind, purpose, experiment (for act), and action (null for a non-act job).'
             if (self.name == 'submit_decision' and args.get('kind') == 'act'
                     and not isinstance(args.get('action'), dict)):
                 correction = ('kind=act requires action={"action":"<one legal button>"}. '

@@ -25,11 +25,12 @@ from agent.local_vlm import LocalVisionLlm
 from .audit import append_record, compact, tool_status, request_snapshot
 from .completion import CompletionTool
 from .evidence import EvidenceStore
-from .instructions import COMMON, ACTION, BUILD
+from .instructions import COMMON, DESIGN, REVIEW, BUILD
+from .experiments import Experiments
 from .notebook import Notebook
 from .library import SkillLibrary, check_all, step_action, digest
 from .skills import skill_toolset, skill_instructions
-from .state import Decision, Draft, Memory
+from .state import Decision, Draft, Memory, ExperimentPlan, ExperimentReview, SkillDeferral, ExperimentRedesign
 from .validation import validate_action
 
 APP_NAME = 'arc_skill_learning'
@@ -54,6 +55,7 @@ class CognitiveRuntime:
         self.calls = self.http_requests = 0
         self.errors, self.trace, self.tool_executions = [], [], []
         self.submission = self.job = self.result = None
+        self.proposed_job = None
         self.initialized = self.closed = False
         self.event_sequence = 0
         directory = self.log_dir / self.session_id / 'skills' if self.log_dir else None
@@ -61,8 +63,10 @@ class CognitiveRuntime:
         self.notebook = Notebook(game_id, self.session_id,
             self.log_dir / self.session_id / 'notebook' if self.log_dir else None,
             emit=self._notebook_event)
+        self.experiments = Experiments(self.notebook, self._experiment_event)
+        self.boundary = ''
         self.controllers = {}
-        self.work, self.learning_request = 'action', None
+        self.work, self.learning_request = 'experiment_design', None
         self.workflow = self._build_graph()
         self.runner = Runner(agent=self.workflow, app_name=APP_NAME, session_service=self.service)
 
@@ -81,8 +85,11 @@ class CognitiveRuntime:
     def _learning_event(self, event, **data):
         self._record('learning', event, **data)
 
+    def _experiment_event(self, event, **data):
+        self._record('experiments', event, work=self.work, **data)
+
     def _notebook_event(self, event, **data):
-        self._record('notebook', event, work=getattr(self, 'work', 'action'), **data)
+        self._record('notebook', event, work=getattr(self, 'work', 'experiment_design'), **data)
 
     def _note_operation(self, operation, *args, **kwargs):
         if self.submission is not None:
@@ -119,20 +126,26 @@ class CognitiveRuntime:
     def _agent(self):
         if self.work not in self.controllers:
             completion = [CompletionTool(self, 'submit_decision', Decision)]
-            instruction = COMMON + ACTION
-            if self.work == 'skill_creation':
-                completion.append(CompletionTool(self, 'propose_skill', Draft))
+            instruction = COMMON + DESIGN + skill_instructions('design-experiment')
+            note_tools = [self.write_note, self.erase_note, self.set_bookmark]
+            if self.work == 'experiment_review':
+                completion = [CompletionTool(self, 'submit_review', ExperimentReview)]
+                instruction = COMMON + REVIEW + skill_instructions('review-experiment')
+                note_tools = []
+            elif self.work == 'skill_creation':
+                completion = [CompletionTool(self, 'propose_skill', Draft),
+                              CompletionTool(self, 'defer_skill', SkillDeferral)]
                 instruction = COMMON + BUILD + skill_instructions('skill-creator')
             self.controllers[self.work] = LlmAgent(
-                name='skill_builder' if self.work == 'skill_creation' else 'decision_controller',
+                name=self.work,
                 include_contents='none',
                 model=LocalVisionLlm(model='qwen3-vl-4b-instruct',
                     api_base=os.getenv('VLM_API_BASE', 'http://vlm:8080/v1'), max_output_tokens=1800,
                     completion_tools=tuple(t.name for t in completion)),
                 instruction=instruction,
-                tools=[*completion, skill_toolset(), self.read_notebook, self.write_note,
-                       self.erase_note, self.set_bookmark, self.list_observations, self.get_observation,
-                       self.compare_observations, self.observe_animation, self.read_skill],
+                tools=[*completion, skill_toolset(), self.read_notebook, *note_tools,
+                       self.list_observations, self.get_observation, self.compare_observations,
+                       self.observe_animation, self.read_skill],
                 before_tool_callback=self._before_tool, after_tool_callback=self._after_tool,
                 on_tool_error_callback=self._tool_error)
         return self.controllers[self.work]
@@ -189,8 +202,21 @@ class CognitiveRuntime:
             return {'error': str(e)}
 
     def validate_job(self, job):
+        if isinstance(job, ExperimentReview):
+            if self.work != 'experiment_review':
+                raise ValueError('reviews are only accepted in the result review job')
+            self.experiments.validate_review(job)
+            return
         if self.time_left() <= 0:
             raise ValueError('time budget exhausted')
+        if isinstance(job, ExperimentRedesign):
+            if self.work != 'experiment_design':
+                raise ValueError('redesign belongs to experiment design')
+            return
+        if isinstance(job, SkillDeferral):
+            if self.work != 'skill_creation':
+                raise ValueError('only a skill builder can defer construction')
+            return
         if isinstance(job, Draft):
             if not self.learning:
                 raise ValueError('learning disabled')
@@ -202,17 +228,20 @@ class CognitiveRuntime:
             trial.sequence = self.library.sequence
             trial.draft(job)
             return
+        if self.work != 'experiment_design':
+            raise ValueError('actions and skill selection belong to experiment design')
         if not set(job.evidence_ids) <= self.library.experiences.keys():
             raise ValueError('unknown or expired experience reference')
         if job.kind == 'learn':
             if not self.learning:
                 raise ValueError('learning disabled')
-            if self.work != 'action':
+            if self.work != 'experiment_design':
                 raise ValueError('already constructing a skill')
             if not all(self.library.experiences[k]['acknowledged'] for k in job.evidence_ids):
                 raise ValueError('learning requires acknowledged experiences')
         if job.kind == 'act':
-            validate_action(job.action, self.obs)
+            action = validate_action(job.action, self.obs)
+            self.experiments.validate(job.experiment, action.model_dump(exclude_none=True), self.obs)
         if job.kind in ('trial', 'evaluate') and not self.learning:
             raise ValueError('learning disabled')
         if job.skill_id:
@@ -244,23 +273,29 @@ class CognitiveRuntime:
         self.calls += 1
         self.memory.model_calls += 1
         self.submission = None
+        self.proposed_job = None
         context = self._context()
         self._notebook_event('notebook_opened', view=context['notebook'])
-        if self.work == 'skill_creation':
-            self._record('tools', 'skill_instructions_loaded', work=self.work,
-                         skill='skill-creator', source='host', instruction=skill_instructions('skill-creator'))
+        method = {'experiment_design': 'design-experiment', 'experiment_review': 'review-experiment',
+                  'skill_creation': 'skill-creator'}[self.work]
+        self._record('tools', 'skill_instructions_loaded', work=self.work,
+                     skill=method, source='host', instruction=skill_instructions(method))
         parts = [types.Part(text=json.dumps(context, separators=(',', ':')))]
-        for label, obs in [('BEFORE the issued action', self.previous), ('CURRENT original game pixels', self.obs)]:
+        views = [('BEFORE the issued action', self.previous), ('CURRENT original game pixels', self.obs)]
+        if self.work == 'experiment_review':
+            data = self.experiments.active['data']
+            views = [(label, self.evidence.get(data[key]) if data[key] in self.evidence.index else {})
+                     for label, key in [('EXPERIMENT BEFORE', 'before_id'), ('EXPERIMENT AFTER', 'after_id')]]
+        for label, obs in views:
             if not obs:
+                parts.append(types.Part(text=label + ': original observation no longer retained; use only recorded measurements.'))
                 continue
             parts.append(types.Part(text=label + ': ' + str(obs.get('observation_id'))))
             if obs.get('image_png_base64'):
                 parts.append(types.Part.from_bytes(data=base64.b64decode(obs['image_png_base64']), mime_type='image/png'))
             elif obs.get('grid') is not None:
                 parts.append(types.Part(text=json.dumps(obs['grid'])))
-        parts.append(types.Part(text='Update only what changed. Choose one next job. '
-            + ('CLICK needs explicit original x,y.' if 'ACTION6' in self.obs['available_actions'] else
-               'Available direction/action buttons do not take coordinates. Omit x and y.')))
+        parts.append(types.Part(text='Complete only the assigned work: ' + self.work + '.'))
         agent = self._agent()
         agent.model.begin_invocation()
         agent.model.max_requests = min(4, self.max_http_requests - self.http_requests)
@@ -273,7 +308,9 @@ class CognitiveRuntime:
                 await ctx.run_node(agent, node_input=types.Content(role='user', parts=parts))
             if self.submission is None:
                 raise ValueError('model ended without an accepted submission')
-            record.update(schema_valid=True, response=self.submission.model_dump_json())
+            record.update(schema_valid=True, response=self.proposed_job.model_dump_json())
+            if isinstance(self.submission, ExperimentRedesign):
+                record['host_route'] = self.submission.model_dump()
             self.job = self.submission
         except Exception as e:
             self.errors.append(f'{type(e).__name__}: {e}'[:500])
@@ -286,17 +323,19 @@ class CognitiveRuntime:
             self._record('model', 'model_decision', **record)
 
     def _stop(self, reason):
+        self.experiments.interrupt(reason)
         self.memory.lifecycle = 'DONE' if reason in ('win', 'level_limit') else 'STOPPED'
         self.memory.stop_reason = reason
         self.result = {'status': 'stop', 'reason': reason}
 
-    def _select(self, action, prediction, skill=None):
+    def _select(self, action, prediction, skill=None, experiment_id=None):
         action = validate_action(action, self.obs, reset=action.get('action') == 'RESET')
         did = f'{self.session_id}:{self.obs["step"]}'
         self.result = {'status': 'action', 'decision_id': did, **action.model_dump(exclude_none=True)}
         self.memory.pending = {'decision_id': did, 'observation_id': self.obs['observation_id'],
             'step': self.obs['step'], 'action': action.model_dump(exclude_none=True),
-            'prediction': prediction, 'execution': 'selected', 'skill': deepcopy(skill)}
+            'prediction': prediction, 'execution': 'selected', 'skill': deepcopy(skill),
+            'experiment_id': experiment_id}
         self.memory.lifecycle = 'AWAIT_FRAME'
         self._record('artifacts', 'action_selected', state='RUN', pending=self.memory.pending)
 
@@ -364,7 +403,8 @@ class CognitiveRuntime:
             consecutive = obs['step'] == pending['step']+1
             acknowledged = pending['execution']=='action_acknowledged' and consecutive
             self.outcome = {'action': pending['action'], 'acknowledged': acknowledged,
-                            'prediction_unverified': pending['prediction'], 'boundary': boundary,
+                            'prediction': pending['prediction'], 'experiment_id': pending.get('experiment_id'),
+                            'boundary': boundary,
                             'frame_changed': None if boundary else obs.get('frame_hash')!=last.get('frame_hash')}
             exp = self.library.add_experience(self.previous, pending['action'], obs,
                 acknowledged=acknowledged, boundary_kind=boundary)
@@ -390,15 +430,25 @@ class CognitiveRuntime:
                     if active['index'] >= len(spec.steps):
                         self._end_skill('pass', 'all observed effects passed')
             self.memory.pending = None
-            if not acknowledged:
-                self._stop('execution_outcome_unknown')
+
         self.evidence.add(obs, boundary=bool(boundary), source_action=pending)
         self._log_observation()
         self.memory.last_observation = {k:v for k,v in obs.items() if k not in VISUAL_PAYLOAD_KEYS | {'grid'}}
         self.memory.revision += 1
         if self.memory.lifecycle not in ('STOPPED','DONE'):
             self.memory.lifecycle = 'ACTIVE'
-        self.notebook.record_observation(obs, self.outcome, boundary)
+        self.boundary = boundary
+        # Preserve the old segment until its experiment has a verdict.
+        self.notebook.record_observation(obs, self.outcome)
+        if self.experiments.active:
+            self.experiments.observe(obs, self.outcome)
+            self.work = 'experiment_review'
+            if not self.outcome['acknowledged']:
+                self._finish_review(self.experiments.automatic_review(), source='host')
+        if self.outcome and not self.outcome['acknowledged']:
+            self._stop('execution_outcome_unknown')
+        if not self.experiments.active:
+            self._apply_boundary()
         return True
 
     def _log_observation(self):
@@ -419,6 +469,20 @@ class CognitiveRuntime:
             record['animation_archive_path'] = 'frames/'+name
         self._record('observations', 'observation_received', **{k:v for k,v in record.items() if k not in ('game_id','step','observation_id')})
 
+    def _apply_boundary(self):
+        if self.boundary:
+            self.notebook.begin_segment(self.boundary)
+            self.notebook.record_observation(self.obs, self.outcome)
+            self.boundary = ''
+
+    def _finish_review(self, review, *, source):
+        self.experiments.finish(review, source=source)
+        self.job_result = None  # The verdict has one opening-view source: latest_review.
+        if self.outcome is not None and self.outcome.get('experiment_id') == review.experiment_id:
+            self.outcome['review'] = review.model_dump()
+        self.work, self.learning_request = 'experiment_design', None
+        self._apply_boundary()
+
     def _offline_job(self):
         allowed = [a for a in self.obs['available_actions'] if a.startswith('ACTION')]
         if not allowed:
@@ -426,9 +490,22 @@ class CognitiveRuntime:
             return
         action = allowed[self.obs['step'] % len(allowed)]
         data = {'action': action, 'reason': 'deterministic control probe'}
-        if action=='ACTION6':
-            data.update(x=self.obs['step']*11 % self.obs.get('width',64), y=self.obs['step']*7 % self.obs.get('height',64))
-        self.job = Decision(kind='act', action=data, prediction='Inspect the next observation; no semantic claim.')
+        x = self.obs['step']*11 % self.obs.get('width', 64)
+        y = self.obs['step']*7 % self.obs.get('height', 64)
+        if action == 'ACTION6':
+            data.update(x=x, y=y)
+        plan = ExperimentPlan.model_validate({
+            'subgoal': {'text': 'Find an observable control effect', 'done_when': 'A tested cell changes'},
+            'question': 'Does this probe change the selected cell?',
+            'hypothesis': 'The selected cell may change after one probe', 'conditions': 'Current observed state',
+            'expected': {'kind': 'region_changed', 'description': 'The selected cell changes',
+                         'region': {'x': x, 'y': y, 'width': 1, 'height': 1}}})
+        self.job = Decision(kind='act', action=data, purpose='Deterministic smoke probe', experiment=plan)
+        try:
+            self.validate_job(self.job)
+        except ValueError:
+            self.job = None
+            self._stop('offline_probe_exhausted')
 
     def _build_graph(self):
         @node(rerun_on_resume=True)
@@ -437,6 +514,17 @@ class CognitiveRuntime:
             try:
                 self.trace.append('DECIDE')
                 if self.result is not None:
+                    return
+                self.job = None
+                if self.work == 'experiment_review':
+                    reconsider = bool(self.experiments.active['data'].get('review_request'))
+                    self.job = None if reconsider else self.experiments.automatic_review()
+                    if self.job is None:
+                        while (self.job is None and self.calls < self.max_calls and
+                               self.http_requests < self.max_http_requests and self.time_left() > 0):
+                            await self._ask(ctx)
+                        if self.job is None:
+                            self._stop('review_budget_exhausted')
                     return
                 if self.obs['state']=='WIN':
                     self._stop('win')
@@ -478,20 +566,35 @@ class CognitiveRuntime:
                 if self.result is None:
                     try:
                         self.validate_job(self.job)
-                        if isinstance(self.job, Draft):
+                        if isinstance(self.job, ExperimentReview):
+                            self._finish_review(self.job, source='agent' if self.submission is self.job else 'host')
+                        elif isinstance(self.job, ExperimentRedesign):
+                            self.job_result = {'redesign_required': self.job.model_dump()}
+                            self._record('artifacts', 'experiment_redesign_requested', state='RUN',
+                                         **self.job.model_dump())
+                            if self.experiments.reconsider(self.job.experiment_id):
+                                self.work = 'experiment_review'
+                            else:
+                                self._stop('experiment_redesign_stalled')
+                        elif isinstance(self.job, SkillDeferral):
+                            self.job_result = {'missing_evidence': self.job.reason}
+                            self.work, self.learning_request = 'experiment_design', None
+                        elif isinstance(self.job, Draft):
                             self.job_result = self.library.draft(self.job)
-                            self.work, self.learning_request = 'action', None
+                            self.work, self.learning_request = 'experiment_design', None
                         else:
                             job = self.job
                             if job.kind == 'learn':
                                 self.work = 'skill_creation'
                                 self.learning_request = {'evidence_ids': job.evidence_ids,
-                                                         'purpose': job.prediction}
+                                                         'purpose': job.purpose}
                             else:
-                                self.work, self.learning_request = 'action', None
+                                self.work, self.learning_request = 'experiment_design', None
                             self._record('artifacts', 'decision_accepted', state='RUN', decision=job.model_dump())
                             if job.kind=='act':
-                                self._select(job.action.model_dump(exclude_none=True), job.prediction)
+                                action = validate_action(job.action, self.obs).model_dump(exclude_none=True)
+                                experiment_id = self.experiments.start(job.experiment, action, self.obs)
+                                self._select(action, job.experiment.expected.description, experiment_id=experiment_id)
                             elif job.kind=='stop':
                                 self._stop('model_stopped')
                             elif job.kind=='learn':
@@ -548,6 +651,7 @@ class CognitiveRuntime:
                'frame_hash':self.obs.get('frame_hash'), 'trace':self.trace, 'action':self.result,
                'goal_ref': {'id':'goal', 'revision':self.notebook.pages['goal']['revision']},
                'outcome':self.outcome,
+               'experiment_id': (self.experiments.active or {}).get('id'),
                'errors':self.errors, 'decision_seconds':time.monotonic()-started,
                'lifecycle':self.memory.lifecycle, 'stop_reason':self.memory.stop_reason}
         self.memory.history = (self.memory.history+[row])[-128:]
@@ -578,6 +682,7 @@ class CognitiveRuntime:
             if not self.closed:
                 if self.memory.active_skill:
                     self._end_skill('unknown', 'runtime closed before trial completed')
+                self.experiments.interrupt('runtime closed before experiment completed')
                 self.library.save()
                 self._record('states', 'runtime_closed', lifecycle=self.memory.lifecycle,
                              stop_reason=self.memory.stop_reason)

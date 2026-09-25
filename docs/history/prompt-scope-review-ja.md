@@ -1,5 +1,7 @@
 # 判断の仕事に応じた指示とツールの分離
 
+> 履歴文書：この時点の設計・検証を保存したものです。現行の仕事分割・APIは[現行仕様](../skill-learning-runtime-ja.md)と[実験ループ](../goal-experiment-loop-design-ja.md)を参照してください。
+
 2026-09-25。ノートブックで実行記録を確認した際の「冒頭に多くの指示を詰め込みすぎている」という指摘に対する調査・提案。調査時点の記録。後続の[攻略ノートの実装](notebook-memory-design-ja.md)で仕事ごとの指示とツールの分離を実装した。比較実験による効果の検証はまだ行っていない。
 
 共有文脈の具体案は、後続の[攻略ノートによる共有記憶](notebook-memory-design-ja.md)を参照。目標・経験・仮説を共通の参照先へ集約し、しおりから必要な部分を読む設計を検討する。
@@ -36,10 +38,10 @@ ReflexionはActor、Evaluator、Self-Reflectionを分け、試行の評価と振
 
 |箇所|確認した挙動|見直す理由|
 |---|---|---|
-|[`instructions.py`](../agent/cognition/instructions.py)|操作選択、候補作成の形式、証拠、試験回数、採用条件を常時説明|通常操作と学習で必要な知識が異なる|
-|[`completion.py`](../agent/cognition/completion.py)|実際に選べる仕事は候補・採用済みスキルの有無で制限するが、基本指示とツール説明は全種類を列挙|呼べない仕事まで説明し、利用可能な選択肢と文章が揃っていない|
-|[`workflow.py`](../agent/cognition/workflow.py) の `_agent`|学習有効かつ経験が一件以上あれば、同じ判断役に `propose_skill` と `Draft` の定義を追加|スキル作成を選ぶ前から、その詳細な出力契約を通常操作にも渡す|
-|[`skills.py`](../agent/cognition/skills.py) と [`skill-creator`](../agent/skills/skill-creator/SKILL.md)|本文は必要時に読む構成だが、基本指示にも学習手順が重複|段階的に詳細を渡す利点を十分に使えていない|
+|[`instructions.py`](../../agent/cognition/instructions.py)|操作選択、候補作成の形式、証拠、試験回数、採用条件を常時説明|通常操作と学習で必要な知識が異なる|
+|[`completion.py`](../../agent/cognition/completion.py)|実際に選べる仕事は候補・採用済みスキルの有無で制限するが、基本指示とツール説明は全種類を列挙|呼べない仕事まで説明し、利用可能な選択肢と文章が揃っていない|
+|[`workflow.py`](../../agent/cognition/workflow.py) の `_agent`|学習有効かつ経験が一件以上あれば、同じ判断役に `propose_skill` と `Draft` の定義を追加|スキル作成を選ぶ前から、その詳細な出力契約を通常操作にも渡す|
+|[`skills.py`](../../agent/cognition/skills.py) と [`skill-creator`](../../agent/skills/skill-creator/SKILL.md)|本文は必要時に読む構成だが、基本指示にも学習手順が重複|段階的に詳細を渡す利点を十分に使えていない|
 
 最初の指示文だけでなく、ツールの説明・JSON Schema・追加指示・観測文脈・画像を含む、実際のモデル要求全体を比較する必要がある。
 

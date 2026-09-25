@@ -44,6 +44,9 @@ def diagnostics(directory: Path) -> dict:
     tools = [r for p in directory.glob('*.tools.jsonl') for r in read_jsonl(p) if r.get('event')=='tool_finished']
     learning = [r for p in directory.glob('*.learning.jsonl') for r in read_jsonl(p)]
     notebook = [r for p in directory.glob('*.notebook.jsonl') for r in read_jsonl(p)]
+    experiments = [r for p in directory.glob('*.experiments.jsonl') for r in read_jsonl(p)]
+    reviews = list({(r.get('run_id'), r['experiment']['id']): r['experiment']['data']
+                    for r in experiments if r['event'] == 'experiment_reviewed'}.values())
     auto_skills = [r for p in directory.glob('*.tools.jsonl') for r in read_jsonl(p)
                    if r.get('event') == 'skill_instructions_loaded']
     turns = [r for p in directory.glob('*.jsonl') if p.name.count('.')==1 for r in read_jsonl(p)]
@@ -54,14 +57,21 @@ def diagnostics(directory: Path) -> dict:
     tokens = {k:sum((c.get('usage') or {}).get(k,0) for c in calls)
               for k in ('prompt_tokens','completion_tokens','total_tokens')}
     requests = [t['function']['name'] for c in calls for e in c.get('exchanges',[]) for t in tool_requests(e)]
-    repeats = sum(bool(a.get('frame_hash')) and a.get('frame_hash')==b.get('frame_hash') and
-                  all(a['action'].get(k)==b['action'].get(k) for k in ('action','x','y'))
-                  for a,b in zip(actions,actions[1:]))
+    consecutive_repeats = identical_frame_repeats = 0
+    for path in directory.glob('*.jsonl'):
+        if path.name.count('.') != 1:
+            continue
+        run_actions = [r for r in read_jsonl(path) if r.get('action', {}).get('status') == 'action']
+        for a, b in zip(run_actions, run_actions[1:]):
+            same = all(a['action'].get(k) == b['action'].get(k) for k in ('action', 'x', 'y'))
+            consecutive_repeats += same
+            identical_frame_repeats += bool(same and a.get('frame_hash') and a['frame_hash'] == b.get('frame_hash'))
     errors = [e for t in turns for e in t.get('errors',[])]
     events = Counter(r.get('event') for r in learning)
     outcomes = Counter(r.get('outcome') for r in learning if r.get('event')=='skill_execution_finished')
     hints = []
-    if repeats: hints.append(f'無変化で同じ操作を選ぶ連続箇所: {repeats}。仮説と対象の更新を確認。')
+    if consecutive_repeats:
+        hints.append(f'同じ操作の連続箇所: {consecutive_repeats}。対象領域の実験判定と有限回の再試行理由を確認。')
     if valid<len(calls): hints.append('モデル要求・提出に失敗あり。model.jsonlを確認。')
     if events['skill_drafted'] and not events['skill_promoted']: hints.append('候補は未昇格。固定評価と実試行結果を確認。')
     return {'model_calls':len(calls), 'schema_valid_calls':valid,
@@ -82,7 +92,13 @@ def diagnostics(directory: Path) -> dict:
         'loaded_skills':dict(Counter(t['arguments'].get('skill_name') for t in tools if t['tool']=='load_skill' and t['status']=='success')),
         'tool_execution_errors':sum(t.get('status')=='error' for t in tools),
         'learning_events':dict(events), 'skill_execution_outcomes':dict(outcomes),
-        'validation_errors':errors, 'unchanged_action_repeats':repeats,
+        'validation_errors':errors, 'consecutive_action_repeats':consecutive_repeats,
+        'identical_frame_action_repeats':identical_frame_repeats,
+        'experiment_events':dict(Counter(r['event'] for r in experiments)),
+        'experiment_verdicts':dict(Counter(r['review']['verdict'] for r in reviews)),
+        'experiment_reviewers':dict(Counter(r['reviewer'] for r in reviews)),
+        'bounded_experiment_retries':sum(r['event']=='experiment_started' and
+            bool(r['experiment']['data']['plan']['retry_of']) for r in experiments),
         'committed_actions':len(actions), 'hints':hints}
 
 
@@ -128,6 +144,7 @@ def write_report(root: Path, results: list[dict]) -> dict:
               '- `cognition/*.artifacts.jsonl`: 判断の更新と選択された操作。未実行も区別。',
               '- `cognition/*.learning.jsonl`: 経験・候補作成・実試行・評価・昇格・停止。',
               '- `cognition/*.notebook.jsonl`: 攻略ノートの入力ページ・参照・版の変更・撤回・しおり。',
+              '- `cognition/*.experiments.jsonl`: 操作前の小目標・仮説・予測、実測、判定・更新・中断。',
               '- `cognition/<run>/notebook/`: ノートの各版としおりの保存先。',
               '- `cognition/<run>/skills/library.json`: 版と評価証拠を含むライブラリ。',
               '- `cognition/*.requests.jsonl` と `request-images/`: 実HTTP入力と画像参照。',

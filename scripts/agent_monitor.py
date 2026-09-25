@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 import struct
 
-JOURNALS = ('observations', 'states', 'requests', 'tools', 'model', 'artifacts', 'execution', 'learning', 'notebook')
+JOURNALS = ('observations', 'states', 'requests', 'tools', 'model', 'artifacts', 'execution', 'learning', 'notebook', 'experiments')
 PALETTE = ('#FFFFFF', '#CCCCCC', '#999999', '#666666', '#333333', '#000000', '#E53AA3', '#FF7BCC',
            '#F93C31', '#1E93FF', '#88D8F1', '#FFDC00', '#FF851B', '#921231', '#4FCC30', '#A356D6')
 
@@ -93,6 +93,7 @@ class Timeline:
         state, stage_input, stage_output = '観測待ち', None, None
         phase, context, action, action_step, action_status = '', {}, None, None, '未選択'
         prediction = None
+        experiment = review = None
         incoming_action, incoming_status = None, None
         request = response = None
         notebook_view = notebook_read = notebook_change = None
@@ -117,9 +118,10 @@ class Timeline:
                         stage_input, stage_output = event.get('input'), None
                         work = event.get('work')
                         job = (stage_input.get('job') or {}) if isinstance(stage_input, dict) else {}
-                        job_kind = job.get('kind') or ('propose_skill' if 'spec' in job else None)
+                        job_kind = job.get('kind') or ('propose_skill' if 'spec' in job else 'submit_review' if 'verdict' in job else 'redesign' if 'blocked_action' in job else 'defer_skill' if 'reason' in job else None)
                         machine = {'node': ('build' if work == 'skill_creation' else
-                                            'action' if work == 'action' else 'decide')
+                                            'design' if work == 'experiment_design' else
+                                            'review' if work == 'experiment_review' else 'decide')
                                    if state == 'DECIDE' else 'run',
                                    'phase': phase, 'work': work, 'job': job_kind}
                         if state == 'DECIDE':
@@ -137,6 +139,13 @@ class Timeline:
                                 machine = dict(machine, node='end', phase=result.get('reason', 'stop'))
                             elif result.get('status') == 'action':
                                 machine = dict(machine, node='wait', phase='操作選択済み・未送信')
+            if kind == 'experiments':
+                if name in ('experiment_started', 'experiment_observed', 'experiment_review_requested'):
+                    experiment = event.get('experiment')
+                elif name in ('experiment_reviewed', 'experiment_interrupted'):
+                    experiment = event.get('experiment')
+                    if name == 'experiment_reviewed':
+                        review = experiment
             if kind == 'notebook':
                 notebook_events.append(event)
                 if name == 'notebook_opened':
@@ -174,7 +183,7 @@ class Timeline:
                         state=state, phase=phase, input=stage_input, output=stage_output,
                         machine=machine,
                         context=context, action=action, action_step=action_step, action_status=display_status,
-                        prediction=prediction,
+                        prediction=prediction, experiment=experiment, review=review,
                         incoming_action=incoming_action, incoming_status=incoming_status,
                         request=request, response=response, tools=tools[-16:], learning=learning[-12:],
                         notebook={'opening': notebook_view, 'last_read': notebook_read,
@@ -265,6 +274,7 @@ def dashboard_html(snapshot, directory, *, include_images=True):
     context = s['context']
     notebook = context.get('notebook') or {}
     task = (notebook.get('goal') or {}).get('text', '記録なし')
+    goal_path = ' → '.join(p['text'] for p in notebook.get('goal_path', []))
     summary = ' / '.join(b['name']+': '+b['title'] for b in notebook.get('bookmarks', []))
     incoming = s['incoming_action'] or {}
     incoming_name = incoming.get('action','記録なし')
@@ -281,6 +291,7 @@ def dashboard_html(snapshot, directory, *, include_images=True):
         delta = 'リセット／レベル境界のため通常の差分比較を保留'
     elif a and b and len(a)==len(b) and all(len(x)==len(y) for x,y in zip(a,b)):
         delta = str(sum(v!=w for x,y in zip(a,b) for v,w in zip(x,y)))+' セルが変化（成功判定ではありません）'
+    experiment_panel = experiment_html(s)
     return f'''<div style="font:14px system-ui;color:#172554;background:#f8fafc;padding:16px;border-radius:10px">
     <b>{escape(str(e.get('game_id', 'ゲーム')))} · step {escape(str(e.get('step', '—')))}</b>
     <p>実行ログ: <b>{escape(s['state'])} · {escape(s['phase'])}</b> · イベント {s['index']+1}/{s['total']} · {escape(str(e.get('timestamp', '時刻なし')))}</p>
@@ -288,5 +299,34 @@ def dashboard_html(snapshot, directory, *, include_images=True):
     <p><b>前画面に対する操作記録:</b> {escape(incoming_label)} · {escape(incoming_status)}<br>
     <b>この時点の選択操作（step {escape(str(s['action_step']))}）: {escape(action_label)}</b> · {escape(s['action_status'])}<br>赤丸は各画面に対して選択したクリック位置です。</p>
     <p><b>選択した操作の予測:</b> {escape(str(s['prediction'] or '記録なし'))}<br><b>表示中の前後差分:</b> {escape(delta)}</p>
-    <p><b>攻略ノートの目標:</b> {escape(str(task))}<br><b>攻略ノートのしおり:</b> {escape(str(summary)) or '更新なし／記録なし'}</p>
+    <p><b>攻略ノートの目標:</b> {escape(str(task))}<br><b>現在の目標経路:</b> {escape(goal_path) or '記録なし'}<br><b>攻略ノートのしおり:</b> {escape(str(summary)) or '更新なし／記録なし'}</p>
+    {experiment_panel}
     <details><summary>直近のイベント</summary><table style="text-align:left;width:100%"><tr><th>step</th><th>状態</th><th>イベント／ツール</th></tr>{recent}</table></details></div>'''
+
+
+def experiment_html(snapshot):
+    """Render only experiment versions already present at this replay position."""
+    parts = []
+    labels = {'supported': '支持', 'unsupported': '不支持', 'inconclusive': '判定不能'}
+    seen = set()
+    for label, page in [('現在／直近の実験', snapshot.get('experiment')),
+                        ('直近の結果判定', snapshot.get('review'))]:
+        if not page or (page['id'], page['revision']) in seen:
+            continue
+        seen.add((page['id'], page['revision']))
+        data = page['data']; plan = data['plan']; verdict = data.get('review')
+        rows = [('小目標', plan['subgoal']['text']), ('問い', plan['question']),
+                ('仮説と条件', plan['hypothesis'] + ' / ' + plan['conditions']),
+                ('操作前の予測', plan['expected']['description']),
+                ('観測範囲', plan['expected'].get('region')),
+                ('状態', data['status'])]
+        if verdict:
+            rows += [('実測', data.get('measurement')),
+                     ('判定', labels.get(verdict['verdict'], verdict['verdict']) + ' / ' + verdict['finding']),
+                     ('小目標の状態', verdict['subgoal_status']), ('次への更新', verdict['update'])]
+        if data.get('interruption'):
+            rows += [('未判定の理由', data['interruption'])]
+        cells = ''.join('<tr><th style="text-align:left;vertical-align:top;min-width:100px">' + escape(k) +
+                        '</th><td>' + escape(pretty(v)) + '</td></tr>' for k, v in rows)
+        parts.append('<p><b>' + label + ' · ' + escape(page['id']) + '</b></p><table>' + cells + '</table>')
+    return ''.join(parts)

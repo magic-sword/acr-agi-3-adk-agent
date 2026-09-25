@@ -15,3 +15,7 @@
 - [local-evaluation-simple-loop-ja.md](local-evaluation-simple-loop-ja.md)
 - [local-evaluation-skill-redesign-ja.md](local-evaluation-skill-redesign-ja.md)
 - [qwen-adk-tool-protocol-ja.md](qwen-adk-tool-protocol-ja.md)
+
+- [notebook-memory-design-ja.md](notebook-memory-design-ja.md)
+- [prompt-scope-review-ja.md](prompt-scope-review-ja.md)
+- [skill-learning-validation-ja.md](skill-learning-validation-ja.md)

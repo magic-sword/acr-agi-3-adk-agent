@@ -23,7 +23,7 @@ def render(directory):
     sections = []
     for path in sorted(directory.glob('*.jsonl')):
         if path.name.endswith(('.model.jsonl', '.observations.jsonl', '.tools.jsonl',
-                               '.artifacts.jsonl', '.requests.jsonl', '.execution.jsonl', '.learning.jsonl', '.states.jsonl', '.notebook.jsonl')):
+                               '.artifacts.jsonl', '.requests.jsonl', '.execution.jsonl', '.learning.jsonl', '.states.jsonl', '.notebook.jsonl', '.experiments.jsonl')):
             continue
         rows = read_records(path)
         if not rows:
@@ -48,7 +48,7 @@ def render(directory):
                         + escape(path.name) + '</summary><pre>'
                         + escape(json.dumps(read_records(path), ensure_ascii=False, indent=2))
                         + '</pre></details>')
-    for suffix, label in (('artifacts', '中間成果物（未実行を含む）'), ('execution', '実操作の送信と受付'), ('learning', '経験・スキル作成・試験・採用'), ('notebook', '攻略ノートの入力・参照・改訂')):
+    for suffix, label in (('artifacts', '中間成果物（未実行を含む）'), ('execution', '実操作の送信と受付'), ('learning', '経験・スキル作成・試験・採用'), ('notebook', '攻略ノートの入力・参照・改訂'), ('experiments', '実験の予測・測定・判定')):
         for path in sorted(directory.glob(f'*.{suffix}.jsonl')):
             sections.append('<details><summary>' + label + ': ' + escape(path.name) + '</summary><pre>'
                             + escape(json.dumps(read_records(path), ensure_ascii=False, indent=2))

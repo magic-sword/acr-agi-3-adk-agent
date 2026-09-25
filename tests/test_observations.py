@@ -58,7 +58,7 @@ class ObservationTests(unittest.TestCase):
         replies=[]
         def answer(model,p):
             replies.append(p)
-            return call('submit_decision',{'kind':'invoke','skill_id':key,'arguments':{'x':3},'prediction':'Execute two checked steps.'})
+            return call('submit_decision',{'kind':'invoke','skill_id':key,'arguments':{'x':3},'purpose':'Execute two checked steps.'})
         with patch.object(LocalVisionLlm,'_complete',answer):
             first=runtime.decide(obs());self.assertEqual(first['x'],3);ack(runtime)
             changed=obs(1);changed['grid'][0][3]=1

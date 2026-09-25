@@ -11,17 +11,72 @@ class Action(Contract):
     y: int | None = Field(default=None, ge=0, le=63)
     reason: str = Field(default="", max_length=300)
 
+class Region(Contract):
+    x: int = Field(ge=0, le=63)
+    y: int = Field(ge=0, le=63)
+    width: int = Field(ge=1, le=64)
+    height: int = Field(ge=1, le=64)
+
+class Expectation(Contract):
+    kind: Literal['region_changed', 'level_increased', 'semantic']
+    description: str = Field(min_length=1, max_length=300)
+    region: Region | None = None
+
+    @model_validator(mode='after')
+    def scoped(self):
+        if (self.kind != 'level_increased') != (self.region is not None):
+            raise ValueError('region_changed and semantic require an observed region; level_increased omits it')
+        return self
+
+class Subgoal(Contract):
+    id: str = Field(default='', max_length=80)
+    parent_id: str = Field(default='goal', max_length=80)
+    text: str = Field(min_length=1, max_length=200)
+    done_when: str = Field(min_length=1, max_length=200)
+
+class ExperimentPlan(Contract):
+    subgoal: Subgoal
+    question: str = Field(min_length=1, max_length=200)
+    hypothesis: str = Field(min_length=1, max_length=300)
+    conditions: str = Field(min_length=1, max_length=200)
+    expected: Expectation
+    context_region: Region | None = Field(default=None,
+        description='Optional separate region containing relevant prerequisites, not unrelated status pixels.')
+    max_attempts: int = Field(default=1, ge=1, le=3,
+        description='Predeclare a bounded repeat only for delay or stochastic effects.')
+    repeat_reason: str = Field(default='', max_length=200)
+    retry_of: str = Field(default='', max_length=80,
+        description='Previous experiment ID; preserves its frozen plan and total attempt limit.')
+
+    @model_validator(mode='after')
+    def bounded_repeat(self):
+        if self.max_attempts > 1 and not self.repeat_reason.strip():
+            raise ValueError('multiple attempts require a reason declared before the first action')
+        return self
+
+class ExperimentReview(Contract):
+    experiment_id: str
+    verdict: Literal['supported', 'unsupported', 'inconclusive']
+    finding: str = Field(min_length=1, max_length=400)
+    evidence_ids: list[str] = Field(min_length=1, max_length=4)
+    subgoal_status: Literal['active', 'completed', 'abandoned'] = 'active'
+    next_step: Literal['continue', 'revise', 'learn', 'stop'] = 'revise'
+    update: str = Field(min_length=1, max_length=300)
+
 class Decision(Contract):
     kind: Literal["act", "invoke", "trial", "evaluate", "learn", "stop"]
     action: Action | None = None
     skill_id: str | None = None
     arguments: dict[str, int] = Field(default_factory=dict)
-    prediction: str = Field(min_length=1, max_length=400)
+    purpose: str = Field(min_length=1, max_length=300)
+    experiment: ExperimentPlan | None = None
     evidence_ids: list[str] = Field(default_factory=list, max_length=8,
         description='Optional retained experience references for this decision; required for learn.')
 
     @model_validator(mode="after")
     def selected_work(self):
+        if (self.kind == 'act') != (self.experiment is not None):
+            raise ValueError('act requires an experiment plan; other jobs must omit experiment')
         if (self.kind == "act") != (self.action is not None):
             raise ValueError("kind=act requires an action object; other kinds must omit action")
         if (self.kind in ("invoke", "trial", "evaluate")) != (self.skill_id is not None):
@@ -103,8 +158,17 @@ class Draft(Contract):
     examples: list[dict[str, int]] = Field(min_length=1, max_length=8)
     parent_id: str | None = None
 
+class SkillDeferral(Contract):
+    reason: str = Field(min_length=1, max_length=300)
+
+class ExperimentRedesign(Contract):
+    """Host routing signal; never exposed as a model submission schema."""
+    experiment_id: str
+    blocked_action: dict
+    reason: str
+
 class Memory(Contract):
-    schema_version: int = 5
+    schema_version: int = 6
     revision: int = 0
     run_id: str
     game_id: str

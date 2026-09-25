@@ -76,7 +76,7 @@ class EvaluationReports(unittest.TestCase):
             result = diagnostics(root)
             self.assertEqual(result['model_calls'], 2)
             self.assertEqual(result['schema_valid_rate'], .5)
-            self.assertEqual(result['unchanged_action_repeats'], 1)
+            self.assertEqual(result['identical_frame_action_repeats'], 1)
             self.assertEqual(result['model_latency_p50'], 3)
             self.assertEqual(result['tokens']['prompt_tokens'], 8)
             self.assertEqual(result['model_http_requests'], 3)

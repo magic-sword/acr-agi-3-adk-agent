@@ -144,27 +144,30 @@ class NotebookRuntimeTests(unittest.TestCase):
             if c['observation']['step']==0:
                 self.assertNotIn('propose_skill',names)
                 return call('submit_decision',act())
-            if c['work']=='action':
+            if c['work']=='experiment_design':
+                if c['last_tool_result'] and 'missing_evidence' in c['last_tool_result']:
+                    return call('submit_decision',act(1))
                 self.assertNotIn('propose_skill',names)
                 return call('submit_decision',{'kind':'learn','evidence_ids':['experience-1'],
-                                             'prediction':'Extract a cell rule'})
+                                             'purpose':'Extract a cell rule'})
             self.assertIn('propose_skill',names)
             self.assertEqual(c['learning_request']['evidence_ids'],['experience-1'])
             self.assertTrue(c['notebook']['latest_result']['data']['outcome']['acknowledged'])
-            return call('submit_decision',act(1))
+            self.assertNotIn('submit_decision', names)
+            return call('defer_skill',{'reason':'Need another observed cell transition'})
         r.notebook.write('goal','Current goal','Test the cell rule',[],'goal',1)
         with patch.object(LocalVisionLlm,'_complete',answer):
             r.decide(obs());ack(r)
             result=r.decide(obs(1,[[1,0,0,0,0,0]]))
         self.assertEqual(result['x'],1)
-        self.assertEqual([c['work'] for c in seen],['action','action','skill_creation'])
-        self.assertEqual(r.work,'action')
+        self.assertEqual([c['work'] for c in seen],['experiment_design','experiment_design','skill_creation','experiment_design'])
+        self.assertEqual(r.work,'experiment_design')
 
     def test_action_may_cite_retained_experience_without_requesting_learning(self):
         r=CognitiveRuntime('test','local/qwen3-vl-4b-instruct')
         self.addCleanup(r.close)
         def answer(model,p):
-            decision=act()
+            decision=act(context(p)['observation']['step'])
             if context(p)['observation']['step']:
                 decision['evidence_ids']=['experience-1']
             return call('submit_decision',decision)
