@@ -57,6 +57,10 @@ def _review(data):
               _field('判定した担当', {'host': 'システムの測定', 'agent': 'エージェントの解釈'}.get(data.get('reviewer')))]
     if verdict.get('evidence_ids'):
         fields.append(_field('判定の根拠', ' ・ '.join(verdict['evidence_ids'])))
+    understanding = verdict.get('understanding') or {}
+    fields += [_field('見直す前提', understanding.get('reconsider_assumption')),
+               _field('残る疑問', understanding.get('open_question')),
+               _field('小目標の扱いの理由', understanding.get('subgoal_reason'))]
     return ''.join(fields)
 
 
@@ -90,6 +94,7 @@ def page_html(page, *, label=None, segment=None):
         body += _field('完了の条件', data.get('done_when'))
         body += _field('親の目標', data.get('parent_id'))
         body += _field('直近の更新', data.get('update'))
+        body += _field('小目標の扱いの理由', data.get('status_reason'))
     if plan:
         body += _field('小目標', (plan.get('subgoal') or {}).get('text'))
         body += _field('確かめたい問い', plan.get('question'))
@@ -109,6 +114,13 @@ def page_html(page, *, label=None, segment=None):
         body += _field('試行回数', f'{data.get("attempt", 1)} / {plan.get("max_attempts", 1)} 回')
         body += _field('繰り返す理由', plan.get('repeat_reason'))
         body += _field('再試行の元', plan.get('retry_of'))
+        revision = plan.get('revision') or {}
+        if revision:
+            body += _field('再設計の根拠', f'{revision.get("experiment_id")} · 第{revision.get("review_revision")}版')
+            body += _field('変更したもの', {'action': '操作・対象座標', 'observation_scope': '観測範囲',
+                                          'context': '前提条件・その観測'}.get(revision.get('change')))
+            body += _field('見直した前提', revision.get('reconsidered_assumption'))
+            body += _field('変更で疑問を解消できる理由', revision.get('reason'))
     body += _measurement(data) + _review(data)
     outcome = data.get('outcome') or {}
     if outcome:

@@ -333,10 +333,19 @@ def experiment_html(snapshot):
                 ('操作前の予測', plan['expected']['description']),
                 ('観測範囲', plan['expected'].get('region')),
                 ('状態', data['status'])]
+        revision = plan.get('revision')
+        if revision:
+            rows += [('再設計の根拠', f'{revision["experiment_id"]} v{revision["review_revision"]}'),
+                     ('見直した前提', revision['reconsidered_assumption']),
+                     ('変更したもの', revision['change']), ('変更の理由', revision['reason'])]
         if verdict:
             rows += [('実測', data.get('measurement')),
                      ('判定', labels.get(verdict['verdict'], verdict['verdict']) + ' / ' + verdict['finding']),
                      ('小目標の状態', verdict['subgoal_status']), ('次への更新', verdict['update'])]
+            understanding = verdict.get('understanding') or {}
+            rows += [(label, understanding[key]) for key, label in (
+                ('reconsider_assumption', '見直す前提'), ('open_question', '残る疑問'),
+                ('subgoal_reason', '小目標の扱いの理由')) if key in understanding]
         if data.get('interruption'):
             rows += [('未判定の理由', data['interruption'])]
         cells = ''.join('<tr><th style="text-align:left;vertical-align:top;min-width:100px">' + escape(k) +

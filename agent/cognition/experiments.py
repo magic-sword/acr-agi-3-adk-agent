@@ -102,6 +102,37 @@ class Experiments:
                     data['before_context'] == pixels(obs, context_region) and
                     data['before_level'] == obs.get('levels_completed')):
                 raise RepeatedExperiment(old)
+        self.validate_revision(plan, action, obs)
+
+    def validate_revision(self, plan, action, obs):
+        """Check the declared change against evidence, not the novelty of its prose."""
+        key = self.notebook.bookmarks.get('latest_review')
+        prior = self.notebook.pages.get(key)
+        revision = plan.revision
+        required = prior and prior['data']['review']['verdict'] != 'supported'
+        if revision is None:
+            if required:
+                raise ValueError('experiment.revision must cite notebook.handoff and explain a concrete change')
+            return
+        if (not prior or prior['segment'] != self.notebook.segment or
+                revision.experiment_id != key or revision.review_revision != prior['revision']):
+            raise ValueError('experiment.revision must cite the current handoff experiment_id and review_revision')
+        if not revision.reconsidered_assumption.strip() or not revision.reason.strip():
+            raise ValueError('revision must explain the reconsidered assumption and why the change is informative')
+        d = prior['data']; old = d['plan']
+        region = plan.expected.model_dump()['region']
+        context = plan.context_region.model_dump() if plan.context_region else None
+        changes = {
+            'action': action_key(action) != action_key(d['action']),
+            # Changing only the prose or criterion kind is not a new observed scope.
+            'observation_scope': region != old['expected']['region'],
+            'context': (context != old['context_region'] or
+                        d['before_pixels'] != pixels(obs, old['expected']['region']) or
+                        d['before_context'] != pixels(obs, old['context_region']) or
+                        d['before_level'] != obs.get('levels_completed')),
+        }
+        if not changes[revision.change]:
+            raise ValueError(f'declared revision change {revision.change} is absent from the action, scope or observed conditions')
 
     def start(self, plan, action, obs):
         self.validate(plan, action, obs)
@@ -184,7 +215,12 @@ class Experiments:
                      'No retries remain. Choose a different informative intervention or check a different prerequisite.'))
         return ExperimentReview(experiment_id=page['id'], verdict=verdict, finding=finding,
             evidence_ids=[outcome['experience_id']], next_step='continue' if verdict == 'supported' else 'revise',
-            update=update)
+            update=update, understanding={
+                'reconsider_assumption': 'Target identity, click placement and effect scope are unverified; the measurement only tests the declared criterion.',
+                'open_question': ('Does this measured result answer the subgoal, or is more evidence needed?'
+                                 if verdict == 'supported' else
+                                 'Was the intended target reached, was the relevant effect observed, or is a prerequisite missing?'),
+                'subgoal_reason': 'Kept active: a pixel/level measurement alone cannot decide the subgoal completion condition.'})
 
     def validate_review(self, review):
         page = self.active
@@ -195,6 +231,8 @@ class Experiments:
             raise ValueError('review must cite the actual resulting experience ID')
         if not set(review.evidence_ids) <= {d['before_id'], d['after_id'], d['outcome']['experience_id']}:
             raise ValueError('review evidence must come from this experiment')
+        if any(not value.strip() for value in review.understanding.model_dump().values()):
+            raise ValueError('review understanding must state an assumption, remaining question and subgoal reason')
         measured = self.automatic_review()
         if measured and review.verdict != measured.verdict:
             raise ValueError('the measured criterion verdict is fixed; explain its implications without changing it')
@@ -210,8 +248,9 @@ class Experiments:
         if data.get('reviewer') != 'host' or self.active:
             return False
         data.update(status='awaiting_review', review_request=
-                    'The designer repeated this unsupported test. Explain what was learned and '
-                    'which assumption or intervention must change to answer the subgoal.')
+                    'The designer repeated this unsupported test. Separate measured facts from explanations. '
+                    'Check target placement and effect scope before inferring a rule. State the assumption '
+                    'to reconsider, the remaining question and why the subgoal continues or closes; do not choose an action.')
         revised = self.notebook._commit(key, 'experiment', page['title'], page['text'],
                                         page['evidence_ids'], author='host', data=data)
         self.notebook.system_bookmark('active_experiment', key)
@@ -228,7 +267,8 @@ class Experiments:
         goal = n.pages[d['subgoal_id']]
         n._commit(goal['id'], 'subgoal', goal['title'], goal['text'], review.evidence_ids,
                   author=source, data={**goal['data'], 'status': review.subgoal_status,
-                                       'latest_experiment': page['id'], 'update': review.update})
+                                       'latest_experiment': page['id'], 'update': review.update,
+                                       'status_reason': review.understanding.subgoal_reason})
         n.system_bookmark('active_experiment', '')
         n.system_bookmark('latest_review', page['id'])
         self.emit('experiment_reviewed', experiment=result)

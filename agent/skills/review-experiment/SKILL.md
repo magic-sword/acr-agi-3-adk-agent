@@ -16,3 +16,11 @@ own done_when separately: a negative answer can complete a knowledge question wi
 making game progress. Do not rewrite the original prediction, choose a new action or treat
 a failed test as a permanent coordinate ban. Record which condition or explanation should
 be reconsidered; only the next design job chooses the next experiment.
+
+Fill understanding with reconsider_assumption, open_question and subgoal_reason. First check
+the actual action coordinates against the intended target and the observation scope against
+the predicted effect. A one-pixel non-change is not proof that an entire object has no effect.
+Distinguish observations from possible explanations (missed target, unobserved remote effect,
+missing prerequisite, or a wrong rule). Keep unverified explanations uncertain. Select the
+most useful remaining question instead of saying only "try something different". Justify
+continuing, completing or abandoning the subgoal against its original completion condition.

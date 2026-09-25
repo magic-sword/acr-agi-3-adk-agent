@@ -30,7 +30,7 @@ from .experiments import Experiments
 from .notebook import Notebook
 from .library import SkillLibrary, check_all, step_action, digest
 from .skills import skill_toolset, skill_instructions
-from .state import Decision, Draft, Memory, ExperimentPlan, ExperimentReview, SkillDeferral, ExperimentRedesign
+from .state import Decision, Draft, Memory, ExperimentPlan, ExperimentReview, SkillDeferral, ExperimentRedesign, DesignRevision
 from .validation import validate_action
 
 APP_NAME = 'arc_skill_learning'
@@ -500,6 +500,14 @@ class CognitiveRuntime:
             'hypothesis': 'The selected cell may change after one probe', 'conditions': 'Current observed state',
             'expected': {'kind': 'region_changed', 'description': 'The selected cell changes',
                          'region': {'x': x, 'y': y, 'width': 1, 'height': 1}}})
+        handoff = self.notebook.handoff()
+        if handoff and handoff['revision_required']:
+            old = self.notebook.pages[handoff['experiment_id']]['data']
+            plan.revision = DesignRevision(experiment_id=handoff['experiment_id'],
+                review_revision=handoff['review_revision'],
+                change='action' if data['action'] == 'ACTION6' or old['action']['action'] != action else 'observation_scope',
+                reconsidered_assumption='The prior probe did not establish a reactive cell.',
+                reason='The deterministic smoke probe samples a different cell for observable effects.')
         self.job = Decision(kind='act', action=data, purpose='Deterministic smoke probe', experiment=plan)
         try:
             self.validate_job(self.job)

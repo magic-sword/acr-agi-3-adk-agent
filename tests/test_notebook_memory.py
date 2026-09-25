@@ -9,7 +9,7 @@ from agent.cognition.notebook import Notebook
 from agent.cognition.workflow import CognitiveRuntime
 from agent.local_vlm import LocalVisionLlm
 from scripts.agent_monitor import Run, Timeline
-from test_decide_run import call, act, context, ack
+from test_decide_run import call, act, context, ack, revised
 from test_skill_learning import obs
 
 
@@ -167,7 +167,7 @@ class NotebookRuntimeTests(unittest.TestCase):
         r=CognitiveRuntime('test','local/qwen3-vl-4b-instruct')
         self.addCleanup(r.close)
         def answer(model,p):
-            decision=act(context(p)['observation']['step'])
+            decision=revised(act(context(p)['observation']['step']), context(p))
             if context(p)['observation']['step']:
                 decision['evidence_ids']=['experience-1']
             return call('submit_decision',decision)

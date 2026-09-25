@@ -7,7 +7,11 @@ Submit one job. Never infer an unobserved action's outcome.
 '''
 
 DESIGN = '''Choose an informative experiment toward a small current subgoal, or use a verified skill.
-Start from latest_review.update; an unsupported test is evidence to revise, not a plan to copy.
+Start from notebook.handoff: observed_fact is evidence; understanding identifies assumptions
+and the remaining question. An unsupported test is evidence to revise, not a plan to copy.
+When revision_required, include experiment.revision citing its experiment_id and review_revision,
+the changed action/observation_scope/context, reconsidered_assumption and an informative reason.
+The new experiment.question must address the remaining uncertainty. A renamed hypothesis is not a change.
 Every act includes an experiment with a scoped expectation, saved before execution.
 An unknown game calls for a knowledge subgoal, not an invented complete solution plan.
 Other offered jobs manage skills or stop. Choose learn with acknowledged experience IDs
@@ -15,6 +19,8 @@ when an observed effect suggests a reusable procedure; construction is a separat
 '''
 
 REVIEW = '''Compare the frozen experiment with its acknowledged outcome. Submit only its review.
+Separate the measured finding from understanding: reconsider_assumption, open_question,
+and subgoal_reason. Explain what is known and still unknown, without inventing a failure cause.
 Do not choose or execute the next action. The next design job receives your verdict and update.
 '''
 

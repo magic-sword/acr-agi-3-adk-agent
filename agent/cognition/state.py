@@ -34,6 +34,14 @@ class Subgoal(Contract):
     text: str = Field(min_length=1, max_length=200)
     done_when: str = Field(min_length=1, max_length=200)
 
+class DesignRevision(Contract):
+    experiment_id: str = Field(min_length=1, max_length=80)
+    review_revision: int = Field(ge=1)
+    change: Literal['action', 'observation_scope', 'context']
+    reconsidered_assumption: str = Field(min_length=1, max_length=250)
+    reason: str = Field(min_length=1, max_length=300,
+        description='Why this concrete change helps answer the remaining question; not just a different click.')
+
 class ExperimentPlan(Contract):
     subgoal: Subgoal
     question: str = Field(min_length=1, max_length=200)
@@ -47,12 +55,19 @@ class ExperimentPlan(Contract):
     repeat_reason: str = Field(default='', max_length=200)
     retry_of: str = Field(default='', max_length=80,
         description='Previous experiment ID; preserves its frozen plan and total attempt limit.')
+    revision: DesignRevision | None = Field(default=None,
+        description='Required after an unsupported/inconclusive review, except a predeclared retry. Cite notebook.handoff.')
 
     @model_validator(mode='after')
     def bounded_repeat(self):
         if self.max_attempts > 1 and not self.repeat_reason.strip():
             raise ValueError('multiple attempts require a reason declared before the first action')
         return self
+
+class ReviewUnderstanding(Contract):
+    reconsider_assumption: str = Field(min_length=1, max_length=250)
+    open_question: str = Field(min_length=1, max_length=250)
+    subgoal_reason: str = Field(min_length=1, max_length=250)
 
 class ExperimentReview(Contract):
     experiment_id: str
@@ -62,6 +77,7 @@ class ExperimentReview(Contract):
     subgoal_status: Literal['active', 'completed', 'abandoned'] = 'active'
     next_step: Literal['continue', 'revise', 'learn', 'stop'] = 'revise'
     update: str = Field(min_length=1, max_length=300)
+    understanding: ReviewUnderstanding
 
 class Decision(Contract):
     kind: Literal["act", "invoke", "trial", "evaluate", "learn", "stop"]

@@ -19,6 +19,13 @@ class CompletionTool(BaseTool):
 
     def _get_declaration(self):
         schema = self.contract.model_json_schema()
+        if self.name == 'submit_review':
+            measured = self.runtime.experiments.automatic_review()
+            if measured is not None:
+                # Interpretation may remain uncertain; an already measured criterion
+                # must not turn into another model choice or a correction loop.
+                schema['properties']['verdict']['enum'] = [measured.verdict]
+                schema['properties']['verdict']['description'] = 'Fixed host measurement. Put uncertainty about causes in understanding.'
         if self.name == 'submit_decision':
             catalog = self.runtime.library.catalog()
             kinds = ['act', 'stop']
@@ -36,6 +43,12 @@ class CompletionTool(BaseTool):
             schema['required'].append('experiment')
             schema['properties']['experiment']['description'] = 'Frozen experiment plan for act; null for every other kind.'
             schema['properties']['action']['description'] = 'An object with action set to one legal button when kind=act; null for every other kind.'
+            handoff = self.runtime.notebook.handoff()
+            if handoff and handoff['revision_required']:
+                plan = schema['$defs']['ExperimentPlan']
+                plan['required'].append('revision')
+                plan['properties']['revision']['description'] = (
+                    'Cite notebook.handoff and specify a real change; null only for a predeclared retry_of.')
             if not any(k in kinds for k in ('invoke', 'trial', 'evaluate')):
                 schema['properties'].pop('skill_id')
                 schema['properties'].pop('arguments')

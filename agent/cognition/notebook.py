@@ -188,7 +188,7 @@ class Notebook:
                             'question': data['plan']['question'],
                             'expected': data['plan']['expected']}
             return page
-        return deepcopy({'segment': self.segment, 'goal': self.pages['goal'],
+        return deepcopy({'segment': self.segment, 'handoff': self.handoff(), 'goal': self.pages['goal'],
                          'goal_path': self.goal_path(),
                          'active_experiment': experiment_view('active_experiment'),
                          'latest_review': experiment_view('latest_review'),
@@ -197,6 +197,23 @@ class Notebook:
                                         'revision': self.pages[ref]['revision'],
                                         'title': self.pages[ref]['title']}
                                        for name, ref in self.bookmarks.items()]})
+
+    def handoff(self):
+        """A derived decision view; the versioned review remains the source of truth."""
+        page = self.pages.get(self.bookmarks.get('latest_review'))
+        if not page or page['segment'] != self.segment:
+            return None
+        data = page['data']; review = data['review']
+        return deepcopy({
+            'experiment_id': page['id'], 'review_revision': page['revision'],
+            'verdict': review['verdict'], 'observed_fact': review['finding'],
+            'evidence_ids': review['evidence_ids'],
+            'understanding': review.get('understanding'),
+            'subgoal_status': review['subgoal_status'],
+            'next_step': review['next_step'], 'update': review['update'],
+            'revision_required': review['verdict'] != 'supported',
+            'remaining_predeclared_attempts': max(0, data['plan']['max_attempts'] - data['attempt']),
+        })
 
     def read(self, reference='', query='', offset=0, include_previous=False):
         if type(offset) is not int or offset < 0 or len(query) > 200:

@@ -34,6 +34,16 @@ def act(x=0):
     return {'kind':'act','action':{'action':'CLICK','x':x,'y':0,'reason':'Test the visible cell'},
             'purpose':'Identify a reactive cell', 'experiment':experiment(x)}
 
+def revised(job, c, change='action'):
+    job = deepcopy(job)
+    handoff = c['notebook']['handoff']
+    if handoff and handoff['revision_required']:
+        job['experiment']['revision'] = {
+            'experiment_id': handoff['experiment_id'], 'review_revision': handoff['review_revision'],
+            'change': change, 'reconsidered_assumption': 'The prior probe did not identify a reactive target.',
+            'reason': 'Compare another candidate or condition to resolve whether the tested effect is local.'}
+    return job
+
 
 def ack(runtime):
     runtime.record_execution('action_dispatched');runtime.record_execution('action_acknowledged')
