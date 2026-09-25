@@ -8,7 +8,7 @@
 Workflow（遷移・ホスト検証・確定）
   → LlmAgent（reasoner_decide）
       instruction: 状態の課題・必須契約
-      tools: 完了ツール + 観測ツール + ReasoningSkillToolset
+      tools: 完了ツール + 観測・因果記憶・計画ツール + ReasoningSkillToolset
           L1: 名前・用途を初回から提示
           L2: 必要な本文だけ load_skill
           L3: 必要な固有事例だけ load_skill_resource
@@ -26,7 +26,7 @@ Workflow（遷移・ホスト検証・確定）
 - 状態内で使えるスキルの名前・用途だけをJSONカタログとして最初から渡す。本文と資料はロードまでモデルへ渡さない。
 - `list_skills` の往復を省く。任意の `load_skill` と `load_skill_resource` のみを公開する。
 - スクリプト実行を広告する標準案内を、このプロジェクトで利用可能な知識ロードの案内に置き換える。
-- スキルに `scripts` や `adk_additional_tools` が追加された場合は構築時に拒否する。接続しない機能を黙って公開しない。
+- `scripts` は明示的に接続した因果学習・逆算の2ファイルだけ受け入れ、名前と内容を照合する。未接続のスクリプトや `adk_additional_tools` は構築時に拒否する。
 
 ADK本体のプライベート属性は変更しない。この2ツール限定・任意ロードの方針は本プロジェクトの設定であり、ADK共通の必須仕様ではない。
 
@@ -34,10 +34,10 @@ ADK本体のプライベート属性は変更しない。この2ツール限定�
 
 |状態|スキルID|数|
 |---|---|---:|
-|DECIDE|S01 / S03 / S05 / S07 / S08|5|
+|DECIDE|S01 / S03 / S05 / S06 / S07 / S08|6|
 |OBSERVE / COMMITおよびホスト内部処理|ホスト処理|0|
 
-現行グラフは[3段階の認知ループ](adk-cognitive-state-machine-ja.md)。13個の専門スキル資料のうち、通常ループへ公開するのは上記5個だけ。旧PLAN/PROBE/VERIFY/REVISEのモデル状態は廃止した。完了ツールは`submit_decision`一つ、必須はactionとprediction。接続するスキル本文も、作業メモと次の一手に適用する説明へ更新した。
+現行グラフは[3段階の認知ループ](adk-cognitive-state-machine-ja.md)。13個の専門スキル資料のうち、通常ループへ公開するのは上記6個だけ。旧PLAN/PROBE/VERIFY/REVISEのモデル状態は廃止した。完了ツールは`submit_decision`一つ、必須はactionとprediction。接続するスキル本文も、作業メモと次の一手に適用する説明へ更新した。
 
 旧S13（決定確定）とS15（予算制御）はスキル定義から除外し、ホスト責務として扱う。残りのIDは既存の分析との対応のため保持する。登録数は技能の実証数ではなく、利用可能な手順の数である。
 
@@ -52,7 +52,7 @@ python agent/rendering.py current EVENT.json current.png
 python agent/rendering.py replay EVENT.json history.gif
 ```
 
-`run_skill_script` は公開しない。以前の構成はexecutorなしでこのツールを公開していたため `NO_CODE_EXECUTOR` を返していた。将来、実行スキルが必要になった場合は、知識スキルとは別にexecutor・依存関係・入出力を実装して検証する。
+`run_skill_script` は公開しない。因果学習と逆算は、スキル配下の固定スクリプトを `agent/cognition/causal.py` がimportし、型付きの `causal_memory` と `plan_backward` から実行する。前者は観測例・規則の永続CRUDと学習、後者は記録モデルを使う後向き探索を担当する。汎用コードexecutorは使わない。[契約と制約](causal-learning-and-backward-planning-ja.md)。
 
 DECIDEには `check_plan_order` も直接登録する。`initial_conditions`、順序付き `steps`（requires/adds/removes）、`required_final_conditions` を受け、最初に欠ける前提または未達の最終条件と計算過程を返す。入力が真実かを判断せず、ゲーム操作・記憶更新は行わない。S08は条件を破壊する操作順の検査にこのツールを使う。
 
@@ -63,6 +63,7 @@ DECIDEには `check_plan_order` も直接登録する。`initial_conditions`、�
 - スキルを必ず読む指示と「最大2個」というソフトな制限は撤廃した。必要な専門手順だけ選び、証拠取得と提出に予算を残す。全体の要求数・時間・判断数はホストが強制する。
 - `include_contents="none"` により、本文の再利用は現在の判断内に限る。前回ロード済みというだけで次回に本文があるとは扱わない。
 - 認知記憶はCOMMITの `Event(state=...)` で公開する。作業中の `self.turn`、提出結果、観測ストアはプロセス内にあり、障害後の自動再開は保証しない。
+- 因果記憶は別のSQLiteストアへ保存する。過去の実観測に基づく更新なので次の操作のCOMMITとは独立する。`causal_memory` と `plan_backward` は結果を見てから次を呼び、同一応答での複数呼び出しは拒否する。
 
 ## 確認方法
 
@@ -80,3 +81,5 @@ make visualize
 公式資料: [Skills](https://adk.dev/skills/)、[SkillToolset 2.0.0](https://github.com/google/adk-python/blob/v2.0.0/src/google/adk/tools/skill_toolset.py)。
 
 再設計後の85件の回帰テスト、実モデルの手順評価とゲーム測定の結果は[検証記録](local-evaluation-skill-redesign-ja.md)を参照。ツール利用と計画推論には未解決のモデル挙動がある。
+
+因果記憶追加後の115件のテスト、合成デモ、実Qwenの未達項目は[因果学習・逆算の検証](local-evaluation-causal-planning-ja.md)を参照。

@@ -96,7 +96,7 @@ class LocalVisionLlm(BaseLlm):
                     if response.parts:
                         raise ValueError('Multimodal function responses are not supported')
                     result = dict(response.response or {})
-                    if response.name in {'observe_current', 'move_cursor', 'observe_animation', 'get_observation', 'compare_observations'}:
+                    if response.name in {'observe_current', 'move_cursor', 'observe_animation', 'get_observation', 'compare_observations', 'causal_memory'}:
                         encoded = result.pop('_image_png_base64', None)
                         if encoded:
                             visual_results.extend([
@@ -192,6 +192,8 @@ class LocalVisionLlm(BaseLlm):
             calls = [part.function_call for part in parts if part.function_call]
             if any(call.name in self.completion_tools for call in calls) and len(calls) != 1:
                 raise ValueError('Completion must be the only tool call in a response')
+            if any(call.name in {'causal_memory', 'plan_backward'} for call in calls) and len(calls) != 1:
+                raise ValueError('Causal memory and planning calls must run alone; inspect each result before the next call')
             record['decoded_protocol'] = protocol
             record['normalized_tool_calls'] = [
                 {'id': p.function_call.id, 'name': p.function_call.name, 'arguments': p.function_call.args}

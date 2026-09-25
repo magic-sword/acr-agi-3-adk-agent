@@ -91,6 +91,7 @@ def run_worker(spec_path):
     # Load exactly the source snapshot used by the notebook packager.
     sys.path[:0] = [spec['package'], str(ROOT / 'vendor/ARC-AGI-3-Agents')]
     os.environ.update(ADK_MODEL=spec['model'], COGNITION_LOG_DIR=str(out / 'cognition'),
+                      CAUSAL_MEMORY_DIR=str(out / 'causal-memory'),
                       COGNITION_SECONDS=str(spec['seconds']), OPERATION_MODE='offline',
                       AGENTOPS_API_KEY='', WANDB_MODE='disabled')
     from arc_agi import Arcade, OperationMode

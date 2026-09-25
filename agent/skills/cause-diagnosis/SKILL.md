@@ -1,17 +1,33 @@
 ---
 name: cause-diagnosis
-description: "Diagnose an unexpected action result by separating wrong input or target, object identity, delay, mode changes and incorrect dynamics before revising a plan."
+description: "Learn, inspect and revise persistent causal rules from symbolic interpretations of actual action outcomes, including negative examples, hidden conditions and failed predictions."
 ---
-# Diagnosing a contradiction
+# Learning causal action models
 
-Use when an expected effect fails or an invariant breaks. Start with the specific discrepancy, not a new global theory.
+Use when an action reveals a reusable effect or contradicts a stored rule. The executable learner is [scripts/induction.py](scripts/induction.py), called by the typed `causal_memory` tool. Do not run arbitrary Python or write database files yourself.
 
-1. Check the executed action record against the intended input. For CLICK, inspect its recorded coordinates, not the cursor's later position. Confirm that the target and control were actually applicable.
-2. Compare the source and result observations. Check object identity and whether the relevant region was visible. A rendering overlay or hidden target can explain an apparent failure without changing the game rules.
-3. Check the delay window and any intervening actions. Attribute the discrepancy to a single action only when the evidence isolates it.
-4. Check whether a level, control mode or relevant condition changed. Prefer the smallest revision that explains the observations, but keep equally plausible alternatives when evidence cannot discriminate.
-5. Link the diagnosis to observations and affected hypotheses. Preserve unrelated knowledge. Propose a repaired plan only if its assumptions hold; otherwise test the unresolved cause.
+## Observe, symbolize, learn
 
-For worked input-error versus dynamics examples, read [references/diagnosis.md](references/diagnosis.md) when the discrepancy fits more than one cause.
+1. Compare actual BEFORE and AFTER evidence and the executed inputs. Use stable ground atoms such as `powered(switch1)` or `gate_open`; keep names consistent across trials. `true` and `false` are explicit observations. Omit hidden or ambiguous facts: absence is unknown, not a negative example.
+2. Name the tested abstract action and select its source observation IDs. The host obtains concrete inputs from the intervening recorded actions. A multi-action interval describes that entire macro, not proof that one of its component inputs caused the effect. Mark `confounded=true` if autonomous motion, unclear delay or ambiguous object identity prevents training.
+3. Call `causal_memory` with `operation=update`, `transitions` and `induce=true`. Recording and learning happen together. The host binds `stage_clear` to actual level increase/WIN. At completion, describe only `stage_clear` in AFTER, not objects on the next board.
+4. Inspect `rules`, their positive/negative/unknown evidence IDs and `learning.unresolved`. `supported` means consistent with recorded symbolic examples, not proven causality or a universally valid rule. Positive-only learning retains the observed context. Contradictory examples may require a missing condition, separate mode or better perception.
+5. Keep a rule's default `scope=level` unless the same mechanism has evidence across levels. `scope=game` shares it only within the same full game/version ID. Do not transfer coordinates or object identity without revalidation.
 
-If evidence is missing, the result of diagnosis is an explicit uncertainty. Do not invent a transport error or trigger RESET to explain an unexpected game outcome.
+Example (replace IDs and atoms with actual evidence):
+
+```json
+{"operation":"update","transitions":[{"id":"switch-trial-1","before_id":"OBS_BEFORE","after_id":"OBS_AFTER","action_name":"activate(switch1)","before":{"true":["powered(switch1)"],"false":["gate_open"]},"after":{"true":["gate_open"]}}],"induce":true}
+```
+
+## Inspect, correct, retract
+
+- `causal_memory({})` reads a page of current-level/game rules and trial summaries. Filter with `action_name`, paginate with `offset` and `limit`. `observation_ids` retrieves up to two retained raw records, including final outcomes from earlier runs.
+- Replace a transition by its `id` to correct symbolic interpretation; keep the same original observation IDs. Its concrete action evidence cannot be edited. Relearning and rule evidence assessment use the corrected examples.
+- `rules` upserts an explicit hypothesis with `id`, `action_name`, concrete `actions`, `preconditions`, `effects` and `scope`. Unsupported hypotheses remain candidates. Their status is computed from examples, not supplied by you.
+- Use `delete_rule_ids` to retract a bad rule. Deletions are persistent tombstones so induction cannot immediately recreate the identical rule; an explicit upsert can restore it.
+- Use `delete_transition_ids` only for mistaken interpretations. A genuine negative trial is valuable evidence; preserve it and refine the rule. Removing the only positive example downgrades the rule to a candidate.
+
+The finite learner searches conjunctions of ground observed predicates, not arbitrary first-order or recursive programs. Failure to separate examples means the supplied vocabulary or search bounds are insufficient; do not fabricate a condition to make a rule fit.
+
+For input error, delay and mode-change diagnosis, read [references/diagnosis.md](references/diagnosis.md) when those alternatives matter. For formats and a full learning-to-planning example, read [references/symbolic-model.md](references/symbolic-model.md).

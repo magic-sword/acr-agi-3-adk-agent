@@ -23,7 +23,7 @@ SKILL_NAMES = {
 }
 
 STATE_SKILLS = {
-    "DECIDE": ("S01", "S03", "S05", "S07", "S08"),
+    "DECIDE": ("S01", "S03", "S05", "S06", "S07", "S08"),
     "OBSERVE": (),
     "UPDATE": (), "ACT": (), "COMMIT": (), "CONSOLIDATE": (), "RECOVER": (),
 }
@@ -39,15 +39,18 @@ def selected_skills(state: str) -> tuple[str, ...]:
 class ReasoningSkillToolset(SkillToolset):
     """ADK loaders with inline discovery and only supported knowledge tools.
 
-    These packages contain reasoning guidance, not executable scripts or dynamic
-    tools. Host FunctionTools are registered independently of skill activation.
+    Registered bundled scripts run through typed host tools, never arbitrary execution.
+    Tools are registered independently of skill activation.
     Public hooks keep native loading/results/state behavior without modifying ADK.
     """
 
-    def __init__(self, *, skills):
+    def __init__(self, *, skills, script_sources=None):
         for skill in skills:
-            if skill.resources.scripts or skill.frontmatter.metadata.get("adk_additional_tools"):
-                raise ValueError("Reasoning skills cannot declare scripts or dynamic tools")
+            expected = (script_sources or {}).get(skill.name, {})
+            if (any(name not in expected or script.src != expected[name]
+                    for name, script in skill.resources.scripts.items())
+                    or skill.frontmatter.metadata.get("adk_additional_tools")):
+                raise ValueError("Unconnected scripts or dynamic tools are not allowed")
         super().__init__(skills=skills)
         self.catalog = tuple({"name": s.name, "description": s.description} for s in skills)
 
@@ -71,6 +74,13 @@ class ReasoningSkillToolset(SkillToolset):
         ])
 
 
+def bound_script_sources():
+    from .causal import SCRIPT_BINDINGS
+    root = Path(__file__).resolve().parents[1] / "skills"
+    return {name: {Path(path).name: (root / name / path).read_text()} for name, path in SCRIPT_BINDINGS.items()}
+
+
 def skill_toolset(state: str) -> ReasoningSkillToolset:
     root = Path(__file__).resolve().parents[1] / "skills"
-    return ReasoningSkillToolset(skills=[load_skill_from_dir(root / SKILL_NAMES[s]) for s in selected_skills(state)])
+    return ReasoningSkillToolset(skills=[load_skill_from_dir(root / SKILL_NAMES[s]) for s in selected_skills(state)],
+                                 script_sources=bound_script_sources())

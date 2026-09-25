@@ -1,30 +1,25 @@
 ---
 name: backward-planning
-description: "Build a short conditional plan from a supported success condition when prerequisites, staging space or noncommuting actions make greedy progress unreliable."
+description: "Search persistent causal models backward from stage completion or another symbolic goal, returning a forward-checked action chain or missing prerequisites to investigate."
 ---
-# Planning from prerequisites
+# Backward planning from learned rules
 
-Use when a supported goal needs prerequisites, staging space or a particular operation order.
+Use when causal parts have accumulated, a goal needs prerequisites or action order matters. [scripts/regression.py](scripts/regression.py) performs bounded regression through the typed `plan_backward` tool; the three-node game workflow stays unchanged.
 
-## Build and check candidate orders
+1. Ground the CURRENT state in the latest observation. Use the same symbols as stored rules, explicitly distinguishing true, false and unobserved. Start planning from where you are now; use the game-start state only when still there.
+2. Call `plan_backward` with the current `observation_id`, `current` and `goal`. The default goal is `stage_clear=true`, whose observed training labels come only from the environment. Inspect/revise causal knowledge with `causal_memory` if needed.
+3. On `status=plan`, inspect the rule chain, its evidence and forward state trace. The engine accounts for false/delete effects and interactions between conjunctive subgoals. Validity is conditional on the supplied symbolic models and on unaffected facts persisting. Execute only the next primitive input, after checking its current target and legal controls; observe and replan after it. A stored macro is not permission to replay every input blindly.
+4. On `knowledge_gap`, inspect each frontier's missing conditions, unknown current facts, `no_known_producer`, conflicts and excluded rules. An unknown current fact suggests observation. A known-unsatisfied prerequisite with no producer suggests an experiment to discover an action effect. A candidate/conflicting rule suggests a discriminating trial. Do not convert the missing condition into an assumed fact.
+5. On `search_limit`, the search is unfinished. Narrow the immediate subgoal or use another bounded search; this result does not establish missing causal knowledge or impossibility.
 
-1. Work backward from an unsatisfied goal condition. Identify an evidence-supported operation that establishes it and the access/conditions that operation requires. Stop at an unknown effect and formulate a test; do not invent an operation to complete a path.
-2. Identify conditions that each operation removes as well as those it establishes. Conditions already achieved can be destroyed. Goal conditions are not automatically prerequisites of one another; their order in the goal description carries no ordering requirement.
-3. **For interacting prerequisites, call `check_plan_order` before selecting an order.** Supply `initial_conditions`, ordered `steps` (id, requires, adds, removes), and `required_final_conditions`. Represent access explicitly. “A blocks the only access to B” means that access is in A.removes and B.requires.
-4. Inspect the returned `blocked_step` and `missing_conditions`. A rejected order is not executable under those assumptions. Try another order while preserving the stated effects. If both directions fail, identify a staging operation or alternative assumption to investigate. A successful result only checks the assumptions supplied, not their truth in the game.
-
-Example of the check's input shape (symbolic assumptions, not a game action):
+Example (replace the observation ID and current symbols):
 
 ```json
-{"initial_conditions":["access_a","access_b"],"steps":[{"id":"A","requires":["access_a"],"adds":["a_done"],"removes":["access_b"]},{"id":"B","requires":["access_b"],"adds":["b_done"]}],"required_final_conditions":["a_done","b_done"]}
+{"observation_id":"CURRENT_OBS","current":{"true":["at(player,switch)","powered(switch1)"],"false":["gate_open"]},"goal":{"true":["stage_clear"]}}
 ```
 
-This order fails at B. Reversing it works only if B leaves A's prerequisites intact. If B also removes access_a, neither order works without another operation. Adapt the conditions to the evidence; never change a known effect just to make the checker pass.
+`allow_candidates=true` can explore hypothetical chains for experiment design, but such a path is `tentative_plan`. Refuted rules are always excluded. Overlapping models for the same concrete input with different effects are excluded rather than choosing the favorable outcome.
 
-## Turn a feasible order into a conditional plan
+Recording examples and learning can share one `causal_memory` update; `plan_backward` can follow in the second request, leaving the third for `submit_decision`. Optional resource loading is not a required step each turn.
 
-Keep a short ordered list of remaining subgoals in the working notebook. Note completion evidence and conditions that must survive later actions. Submit only the first legal action and its prediction; check the actual result before choosing the next step. A formal subgoal graph is unnecessary.
-
-Count prerequisite actions and checkpoints against the budget. CLICK actions sample the current cursor, so distinct click targets require new positioning and observation. If no first action is justified, ask a precise question or propose an experiment instead of an impossible plan.
-
-Read [references/dependencies.md](references/dependencies.md) for staging and plan-repair details when needed.
+For testing a specific hypothetical order without persistent rules, `check_plan_order` remains available. It checks supplied adds/removes and prerequisites, not the truth of effects. Read [references/dependencies.md](references/dependencies.md) for staging and interference examples when needed.

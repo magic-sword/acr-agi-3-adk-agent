@@ -55,6 +55,8 @@ flowchart LR
 
 最新128観測を不変なEvidenceStoreへ保持する。必要に応じて `list_observations`、`get_observation`、`compare_observations`、`observe_animation` を使える。再読・動画の再生はゲーム時間を進めない。`observe_current`、`move_cursor`、仮定上の操作順を調べる `check_plan_order` も利用可能。
 
+`causal_memory` は実観測に対応する記号解釈と因果規則をSQLiteへ保存・訂正・削除し、正例・負例から条件を学習する。`plan_backward` は目標から現在状態まで逆算し、モデル上の行動列または不足条件を返す。いずれもDECIDEの任意ツールで、状態数は増やさない。計画が得られても1操作後に再観測する。[詳しい設計と制約](causal-learning-and-backward-planning-ja.md)。
+
 CLICKは従来どおりホストカーソルを使う。必要なら `move_cursor(x,y)` の後、座標を含めない `{"action":"CLICK"}` を提出する。利用可能ボタン・座標・残り予算はホストが検査する。
 
 ## 予算と停止
@@ -70,7 +72,7 @@ CLICKは従来どおりホストカーソルを使う。必要なら `move_curso
 
 ## スキルと評価
 
-DECIDEには視覚観測・予測照合・目標推定・識別実験・逆向き計画の5スキルを任意公開する。毎手のロードは不要。その他の専門スキルは資料として保持するが通常ループには接続しない。[接続仕様](adk-native-skills-ja.md)。
+DECIDEには視覚観測・予測照合・目標推定・原因診断・識別実験・逆向き計画の6スキルを任意公開する。毎手のロードは不要。その他の専門スキルは資料として保持するが通常ループには接続しない。[接続仕様](adk-native-skills-ja.md)。
 
 テストでは、1判断での一手提出、前後画像とメモの持越し、境界、クリック、拒否時の原子性、重複、終了、予算、提出の訂正を検証する。実ゲームでは、操作数だけでなく到達レベル、停止理由、最初の一手までの時間、HTTP回数、同一盤面での反復を確認する。[今回の評価記録](local-evaluation-simple-loop-ja.md)。
 
