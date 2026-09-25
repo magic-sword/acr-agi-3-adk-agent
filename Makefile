@@ -46,7 +46,7 @@ cache-dir:
 	mkdir -p .cache/model-cache
 
 repair-perms: cache-dir
-	$(DC) run --rm --no-deps --user 0 dev sh -ec 'for p in .virtual_documents notebooks/submission.ipynb vendor environment_files outputs recordings logs.log submission.parquet; do if [ -e "$$p" ]; then chown -R "$(LOCAL_UID):$(LOCAL_GID)" "$$p"; fi; done'
+	$(DC) run --rm --no-deps --user 0 dev sh -ec 'for p in .virtual_documents notebooks vendor environment_files outputs recordings logs.log submission.parquet; do if [ -e "$$p" ]; then chown -R "$(LOCAL_UID):$(LOCAL_GID)" "$$p"; fi; done'
 
 setup: cache-dir
 	$(RUN) bash -ec 'if [ ! -d $(FRAMEWORK_DIR)/.git ]; then mkdir -p vendor; git clone --depth 1 $(FRAMEWORK_REPO) $(FRAMEWORK_DIR); fi; python scripts/setup_framework.py'

@@ -34,6 +34,11 @@ No API key or internet is needed during local model inference.
 
 ## Run and evaluate
 
+Open [agent_observatory.ipynb](notebooks/agent_observatory.ipynb) in JupyterLab to watch
+game frames, actions, DECIDE/RUN, and state inputs/outputs together. Run its cells to replay
+saved runs recorded with state boundaries; set `RUN_LIVE=True` in the launch cell to start and follow a bounded evaluation.
+See the [visualization guide](docs/agent-monitor-ja.md) for controls and log interpretation.
+
 ```bash
 make eval GAME=ls20 STEPS=20    # deterministic driver probe, no model
 make eval-model GAME=ls20 STEPS=50

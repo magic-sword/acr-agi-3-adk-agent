@@ -23,7 +23,7 @@ def render(directory):
     sections = []
     for path in sorted(directory.glob('*.jsonl')):
         if path.name.endswith(('.model.jsonl', '.observations.jsonl', '.tools.jsonl',
-                               '.artifacts.jsonl', '.requests.jsonl', '.execution.jsonl', '.learning.jsonl')):
+                               '.artifacts.jsonl', '.requests.jsonl', '.execution.jsonl', '.learning.jsonl', '.states.jsonl')):
             continue
         rows = read_records(path)
         if not rows:

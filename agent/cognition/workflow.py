@@ -54,6 +54,7 @@ class CognitiveRuntime:
         self.errors, self.trace, self.tool_executions = [], [], []
         self.submission = self.job = self.result = None
         self.initialized = self.closed = False
+        self.event_sequence = 0
         directory = self.log_dir / self.session_id / 'skills' if self.log_dir else None
         self.library = SkillLibrary(game_id, directory, source=skill_library, emit=self._learning_event)
         self.controller = None
@@ -64,7 +65,9 @@ class CognitiveRuntime:
         return max(0, self.deadline - time.monotonic())
 
     def _record(self, kind, event, **data):
+        self.event_sequence += 1
         append_record(self.log_dir, self.session_id, kind, {
+            'sequence': self.event_sequence,
             'event': event, 'timestamp': datetime.now(timezone.utc).isoformat(),
             'run_id': self.session_id, 'game_id': self.memory.game_id,
             'observation_id': self.obs.get('observation_id'), 'step': self.obs.get('step'),
@@ -388,67 +391,86 @@ class CognitiveRuntime:
     def _build_graph(self):
         @node(rerun_on_resume=True)
         async def decide(ctx: Context):
-            self.trace.append('DECIDE')
-            if self.result is not None:
-                return
-            if self.obs['state']=='WIN':
-                self._stop('win')
-            elif self.obs.get('evaluation_stop_reason'):
-                self._stop(self.obs['evaluation_stop_reason'])
-            elif self.time_left()<=0 or self.obs['remaining_actions']<=0:
-                self._stop('budget_exhausted')
-            elif self.obs['state'] in ('NOT_PLAYED','GAME_OVER'):
-                if self.memory.resets >= self.max_resets:
-                    self._stop('reset_budget')
+            self._record('states', 'state_entered', state='DECIDE', input=self._context())
+            try:
+                self.trace.append('DECIDE')
+                if self.result is not None:
+                    return
+                if self.obs['state']=='WIN':
+                    self._stop('win')
+                elif self.obs.get('evaluation_stop_reason'):
+                    self._stop(self.obs['evaluation_stop_reason'])
+                elif self.time_left()<=0 or self.obs['remaining_actions']<=0:
+                    self._stop('budget_exhausted')
+                elif self.obs['state'] in ('NOT_PLAYED','GAME_OVER'):
+                    if self.memory.resets >= self.max_resets:
+                        self._stop('reset_budget')
+                    else:
+                        self.memory.resets += 1
+                        self._select({'action':'RESET','reason':'start or restart game'}, 'New episode boundary.')
+                elif self._advance_skill():
+                    pass
+                elif not self.model:
+                    self._offline_job()
                 else:
-                    self.memory.resets += 1
-                    self._select({'action':'RESET','reason':'start or restart game'}, 'New episode boundary.')
-            elif self._advance_skill():
-                pass
-            elif not self.model:
-                self._offline_job()
-            else:
-                self.job = None
-                while (self.job is None and self.calls < self.max_calls and
-                       self.http_requests < self.max_http_requests and self.time_left()>0):
-                    await self._ask(ctx)
-                if self.job is None:
-                    self._stop('budget_exhausted' if self.time_left()<=0 else 'model_budget')
+                    self.job = None
+                    while (self.job is None and self.calls < self.max_calls and
+                           self.http_requests < self.max_http_requests and self.time_left()>0):
+                        await self._ask(ctx)
+                    if self.job is None:
+                        self._stop('budget_exhausted' if self.time_left()<=0 else 'model_budget')
+
+            finally:
+                self._record('states', 'state_exited', state='DECIDE', output={
+                    'job': self.job.model_dump() if self.job is not None else None,
+                    'result': self.result, 'errors': self.errors})
 
         @node(rerun_on_resume=True)
         async def run(ctx: Context):
-            self.trace.append('RUN')
-            if self.result is None:
-                try:
-                    self.validate_job(self.job)
-                    if isinstance(self.job, Draft):
-                        self.job_result = self.library.draft(self.job)
-                    else:
-                        job = self.job
-                        for k,v in job.patch.model_dump(exclude_none=True).items():
-                            if k == 'hypotheses':
-                                self.memory.hypotheses = job.patch.hypotheses
-                            else:
-                                setattr(self.memory,k,v)
-                        self._record('artifacts', 'decision_accepted', state='RUN', decision=job.model_dump())
-                        if job.kind=='act':
-                            self._select(job.action.model_dump(exclude_none=True), job.prediction)
-                        elif job.kind=='stop':
-                            self._stop('model_stopped')
-                        elif job.kind=='evaluate':
-                            self.job_result = self.library.evaluate(job.skill_id)
+            self._record('states', 'state_entered', state='RUN', input={
+                'job': self.job.model_dump() if self.job is not None else None,
+                'selected_result': self.result,
+                'active_skill': compact(self.memory.active_skill)})
+            try:
+                self.trace.append('RUN')
+                if self.result is None:
+                    try:
+                        self.validate_job(self.job)
+                        if isinstance(self.job, Draft):
+                            self.job_result = self.library.draft(self.job)
                         else:
-                            self.memory.active_skill = {'id':job.skill_id, 'arguments':job.arguments,
-                                'trial':job.kind=='trial', 'index':0, 'trace':[]}
-                            self._record('learning','skill_execution_started', skill_id=job.skill_id,
-                                         trial=job.kind=='trial', arguments=job.arguments)
-                            self._advance_skill()
-                except ValueError as e:
-                    self.errors.append(str(e)[:500])
-                    self.job_result = {'error': str(e)}
-            if self.result is None:
-                return Event(route='DECIDE')
-            return Event(output=self.result, state={'cognition': self.memory.model_dump(mode='json')})
+                            job = self.job
+                            for k,v in job.patch.model_dump(exclude_none=True).items():
+                                if k == 'hypotheses':
+                                    self.memory.hypotheses = job.patch.hypotheses
+                                else:
+                                    setattr(self.memory,k,v)
+                            self._record('artifacts', 'decision_accepted', state='RUN', decision=job.model_dump())
+                            if job.kind=='act':
+                                self._select(job.action.model_dump(exclude_none=True), job.prediction)
+                            elif job.kind=='stop':
+                                self._stop('model_stopped')
+                            elif job.kind=='evaluate':
+                                self.job_result = self.library.evaluate(job.skill_id)
+                            else:
+                                self.memory.active_skill = {'id':job.skill_id, 'arguments':job.arguments,
+                                    'trial':job.kind=='trial', 'index':0, 'trace':[]}
+                                self._record('learning','skill_execution_started', skill_id=job.skill_id,
+                                             trial=job.kind=='trial', arguments=job.arguments)
+                                self._advance_skill()
+                    except ValueError as e:
+                        self.errors.append(str(e)[:500])
+                        self.job_result = {'error': str(e)}
+                if self.result is None:
+                    return Event(route='DECIDE')
+                return Event(output=self.result, state={'cognition': self.memory.model_dump(mode='json')})
+
+            finally:
+                self._record('states', 'state_exited', state='RUN', output={
+                    'result': self.result, 'tool_result': getattr(self, 'job_result', None),
+                    'task': self.memory.task, 'summary': self.memory.summary,
+                    'hypotheses': [h.model_dump() for h in self.memory.hypotheses],
+                    'lifecycle': self.memory.lifecycle, 'errors': self.errors})
 
         return Workflow(name='skill_learning_loop', edges=[('START',decide), (decide,run), (run,{'DECIDE':decide})])
 
@@ -511,6 +533,8 @@ class CognitiveRuntime:
                 if self.memory.active_skill:
                     self._end_skill('unknown', 'runtime closed before trial completed')
                 self.library.save()
+                self._record('states', 'runtime_closed', lifecycle=self.memory.lifecycle,
+                             stop_reason=self.memory.stop_reason)
                 self.loop.run_until_complete(self.loop.shutdown_asyncgens())
                 self.loop.run_until_complete(self.loop.shutdown_default_executor())
                 self.loop.close()

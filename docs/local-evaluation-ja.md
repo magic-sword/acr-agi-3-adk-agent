@@ -2,6 +2,8 @@
 
 現行エージェントは[DECIDE/RUNとスキル学習](skill-learning-runtime-ja.md)。
 
+画面・操作・状態の入出力を並べて調べる場合は、[JupyterLab観測ノートブック](../notebooks/agent_observatory.ipynb)を使う。[ライブ追従と過去再生の手順](agent-monitor-ja.md)。
+
 ```bash
 make benchmark-prepare
 make model-up
@@ -41,6 +43,7 @@ make benchmark EVAL_GAMES=ls20 EVAL_STEPS=40 EVAL_SECONDS=180 EVAL_HARD_SECONDS=
 |cognition/*.execution.jsonl|実行送信、受付、結果不明|
 |cognition/*.observations.jsonl / frames/|実画面・色IDと記録アニメーション|
 |cognition/*.learning.jsonl|経験・候補作成・試行・評価・昇格・停止|
+|cognition/*.states.jsonl|DECIDE/RUNの入場・退出、状態の入力／出力、実行終了。新しい走行には全ジャーナル共通のsequenceも付く|
 |cognition/<run>/skills/|仕様、評価証拠、再利用可能なlibrary.json|
 |cognition/decisions.html|自動生成した判断とスキル獲得のビューア|
 
