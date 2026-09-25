@@ -36,6 +36,8 @@ No API key or internet is needed during local model inference.
 
 Open [agent_observatory.ipynb](notebooks/agent_observatory.ipynb) in JupyterLab after a benchmark.
 Choose its evaluation ID and game from the dropdowns, click **読み込む**, then play the saved run.
+A state diagram highlights normal decisions, skill construction, execution and observation waits.
+Playback defaults to state transitions; action and full-event modes are also available.
 Playback reads only the selected game, updates images only when needed, and opens detailed logs on demand.
 It does not launch evaluations or poll for updates. See the [replay guide](docs/agent-monitor-ja.md).
 

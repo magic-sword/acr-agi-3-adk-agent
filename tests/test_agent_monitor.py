@@ -120,6 +120,7 @@ class ReplayTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);self.fixture(root)
             w=BenchmarkReplay(root);self.addCleanup(w.close)
+            w.mode.value='操作'
             with patch('scripts.notebook_monitor.json_html',return_value='detail') as detail:
                 w.load();self.assertEqual(detail.call_count,0)
                 self.assertEqual(w.slider.max,0)  # One game step, four individual events.
@@ -135,3 +136,67 @@ class ReplayTests(unittest.TestCase):
             self.assertEqual(w.timeline.snapshot(3)['output'],{'done':True})
             self.assertIsNone(s['output'])  # Later snapshots must not mutate the past.
             self.assertIs(s,w.timeline.snapshot(1))
+
+    def test_diagram_tracks_work_on_entry_and_driver_wait_without_future_leak(self):
+        from scripts.state_diagram import state_diagram_html
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            events=[
+                ('observations',{'event':'observation_received','step':0,'grid':[[0]]}),
+                ('states',{'event':'state_entered','state':'DECIDE','work':'action','input':{}}),
+                ('states',{'event':'state_exited','state':'DECIDE','work':'action','output':{}}),
+                ('states',{'event':'state_entered','state':'RUN','work':'action','input':{'job':{'kind':'learn'}}}),
+                ('states',{'event':'state_exited','state':'RUN','work':'skill_creation','output':{'result':None}}),
+                ('states',{'event':'state_entered','state':'DECIDE','work':'skill_creation','input':{}}),
+                ('tools',{'event':'tool_started','state':'RUN','work':'action','tool':'read_notebook'}),
+                ('states',{'event':'state_exited','state':'DECIDE','work':'skill_creation','output':{}}),
+                ('states',{'event':'state_entered','state':'RUN','work':'skill_creation','input':{'job':{'spec':{}}}}),
+                ('states',{'event':'state_exited','state':'RUN','work':'action','output':{'result':None}}),
+                ('states',{'event':'state_entered','state':'DECIDE','work':'action','input':{}}),
+                ('states',{'event':'state_entered','state':'RUN','work':'action','input':{'job':{'kind':'act'}}}),
+                ('states',{'event':'state_exited','state':'RUN','work':'action','output':{'result':{'status':'action'}}}),
+                ('execution',{'event':'action_dispatched','step':0,'action':{'action':'UP'}}),
+                ('execution',{'event':'action_acknowledged','step':0,'action':{'action':'UP'}}),
+                ('observations',{'event':'observation_received','step':1,'grid':[[1]]}),
+                ('states',{'event':'state_entered','state':'RUN','work':'action','input':{}}),
+                ('states',{'event':'state_exited','state':'RUN','work':'action','output':{'result':{'status':'stop','reason':'win'}}}),
+                ('states',{'event':'runtime_closed','stop_reason':'win'}),
+            ]
+            for i,(kind,row) in enumerate(events):
+                with (root/f'r.{kind}.jsonl').open('a') as f:
+                    f.write(json.dumps(dict(row,sequence=i+1))+'\n')
+            t=Timeline(Run(root,'r')).load()
+            self.assertEqual([s['machine']['node'] for s in t.snapshots],
+                ['observe','action','action','run','run','build','build','build','run',
+                 'run','action','run','wait','wait','wait','observe','run','end','end'])
+            self.assertEqual(t.snapshot(4)['machine']['work'],'action')
+            self.assertEqual(t.snapshot(9)['machine']['work'],'skill_creation')
+            self.assertEqual(t.snapshot(8)['machine']['job'],'propose_skill')
+            self.assertIn('未送信',t.snapshot(12)['machine']['phase'])
+            self.assertIn('受付待ち',t.snapshot(13)['machine']['phase'])
+            self.assertIn('次の観測待ち',t.snapshot(14)['machine']['phase'])
+            self.assertEqual(t.snapshot(17)['machine']['phase'],'win')
+            html=state_diagram_html(t.snapshot(5)['machine'])
+            self.assertEqual(html.count('data-active="true"'),1)
+            self.assertIn('data-state="build" data-active="true"',html)
+            self.assertIn('スキル作成 · 処理中',html)
+            self.assertNotIn('<script>',state_diagram_html({'node':'action','phase':'<script>x</script>'}))
+
+    def test_state_replay_skips_same_state_events_and_caches_the_diagram(self):
+        from scripts.notebook_monitor import BenchmarkReplay
+        from scripts.state_diagram import state_diagram_html
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);self.fixture(root)
+            w=BenchmarkReplay(root);self.addCleanup(w.close)
+            self.assertEqual(w.mode.value,'状態遷移')
+            w.load()
+            # Observation, state entry and exit; the intervening HTTP request is skipped.
+            self.assertEqual(w._positions,[0,1,3])
+            w.mode.value='イベント'
+            w.slider.value=1
+            with patch('scripts.notebook_monitor.state_diagram_html',wraps=state_diagram_html) as diagram:
+                w.slider.value=2
+                diagram.assert_not_called()
+                w.slider.value=3
+                diagram.assert_called_once()
+            self.assertIn('完了',w.diagram.value)

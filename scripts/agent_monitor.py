@@ -97,6 +97,7 @@ class Timeline:
         request = response = None
         notebook_view = notebook_read = notebook_change = None
         notebook_events = []
+        machine = {'node': 'observe', 'phase': '初期観測待ち', 'work': None, 'job': None}
         for index,event in enumerate(self.events):
             kind, name = event['_journal'], event.get('event')
             if kind == 'observations':
@@ -104,21 +105,38 @@ class Timeline:
                 incoming_status = action_status if incoming_action else None
                 observations.append(event)
                 state, phase, stage_input, stage_output = '観測受領', '', None, None
+                machine = {'node': 'observe', 'phase': '観測受領', 'work': None, 'job': None}
             if kind == 'states':
                 if name == 'runtime_closed':
                     state, phase = '終了', event.get('stop_reason') or 'closed'
+                    machine = dict(machine, node='end', phase=phase)
                 else:
                     state = event['state']
                     phase = '処理中' if name == 'state_entered' else '完了'
                     if name == 'state_entered':
                         stage_input, stage_output = event.get('input'), None
+                        work = event.get('work')
+                        job = (stage_input.get('job') or {}) if isinstance(stage_input, dict) else {}
+                        job_kind = job.get('kind') or ('propose_skill' if 'spec' in job else None)
+                        machine = {'node': ('build' if work == 'skill_creation' else
+                                            'action' if work == 'action' else 'decide')
+                                   if state == 'DECIDE' else 'run',
+                                   'phase': phase, 'work': work, 'job': job_kind}
                         if state == 'DECIDE':
-                            context = stage_input or {}
+                            context = stage_input if isinstance(stage_input, dict) else {}
                     else:
                         stage_output = event.get('output')
+                        # RUN may change work for the NEXT invocation. Keep the
+                        # work captured on entry until the next state is entered.
+                        machine = dict(machine, phase=phase)
                         if state == 'RUN' and isinstance(stage_output, dict):
                             if 'notebook' in stage_output:
                                 context = dict(context, notebook=stage_output['notebook'])
+                            result = stage_output.get('result') or {}
+                            if result.get('status') == 'stop':
+                                machine = dict(machine, node='end', phase=result.get('reason', 'stop'))
+                            elif result.get('status') == 'action':
+                                machine = dict(machine, node='wait', phase='操作選択済み・未送信')
             if kind == 'notebook':
                 notebook_events.append(event)
                 if name == 'notebook_opened':
@@ -141,6 +159,7 @@ class Timeline:
                 action_status = {'action_dispatched': '送信済み・受付待ち',
                                  'action_acknowledged': '受付済み・次の観測待ち',
                                  'action_outcome_unknown': '実行結果不明'}.get(name, name)
+                machine = dict(machine, node='wait', phase=action_status)
             if kind == 'tools':
                 tools.append(event)
             if kind == 'learning':
@@ -153,6 +172,7 @@ class Timeline:
                     display_status = '受付済み・次の観測あり（効果の成功とは別）'
             yield dict(event=event, index=index, total=len(self.events), current=current, before=before,
                         state=state, phase=phase, input=stage_input, output=stage_output,
+                        machine=machine,
                         context=context, action=action, action_step=action_step, action_status=display_status,
                         prediction=prediction,
                         incoming_action=incoming_action, incoming_status=incoming_status,
@@ -241,7 +261,6 @@ def dashboard_html(snapshot, directory, *, include_images=True):
             mark = s['incoming_action']
         cards.append('<div style="flex:1;min-width:220px"><b>'+label+'</b> · step '+
                      escape(str(obs.get('step') if obs else '—'))+screen_html(obs, directory, mark)+'</div>')
-    badges = ' → '.join('<span style="padding:6px 14px;border-radius:5px;background:'+('#2563eb;color:white' if s['state']==state else '#e2e8f0;color:#334155')+'">'+escape(str(state))+'</span>' for state in ('DECIDE','RUN'))
     recent = ''.join('<tr><td>'+escape(str(r.get('step', '—')))+'</td><td>'+escape(r.get('state', ''))+'</td><td>'+escape(str(r.get('event', '')))+' '+escape(str(r.get('tool', '')))+'</td></tr>' for r in s['recent'])
     context = s['context']
     notebook = context.get('notebook') or {}
@@ -263,8 +282,8 @@ def dashboard_html(snapshot, directory, *, include_images=True):
     elif a and b and len(a)==len(b) and all(len(x)==len(y) for x,y in zip(a,b)):
         delta = str(sum(v!=w for x,y in zip(a,b) for v,w in zip(x,y)))+' セルが変化（成功判定ではありません）'
     return f'''<div style="font:14px system-ui;color:#172554;background:#f8fafc;padding:16px;border-radius:10px">
-    <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:16px"><b>{escape(str(e.get('game_id', 'ゲーム')))} · step {escape(str(e.get('step', '—')))}</b><div>{badges}<p>仕事: {escape(str(context.get('work', '—')))}</p></div></div>
-    <p><b>{escape(s['state'])} · {escape(s['phase'])}</b> · イベント {s['index']+1}/{s['total']} · {escape(str(e.get('timestamp', '時刻なし')))}</p>
+    <b>{escape(str(e.get('game_id', 'ゲーム')))} · step {escape(str(e.get('step', '—')))}</b>
+    <p>実行ログ: <b>{escape(s['state'])} · {escape(s['phase'])}</b> · イベント {s['index']+1}/{s['total']} · {escape(str(e.get('timestamp', '時刻なし')))}</p>
     <div style="display:flex;flex-wrap:wrap;gap:18px">{''.join(cards)}</div>
     <p><b>前画面に対する操作記録:</b> {escape(incoming_label)} · {escape(incoming_status)}<br>
     <b>この時点の選択操作（step {escape(str(s['action_step']))}）: {escape(action_label)}</b> · {escape(s['action_status'])}<br>赤丸は各画面に対して選択したクリック位置です。</p>

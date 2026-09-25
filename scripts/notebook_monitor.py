@@ -13,6 +13,7 @@ from PIL import Image, ImageDraw
 
 from scripts.agent_monitor import (Timeline, discover_evaluations, discover_runs, dashboard_html,
                                   json_html, safe_asset, PALETTE)
+from scripts.state_diagram import state_diagram_html
 
 
 def picture(observation, directory, action=None):
@@ -63,12 +64,14 @@ class BenchmarkReplay:
         self.game = W.Dropdown(description='ゲーム',layout=W.Layout(width='100%'))
         self.load_button = W.Button(description='読み込む',icon='folder-open',button_style='primary')
         self.refresh_button = W.Button(description='評価一覧を更新',icon='refresh')
-        self.mode = W.Dropdown(description='再生単位',options=['操作','イベント'],layout=W.Layout(width='210px'))
+        self.mode = W.Dropdown(description='再生単位',options=['状態遷移','操作','イベント'],layout=W.Layout(width='210px'))
         self.play = W.Play(min=0,max=0,value=0,interval=1000,repeat=False,disabled=True)
         self.slider = W.IntSlider(min=0,max=0,value=0,description='位置',continuous_update=False,layout=W.Layout(width='75%'))
         self.speed = W.Dropdown(description='間隔',options=[('2秒',2000),('1秒',1000),('0.5秒',500)],value=1000,layout=W.Layout(width='180px'))
         self.previous,self.next = W.Button(description='前へ'),W.Button(description='次へ')
         self.status,self.board = W.HTML(),W.HTML()
+        self.diagram = W.HTML(value=state_diagram_html())
+        self._machine_key = None
         self.images = [W.Image(format='png',layout=W.Layout(width='100%',height='340px',object_fit='contain')) for _ in range(2)]
         self.captions = [W.HTML(),W.HTML()]
         for image in self.images:
@@ -85,7 +88,7 @@ class BenchmarkReplay:
         self.widget = W.VBox([W.HTML('<h3>ベンチマーク再生</h3><style>.arc-replay-image img{image-rendering:pixelated}</style>'),
                               self.evaluation,self.game,W.HBox([self.load_button,self.refresh_button]),
                               W.HBox([self.mode,self.speed,self.previous,self.next]),W.HBox([self.play,self.slider]),
-                              self.status,screens,self.board,self.details])
+                              self.status,self.diagram,screens,self.board,self.details])
         self._link = W.jslink((self.play,'value'),(self.slider,'value'))
         self.evaluation.observe(self._select_evaluation,names='value')
         self.game.observe(lambda _: self._clear(),names='value')
@@ -138,6 +141,8 @@ class BenchmarkReplay:
         self.timeline=None
         self._positions=[]
         self._image_keys=[None,None]
+        self._machine_key=None
+        self.diagram.value=state_diagram_html()
         self._frames,self._animation_key=[],None
         self.details.selected_index=None
         for panel in self.panels:
@@ -171,6 +176,10 @@ class BenchmarkReplay:
         events=self.timeline.events
         if self.mode.value=='イベント':
             self._positions=list(range(len(events)))
+        elif self.mode.value=='状態遷移':
+            self._positions=[i for i,s in enumerate(self.timeline.snapshots)
+                             if i==0 or s['machine']!=self.timeline.snapshots[i-1]['machine']
+                             or i==len(events)-1]
         else:
             # End of each recorded step; keep the final observation and stop visible.
             self._positions=[i for i,e in enumerate(events) if i==len(events)-1 or e.get('step')!=events[i+1].get('step')]
@@ -212,6 +221,10 @@ class BenchmarkReplay:
         self.status.value=f'<p><b>記録の再生</b> · {escape(directory.parent.parent.name)} · {escape(directory.parent.name)} · {self.slider.value+1}/{len(self._positions)}<br>再生はゲームやモデルを実行しません。詳細を開くと一時停止します。</p>'
         if self.timeline.invalid_lines:
             self.status.value+=f'<p>不正な完了行を{self.timeline.invalid_lines}件除外しました。</p>'
+        machine_key=tuple(s['machine'].items())
+        if machine_key!=self._machine_key:
+            self.diagram.value=state_diagram_html(s['machine'])
+            self._machine_key=machine_key
         for i,(label,obs) in enumerate([('直前の観測',s['before']),('この時点の最新観測',s['current'])]):
             action=s['incoming_action'] if i==0 else s['action'] if obs and obs.get('step')==s['action_step'] else None
             key=(obs.get('observation_id',obs.get('sequence')) if obs else None,json.dumps(action,sort_keys=True))
