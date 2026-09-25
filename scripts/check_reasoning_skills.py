@@ -17,7 +17,7 @@ from google.adk.sessions import InMemorySessionService
 from google.adk.skills import load_skill_from_dir
 from google.genai import types
 
-from agent.cognition.skills import ReasoningSkillToolset
+from agent.cognition.skills import ReasoningSkillToolset, bound_script_sources
 from agent.cognition.planning import PlanOrderTool
 from agent.local_vlm import LocalVisionLlm
 
@@ -99,10 +99,11 @@ async def check_case(case):
     await service.create_session(app_name='method_check', user_id='u', session_id='s')
     agent = LlmAgent(name='method_check', model=model, include_contents='none',
         instruction='Read the requested skill using load_skill and apply it to the supplied '
-                    'scenario. Treat the scenario as the available evidence. Return only a '
+                    'scenario. This diagnostic has no stored causal models: use check_plan_order for '
+                    'hypothetical action ordering, not plan_backward. Treat the scenario as the available evidence. Return only a '
                     'JSON object with choice (A, B or C) and a short reason.',
         tools=[ReasoningSkillToolset(skills=[load_skill_from_dir(
-            ROOT / 'agent/skills' / case['skill'])]), PlanOrderTool()])
+            ROOT / 'agent/skills' / case['skill'])], script_sources=bound_script_sources()), PlanOrderTool()])
     runner = Runner(agent=agent, app_name='method_check', session_service=service)
     texts, error = [], None
     try:

@@ -107,6 +107,9 @@ def extract(root: Path) -> dict:
     sources[instruction_path] = (root / instruction_path).read_text()
     planning_path = 'agent/cognition/planning.py'
     sources[planning_path] = (root / planning_path).read_text()
+    for path in ('agent/cognition/causal.py', 'agent/skills/cause-diagnosis/scripts/induction.py',
+                 'agent/skills/backward-planning/scripts/regression.py'):
+        sources[path] = (root / path).read_text()
     completion_tree = ast.parse(sources[completion_path])
     completions = next(ast.literal_eval(n.value) for n in completion_tree.body
                        if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name)

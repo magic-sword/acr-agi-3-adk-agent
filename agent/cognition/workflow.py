@@ -5,6 +5,7 @@ import asyncio
 import base64
 import json
 import os
+import sqlite3
 from pathlib import Path
 import threading
 import time
@@ -27,6 +28,7 @@ from .skills import skill_toolset, selected_skills
 from .state import Decision, Memory
 from .completion import CompletionTool, COMPLETION_TOOLS, submission_schema
 from .planning import PlanOrderTool
+from .causal import CausalStore, CausalMemoryTool, BackwardPlanTool
 
 APP_NAME = "arc_cognition"
 
@@ -39,7 +41,8 @@ class CognitiveRuntime:
     """
 
     def __init__(self, game_id: str, model: str | None = None, *, max_calls: int = 3,
-                 max_resets: int = 2, seconds: float = 600, log_dir: str | None = None):
+                 max_resets: int = 2, seconds: float = 600, log_dir: str | None = None,
+                 knowledge_dir: str | None = None):
         if model not in (None, "local/qwen3-vl-4b-instruct"):
             raise ValueError(f"Unsupported ADK_MODEL: {model}")
         if seconds <= 0 or not 1 <= max_calls <= 8 or max_resets < 0:
@@ -61,6 +64,7 @@ class CognitiveRuntime:
         self._submission_attempts = []
         self.cursor = None
         self.evidence = EvidenceStore()
+        self.causal = CausalStore(game_id, knowledge_dir or os.getenv('CAUSAL_MEMORY_DIR', 'outputs/causal-memory'))
         self.workflow = self._build_graph()
         self.runner = Runner(agent=self.workflow, app_name=APP_NAME, session_service=self.service)
 
@@ -78,7 +82,7 @@ class CognitiveRuntime:
                 instruction=instruction(state, submission_schema(state)),
                 tools=[CompletionTool(self, state), skill_toolset(state), self.observe_current, self.list_observations,
                        self.get_observation, self.compare_observations, self.move_cursor, self.observe_animation,
-                       PlanOrderTool()],
+                       PlanOrderTool(), CausalMemoryTool(self), BackwardPlanTool(self)],
             )
         return self.agents[key]
 
@@ -154,6 +158,10 @@ class CognitiveRuntime:
                    "recent_trials": trials,
                    "errors": t.errors[-1:], "remaining_seconds": round(t.time_left(), 2),
                    "observation_records": self.evidence.list()[-8:]}
+        try:
+            context['causal_memory'] = self.causal.overview()
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            context['causal_memory'] = {'error': str(exc)[:200]}
         return controller_context(context)
 
     async def _ask(self, ctx: Context, state: str):
@@ -236,6 +244,12 @@ class CognitiveRuntime:
                     self.evidence.add(t.obs, boundary=t.boundary,
                                       source_action=self.memory.pending.model_dump() if self.memory.pending else None)
                     self._log_observation(t.obs)
+                    try:
+                        self.causal.archive(t.obs, run_id=self.memory.run_id, boundary=t.boundary,
+                                            source_action=self.memory.pending.model_dump() if self.memory.pending else None)
+                    except Exception as exc:
+                        # Persistence failure must not relabel a valid frame as an invalid observation.
+                        t.errors.append(f"causal archive {type(exc).__name__}: {exc}"[:500])
             except Exception as exc:
                 t.errors.append(f"observation {type(exc).__name__}: {exc}"[:500])
                 t.stop("invalid_observation")

@@ -61,7 +61,7 @@ class SkillAdapterTests(unittest.TestCase):
         runtime = CognitiveRuntime('test', 'local/qwen3-vl-4b-instruct')
         try:
             expected = {'DECIDE': {'visual-observation', 'prediction-verification', 'goal-inference',
-                                   'discriminating-experiment', 'backward-planning'}}
+                                   'discriminating-experiment', 'backward-planning', 'cause-diagnosis'}}
             for state, names in expected.items():
                 agent = runtime._agent(state)
                 registered = [s.name for s in agent.tools[1]._list_skills()]
@@ -188,7 +188,9 @@ class SkillAdapterTests(unittest.TestCase):
         self.assertIn('agent/skills/visual-observation/references/views.md', SOURCES)
         self.assertIn('agent/cognition/instructions.py', SOURCES)
         self.assertIn('agent/rendering.py', SOURCES)
-        self.assertFalse(any('/scripts/' in path or '/decision-commit/' in path
+        self.assertIn('agent/skills/cause-diagnosis/scripts/induction.py', SOURCES)
+        self.assertIn('agent/skills/backward-planning/scripts/regression.py', SOURCES)
+        self.assertFalse(any('/decision-commit/' in path
                              or '/budget-recovery/' in path
                              for path in SOURCES if path.startswith('agent/skills/')))
 
