@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import threading
 import time
+from datetime import datetime, timezone
 
 from google.adk import Context, Event, Workflow
 from google.adk.agents import LlmAgent
@@ -27,6 +28,7 @@ from .skills import skill_toolset, selected_skills
 from .state import Decision, Memory
 from .completion import CompletionTool, COMPLETION_TOOLS, submission_schema
 from .planning import PlanOrderTool
+from .audit import append_record, compact, tool_status
 
 APP_NAME = "arc_cognition"
 
@@ -76,11 +78,45 @@ class CognitiveRuntime:
                                      max_requests=3,
                                      timeout_seconds=90, completion_tools=(COMPLETION_TOOLS[state],)),
                 instruction=instruction(state, submission_schema(state)),
+                before_tool_callback=self._before_tool,
+                after_tool_callback=self._after_tool,
+                on_tool_error_callback=self._tool_error,
                 tools=[CompletionTool(self, state), skill_toolset(state), self.observe_current, self.list_observations,
                        self.get_observation, self.compare_observations, self.move_cursor, self.observe_animation,
                        PlanOrderTool()],
             )
         return self.agents[key]
+
+    def _tool_event(self, event, record):
+        append_record(self.log_dir, self.session_id, "tools", {
+            "event": event, "timestamp": datetime.now(timezone.utc).isoformat(), **record})
+
+    def _before_tool(self, tool, args, tool_context):
+        t = self.turn
+        record = {"run_id": self.session_id, "game_id": t.memory.game_id,
+                  "observation_id": t.obs["observation_id"], "step": t.obs["step"],
+                  "state": "DECIDE", "call_index": t.calls,
+                  "tool_call_id": tool_context.function_call_id,
+                  "tool": tool.name, "arguments": compact(args), "status": "started",
+                  "started_seconds": time.monotonic() - t.started_at}
+        t.tool_executions.append(record)
+        self._tool_event("tool_started", record)
+
+    def _finish_tool(self, tool_context, response):
+        t = self.turn
+        record = next(r for r in reversed(t.tool_executions)
+                      if r["tool_call_id"] == tool_context.function_call_id
+                      and r["call_index"] == t.calls and r["status"] == "started")
+        record.update(status=tool_status(response), result=compact(response),
+                      seconds=time.monotonic() - t.started_at - record["started_seconds"])
+        self._tool_event("tool_finished", record)
+
+    def _after_tool(self, tool, args, tool_context, tool_response):
+        self._finish_tool(tool_context, tool_response)
+
+    def _tool_error(self, tool, args, tool_context, error):
+        self._finish_tool(tool_context, {"error": f"{type(error).__name__}: {error}"[:2000]})
+        # Returning None preserves ADK's normal error handling.
 
     def observe_current(self) -> dict:
         """Read the final received game frame with cursor/controller. Never replay history or advance time."""
@@ -184,7 +220,8 @@ class CognitiveRuntime:
         agent.model.begin_invocation()
         agent.model.timeout_seconds = max(1, min(90, int(t.time_left())))
         started = time.monotonic()
-        record = {"observation_id": t.obs["observation_id"], "step": t.obs["step"],
+        record = {"run_id": self.session_id, "game_id": t.memory.game_id,
+                  "observation_id": t.obs["observation_id"], "step": t.obs["step"],
                   "state": state, "call_index": t.calls, "context": context,
                   "available_skills": selected_skills(state)}
         try:
@@ -206,6 +243,7 @@ class CognitiveRuntime:
             record['exchanges'] = agent.model._exchanges
             record['http_requests'] = len(agent.model._exchanges)
             record['submissions'] = self._submission_attempts
+            record['tool_executions'] = [r for r in t.tool_executions if r['call_index'] == t.calls]
             record["seconds"] = time.monotonic() - started
             self._submission = None
             if self.log_dir:

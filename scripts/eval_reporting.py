@@ -44,7 +44,7 @@ def diagnostics(directory: Path) -> dict:
     for path in directory.glob('*.jsonl'):
         if path.name.endswith('.model.jsonl'):
             calls += read_jsonl(path)
-        elif not path.name.endswith('.observations.jsonl'):
+        elif not path.name.endswith(('.observations.jsonl', '.tools.jsonl')):
             turns += read_jsonl(path)
     action_turns = [t for t in turns if t.get('action', {}).get('status') == 'action']
     counts = Counter(state for t in turns for state in t.get('trace', []))
@@ -109,7 +109,17 @@ def diagnostics(directory: Path) -> dict:
         hints.append('観測ID・記憶revisionの不一致あり。モデルによるIDの転記と応答契約を確認。')
     if calls and valid == len(calls) and errors:
         hints.append('JSON型検証後の意味・操作検証エラーあり。判断ログerrorsとmodel.jsonlを照合。')
+    executions = [tool for turn in turns for tool in turn.get('tool_executions', [])]
+    loaded_skills = Counter(tool['arguments'].get('skill_name', 'unknown') for tool in executions
+                            if tool['tool'] == 'load_skill' and tool['status'] == 'success')
+    decisions = [t['decision'] for t in turns if t.get('decision')]
+    missing_reasons = sum(not d.get('action', {}).get('reason', '').strip() for d in decisions)
+    if missing_reasons:
+        hints.append(f'判断理由の未記録 {missing_reasons}/{len(decisions)}件。予測だけでは選択理由を復元できません。')
     return {
+        'loaded_skills': dict(loaded_skills),
+        'tool_execution_errors': sum(t['status'] == 'error' for t in executions),
+        'decisions_missing_reason': missing_reasons,
         'reasoning_calls_by_state': dict(reasoning_states),
         'evidence_tool_calls': dict(evidence_tools),
         'interpretation_count': len(interpretations),
@@ -167,6 +177,7 @@ def write_report(root: Path, results: list[dict]) -> dict:
               '- 各ゲームの `scorecard.json`: 公式SDKの生スコアカード。',
               '- `cognition/*.model.jsonl`: 入力記憶・モデル生応答・型検証・時間・トークン数。',
               '- `cognition/*.jsonl`: 各手の予測照合・遷移・検証エラー。',
+              '- `cognition/*.tools.jsonl`: ツール実行前後の記録。読み込んだスキル名・成否・引数・結果。',
               '- `cognition/*.observations.jsonl` と `cognition/frames/`: 実観測の色ID・PNG。',
               '- `gateway.jsonl`: 公式ゲートウェイへの操作と実際の戻り値。',
               '- `worker.log`: 実行ログと例外。', '']

@@ -102,7 +102,8 @@ The HTML includes expandable current source for routing conditions and state han
 
 Each invocation reads `Workflow.edges`, the skill mappings and selector, and engine
 internal-state calls from the current source, then replaces these generated files.
-OBSERVE capture, reasoning-state skill connections, and internal CONSOLIDATE calls are shown separately.
+The diagram shows only the active workflow and connected skills; internal helpers and
+unconnected skill definitions are available in expandable details.
 Connections indicate skills available to the model, not observed runtime tool use.
 Outputs live under the already Git-ignored `outputs/` directory. If workflow syntax
 changes beyond what the extractor supports, generation fails instead of silently
@@ -110,9 +111,30 @@ substituting a fixed diagram. On failure, any previous output retains its old ti
 
 ```bash
 COGNITION_LOG_DIR=outputs/cognition make eval-model GAME=ls20 STEPS=20
+python3 scripts/analyze_agent.py outputs/cognition
 ```
 
-`COGNITION_MAX_CALLS=3` bounds model attempts per observation (normally one; extra attempts repair failures). Each DECIDE attempt allows at most 3 HTTP requests. `COGNITION_MAX_RESETS=2` bounds retries after GAME_OVER, and `COGNITION_SECONDS=600` bounds each game's reasoning time. Optional JSONL traces and memory snapshots include predictions, results and transition reasons. They do not automatically restore an external game after a crash. The VLM context size is 16,384 tokens; restart it with `make model-up` after updating. An already-running JupyterLab container needs `make lab` after saving work to use the rebuilt ADK image.
+Local Compose runs save logs in `outputs/cognition` by default; an explicitly empty
+`COGNITION_LOG_DIR` disables logging. Direct `CognitiveRuntime` callers enable it with
+`log_dir`. Open `outputs/cognition/decisions.html` after running the analyzer to inspect
+each decision's reason, reflection, prediction, notebook, actual skill loads and tool results.
+These are reported decision summaries, not a reconstruction of private model reasoning.
+Skill loading proves retrieval, not correct application of the method.
+
+- `<run>.jsonl`: committed turns, three workflow states, separate internal helpers,
+  decision summaries, actual tool executions, and previous action/outcome links.
+- `<run>.tools.jsonl`: timestamped tool start/result events written immediately,
+  including failed skill loads and final completion responses. A start without a
+  finish means the outcome is unknown; it is not evidence of success.
+- `<run>.model.jsonl`: model attempts, HTTP exchanges, validation and usage.
+- `<run>.observations.jsonl` and `frames/`: actual observations for checking claims.
+
+Missing reasons remain explicitly unrecorded; the analyzer does not invent them.
+Frame changes are observations, not proof that a prediction was correct. The logs
+can link a submitted action to the next observation, but do not prove execution
+without that observation or a driver/gateway acknowledgement.
+
+`COGNITION_MAX_CALLS=3` bounds model attempts per observation (normally one; extra attempts repair failures). Each DECIDE attempt allows at most 3 HTTP requests. `COGNITION_MAX_RESETS=2` bounds retries after GAME_OVER, and `COGNITION_SECONDS=600` bounds each game's reasoning time. JSONL traces and memory snapshots do not automatically restore an external game after a crash. The VLM context size is 16,384 tokens; restart it with `make model-up` after updating. An already-running JupyterLab container needs `make lab` after saving work to use the rebuilt ADK image.
 
 ## Offline Kaggle model bundle
 

@@ -26,6 +26,9 @@ class CognitiveTurn:
         self.deadline = deadline
         self.calls = 0
         self.trace: list[str] = []
+        self.internal_trace: list[str] = []
+        self.transitions: list[dict] = []
+        self.tool_executions: list[dict] = []
         self.errors: list[str] = []
         self.verification: list[dict] = []
         self.proposal: Proposal | None = None
@@ -42,10 +45,17 @@ class CognitiveTurn:
         self.review: Interpretation | None = None
         self.inquiry = ""
         self.decision: Decision | None = None
+        self.previous_action = memory.pending.model_copy(deep=True) if memory.pending else None
 
     def enter(self, state: str):
-        self.trace.append(state)
-        if len(self.trace) > 24:
+        if state in {"OBSERVE", "DECIDE", "COMMIT"}:
+            self.transitions.append({"from": self.trace[-1] if self.trace else "START",
+                                     "to": state,
+                                     "elapsed_seconds": time.monotonic() - self.started_at})
+            self.trace.append(state)
+        else:
+            self.internal_trace.append(state)
+        if len(self.trace) + len(self.internal_trace) > 24:
             self.stop("internal_transition_budget")
             raise ValueError("internal transition budget exhausted")
 
@@ -432,7 +442,12 @@ class CognitiveTurn:
                 self.stop("no_action")
             self.result = {"status": "done" if m.lifecycle == "DONE" else "stopped", "reason": m.stop_reason}
         entry = {"observation_id": o.get("observation_id"), "step": o.get("step"),
-                 "trace": self.trace[:], "verification": self.verification,
+                 "run_id": m.run_id, "game_id": m.game_id,
+                 "trace": self.trace[:], "internal_trace": self.internal_trace[:],
+                 "transitions": self.transitions, "verification": self.verification,
+                 "tool_executions": self.tool_executions,
+                 "boundary": self.boundary,
+                 "notebook": m.notebook,
                  "interpretation": self.review.model_dump(exclude_none=True) if self.review else None,
                  "node_id": self.node_id, "action": self.result,
                  "effects": [p.model_dump() for p in self.effects],
@@ -443,6 +458,22 @@ class CognitiveTurn:
                  "levels_completed": o.get("levels_completed"), "game_state": o.get("state")}
         if self.decision:
             entry["decision"] = self.decision.model_dump(exclude_none=True)
+        if self.previous_action:
+            previous = self.previous_action
+            comparable = (not self.boundary and previous.action.action != "RESET"
+                          and o.get("step") == previous.step + 1
+                          and bool(previous.baseline_hash and o.get("frame_hash"))
+                          and m.stop_reason != "invalid_observation")
+            entry["previous_outcome"] = {
+                "decision_id": previous.decision_id,
+                "before_observation_id": previous.observation_id,
+                "after_observation_id": o.get("observation_id"),
+                "action": previous.action.model_dump(exclude_none=True),
+                "prediction": previous.prediction,
+                "frame_changed": (previous.baseline_hash != o["frame_hash"]) if comparable else None,
+                "boundary": self.boundary,
+                "prediction_verified": None,
+            }
         m.history = (m.history + [entry])[-64:]
         m.last_observation = {k: v for k, v in o.items() if k not in VISUAL_PAYLOAD_KEYS | {"recent_actions"}}
         m.last_result = deepcopy(self.result)
