@@ -9,6 +9,7 @@ Qwen3-VL-4B-Instruct runs locally. Without a model, the driver issues determinis
 See the [implementation and limits](docs/skill-learning-runtime-ja.md),
 [experiment-loop design and research](docs/goal-experiment-loop-design-ja.md), and
 [evaluation guide](docs/local-evaluation-ja.md).
+The proposed next refactor is documented in [focused task design](docs/focused-task-refactor-design-ja.md) (not yet implemented).
 Earlier design and validation records are clearly separated under [history](docs/history/README.md).
 
 ## Setup
@@ -58,15 +59,17 @@ make visualize                 # outputs/agent-visualization/index.html
 actual actions, observations, model requests and skill lifecycle events under `outputs/evaluations/`.
 It never uploads or submits to Kaggle. Short public-game runs are not leaderboard estimates.
 
-Learning starts with an empty procedural library per game. `experiment_design`, `experiment_review`
-and `skill_creation` use separate prompts and completion tools with one versioned puzzle notebook.
-Each job automatically receives its method skill. Pixel-region and level expectations are checked by
-host code; semantic expectations get a separate model review. Review jobs cannot select an action.
-The active goal path, experiment and latest verdict are opened automatically; additional notes are
-read through bookmarks. Duplicate unsupported probes require a predeclared bounded retry or a
-changed action/tested scope/relevant observed condition. Unrelated changing pixels do not bypass it. If a host verdict is ignored, a review job reconsiders
-the subgoal once; another duplicate stops with `experiment_redesign_stalled`.
-Tests verify this lifecycle; current short Qwen runs still fail to choose a useful alternative test.
+Learning starts with an empty procedural library per game. The model receives one focused task
+at a time: goal selection/assessment, experiment design, target inspection, semantic effect judgment,
+method selection, skill arguments, or skill construction. Each task has its own schema, limited
+input snapshot and task ID. The shared versioned notebook remains the host-owned source of truth.
+Pixel and level expectations are measured by code; these facts do not decide goal completion.
+Clicks proposed by the experiment designer are checked against the described target before dispatch.
+Unchanged failed tests return to goal assessment with a host-computed reason and plan delta.
+Recovery is bounded per observation and does not reset when the goal is renamed.
+Skill evaluation and promotion remain host-owned. The default 4 model calls / 8 HTTP requests per
+observation are unchanged; goal replacement and recovery can exhaust this budget.
+See the [implemented design and validation notes](docs/focused-task-refactor-design-ja.md).
 Learned procedures are scoped to a game version; they are not Python or shell code.
 The first implementation supports up to eight guarded steps and measurable pixel/level effects.
 Every step yields to the driver for a fresh observation. Unexpected effects stop reuse.

@@ -18,6 +18,8 @@ JOBS = {'act': '実験の操作', 'invoke': 'スキル実行', 'trial': '実ゲ�
 
 def state_diagram_html(machine=None):
     machine = machine or {}
+    if machine.get('work') in set(FOCUSED)-{'skill_creation'} or machine.get('node') in FOCUSED:
+        return focused_diagram_html(machine)
     active = machine.get('node')
     label = NODES[active][4] if active in NODES else '判断（仕事の記録なし）' if active == 'decide' else '記録を選択してください'
     status = ' · '.join(str(v) for v in (label, machine.get('phase'),
@@ -69,3 +71,35 @@ def state_diagram_html(machine=None):
       <div style="color:#475569;font-size:12px">青枠と●が表示時点の位置です。観測待ち・終了を含む概略図です。
       「状態遷移」で再生すると、途中の判断やスキル作成も順に確認できます。</div>
     </div>'''
+
+
+FOCUSED = {
+    'select_goal': '小目標を選ぶ', 'assess_goal': '小目標を評価',
+    'design_experiment': '実験を設計', 'inspect_target': '対象を確認',
+    'judge_effect': '効果判定（実測優先）', 'choose_method': '方法を選ぶ',
+    'resolve_arguments': 'スキル引数を決める', 'skill_creation': 'スキルを作成',
+}
+
+
+def focused_diagram_html(machine):
+    positions = {'observe':(15,80), 'judge_effect':(205,20), 'assess_goal':(395,20),
+        'select_goal':(585,20), 'choose_method':(585,125), 'design_experiment':(395,230),
+        'inspect_target':(205,230), 'resolve_arguments':(775,125), 'skill_creation':(775,230),
+        'run':(205,345), 'wait':(15,345), 'end':(395,345)}
+    titles = {**FOCUSED, 'observe':'観測と機械測定', 'run':'検証・記録', 'wait':'操作・観測待ち', 'end':'終了・停止'}
+    edges = [('observe','judge_effect'),('judge_effect','assess_goal'),('assess_goal','select_goal'),
+        ('select_goal','choose_method'),('choose_method','design_experiment'),('choose_method','resolve_arguments'),
+        ('choose_method','skill_creation'),('design_experiment','inspect_target'),('inspect_target','run'),('run','wait')]
+    active=machine.get('node')
+    if active == 'build':
+        active = 'skill_creation'
+    boxes=[]
+    for key,(x,y) in positions.items():
+        selected=active==key
+        boxes.append(f'<g data-state="{key}" data-active="{str(selected).lower()}"><rect x="{x}" y="{y}" width="175" height="70" rx="10" fill="{"#dbeafe" if selected else "white"}" stroke="{"#1d4ed8" if selected else "#94a3b8"}"/><text x="{x+9}" y="{y+22}" font-size="11">{"● 現在位置" if selected else ""}</text><text x="{x+9}" y="{y+47}" font-size="14">{titles[key]}</text></g>')
+    paths=[]
+    for a,b in edges:
+        x,y=positions[a];u,v=positions[b]
+        paths.append(f'<path d="M{x+87},{y+35} L{u+87},{v+35}"/>')
+    status=escape(titles.get(active,'判断')+' · '+str(machine.get('phase','')))
+    return f'<div style="background:#f8fafc;padding:12px"><b>状態遷移と現在位置</b><p>{status}</p><svg xmlns="http://www.w3.org/2000/svg" role="img" aria-label="分割された判断タスク" viewBox="0 0 970 470" style="width:100%;max-height:450px"><g stroke="#94a3b8" fill="none">{"".join(paths)}</g>{"".join(boxes)}<text x="15" y="450" font-size="12">機械測定はLLM判定を省略。対象不一致は設計へ、同条件の反復は小目標評価へ差し戻します。</text></svg></div>'

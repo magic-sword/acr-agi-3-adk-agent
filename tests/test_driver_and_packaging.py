@@ -74,5 +74,8 @@ class DriverTests(unittest.TestCase):
         self.assertIn("agent/cognition/workflow.py", SOURCES)
         self.assertIn("agent/cognition/library.py", SOURCES)
         self.assertIn("agent/cognition/skills.py", SOURCES)
+        for module in ('tasks', 'focused', 'routing'):
+            self.assertIn(f'agent/cognition/{module}.py', SOURCES)
+        self.assertFalse(any(path.startswith('tests/') for path in SOURCES))
         self.assertTrue(all(w.is_file() for w in ADK_WHEELS))
         self.assertIn("google-adk==2.0.0", str(notebook))

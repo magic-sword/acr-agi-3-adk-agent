@@ -13,12 +13,27 @@ class CompletionTool(BaseTool):
             'Submit one next job. Call alone. Invalid submissions can be corrected. '
             'propose_skill creates a candidate only; the host owns testing and promotion.'
             if name=='propose_skill' else
-            'Choose one of the currently offered jobs. Call alone. '
+            'Complete only the assigned task with its exact task_id. Call alone. '
             'CLICK requires explicit original-pixel x,y. trial spends real game actions.'))
         self.runtime, self.contract = runtime, contract
 
     def _get_declaration(self):
         schema = self.contract.model_json_schema()
+        if self.name == 'submit_method':
+            schema['properties']['method']['enum'] = self.runtime._available_methods()
+            if not any(m in self.runtime._available_methods() for m in ('invoke','trial')):
+                schema['properties'].pop('skill_id', None)
+        if self.name == 'submit_experiment':
+            from agent.controls import ACTION_TO_BUTTON
+            allowed = [ACTION_TO_BUTTON[a] for a in self.runtime.obs.get('available_actions', [])
+                       if a in ACTION_TO_BUTTON and a != 'RESET']
+            action = schema['$defs']['Action']
+            action['properties']['action']['enum'] = allowed
+            if allowed == ['CLICK']:
+                action['required'] = ['action', 'x', 'y']
+            if 'CLICK' not in allowed:
+                action['properties'].pop('x', None)
+                action['properties'].pop('y', None)
         if self.name == 'submit_review':
             measured = self.runtime.experiments.automatic_review()
             if measured is not None:
@@ -86,6 +101,16 @@ class CompletionTool(BaseTool):
             return {'accepted': False, 'redesign_required': True, 'next': 'experiment_design',
                     'experiment_id': exc.page['id'], 'reason': str(exc)}
         except ValueError as e:
+            if hasattr(self.runtime, 'task_corrections'):
+                self.runtime.task_corrections += 1
+                if self.runtime.task_corrections >= 3:
+                    from .tasks import TaskFailure
+                    failure = TaskFailure(task_id=self.runtime.task_id, reason=str(e)[:500])
+                    self.runtime.submission = failure
+                    self.runtime.proposed_job = failure
+                    tool_context.actions.skip_summarization = True
+                    return {'accepted':False, 'terminal':True, 'error':str(e)[:500],
+                            'reason':'two correction attempts did not produce a valid task answer'}
             correction = 'Correct the reported field error using this tool schema.'
             if self.name == 'submit_decision':
                 correction += ' Every decision needs kind, purpose, experiment (for act), and action (null for a non-act job).'

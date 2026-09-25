@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from agent.cognition.notebook import Notebook
-from agent.cognition.workflow import CognitiveRuntime
+from legacy_runtime_fixture import LegacyRuntime as CognitiveRuntime
 from agent.local_vlm import LocalVisionLlm
 from scripts.agent_monitor import Run, Timeline
 from test_decide_run import call, act, context, ack, revised

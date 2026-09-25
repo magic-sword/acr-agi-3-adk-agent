@@ -69,6 +69,13 @@ class ReviewUnderstanding(Contract):
     open_question: str = Field(min_length=1, max_length=250)
     subgoal_reason: str = Field(min_length=1, max_length=250)
 
+class EffectFact(Contract):
+    experiment_id: str
+    verdict: Literal["supported", "unsupported", "inconclusive"]
+    finding: str = Field(min_length=1, max_length=400)
+    evidence_ids: list[str] = Field(min_length=1, max_length=4)
+
+
 class ExperimentReview(Contract):
     experiment_id: str
     verdict: Literal['supported', 'unsupported', 'inconclusive']
@@ -184,7 +191,7 @@ class ExperimentRedesign(Contract):
     reason: str
 
 class Memory(Contract):
-    schema_version: int = 6
+    schema_version: int = 7
     revision: int = 0
     run_id: str
     game_id: str

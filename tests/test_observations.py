@@ -10,7 +10,7 @@ from agent.observation import attach_visuals
 from agent.cognition.evidence import EvidenceStore
 from agent.cognition.library import SkillLibrary
 from agent.cognition.state import Draft
-from agent.cognition.workflow import CognitiveRuntime
+from legacy_runtime_fixture import LegacyRuntime as CognitiveRuntime
 from agent.local_vlm import LocalVisionLlm
 from test_skill_learning import obs, spec
 from test_decide_run import call, context, ack

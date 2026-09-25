@@ -209,8 +209,8 @@ class Notebook:
             'verdict': review['verdict'], 'observed_fact': review['finding'],
             'evidence_ids': review['evidence_ids'],
             'understanding': review.get('understanding'),
-            'subgoal_status': review['subgoal_status'],
-            'next_step': review['next_step'], 'update': review['update'],
+            'subgoal_status': review.get('subgoal_status', 'pending_assessment'),
+            'next_step': review.get('next_step', 'assess_goal'), 'update': review.get('update', ''),
             'revision_required': review['verdict'] != 'supported',
             'remaining_predeclared_attempts': max(0, data['plan']['max_attempts'] - data['attempt']),
         })

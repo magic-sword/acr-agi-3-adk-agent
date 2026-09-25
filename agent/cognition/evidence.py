@@ -13,6 +13,7 @@ class EvidenceStore:
         self._directory = TemporaryDirectory(prefix='arc-evidence-')
         self.index = {}
         self.segment = 0
+        self.pinned = set()
 
     def add(self, observation, *, boundary=False, source_action=None):
         oid = observation['observation_id']
@@ -30,8 +31,21 @@ class EvidenceStore:
                            'source_action': {k: v for k, v in (source_action or {}).items()
                                              if k in ('decision_id', 'observation_id', 'step', 'action')},
                            'event_id': record.get('animation', {}).get('event_id')}
+        self._evict(protect={oid})
+
+    def pin(self, observation_ids):
+        ids = set(observation_ids)
+        if len(ids) > 2 or not ids <= self.index.keys():
+            raise ValueError('pin at most two retained experiment endpoints')
+        self.pinned = ids
+        self._evict()
+
+    def _evict(self, protect=frozenset()):
         while len(self.index) > self.capacity:
-            self.index.pop(next(iter(self.index)))['path'].unlink()
+            key = next((key for key in self.index if key not in self.pinned | protect), None)
+            if key is None:
+                break
+            self.index.pop(key)['path'].unlink()
 
     def list(self):
         return [{k: v for k, v in item.items() if k != 'path'} for item in self.index.values()]

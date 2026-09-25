@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from agent.cognition.state import Decision, ExperimentReview
-from agent.cognition.workflow import CognitiveRuntime
+from legacy_runtime_fixture import LegacyRuntime as CognitiveRuntime
 from agent.local_vlm import LocalVisionLlm
 from scripts.agent_monitor import Timeline, Run, dashboard_html
 from scripts.eval_reporting import diagnostics

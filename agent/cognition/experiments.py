@@ -5,7 +5,7 @@ progress. Semantic verdicts belong to a separate model job with actual evidence.
 """
 from copy import deepcopy
 
-from .state import ExperimentReview
+from .state import ExperimentReview, EffectFact
 
 class RepeatedExperiment(ValueError):
     def __init__(self, page):
@@ -32,6 +32,7 @@ class Experiments:
     def __init__(self, notebook, emit):
         self.notebook, self.emit = notebook, emit
         self.sequence = 0
+        self.facts_only = False
 
     @property
     def active(self):
@@ -96,7 +97,7 @@ class Experiments:
             scope = plan.expected.model_dump()
             context_region = plan.context_region.model_dump() if plan.context_region else None
             if (action_key(data['action']) == action_key(action) and
-                    expected['kind'] == scope['kind'] and expected['region'] == scope['region'] and
+                    (self.facts_only or expected['kind'] == scope['kind']) and expected['region'] == scope['region'] and
                     data['before_pixels'] == pixels(obs, scope['region']) and
                     data['plan']['context_region'] == context_region and
                     data['before_context'] == pixels(obs, context_region) and
@@ -207,6 +208,9 @@ class Experiments:
             finding = f'Observed level count: {a} -> {b}.'
         if verdict is None:
             return None
+        if self.facts_only:
+            return EffectFact(experiment_id=page['id'], verdict=verdict, finding=finding,
+                              evidence_ids=[outcome['experience_id']])
         attempts_left = d['plan']['max_attempts'] - d['attempt']
         update = ('Expected observation occurred. Decide whether the subgoal is answered or more evidence is needed.'
                   if verdict == 'supported' else
@@ -231,7 +235,7 @@ class Experiments:
             raise ValueError('review must cite the actual resulting experience ID')
         if not set(review.evidence_ids) <= {d['before_id'], d['after_id'], d['outcome']['experience_id']}:
             raise ValueError('review evidence must come from this experiment')
-        if any(not value.strip() for value in review.understanding.model_dump().values()):
+        if isinstance(review, ExperimentReview) and any(not value.strip() for value in review.understanding.model_dump().values()):
             raise ValueError('review understanding must state an assumption, remaining question and subgoal reason')
         measured = self.automatic_review()
         if measured and review.verdict != measured.verdict:
@@ -264,11 +268,12 @@ class Experiments:
         d.update(status='reviewed', review=review.model_dump(), reviewer=source)
         result = n._commit(page['id'], 'experiment', page['title'], page['text'],
                            page['evidence_ids'], author=source, data=d)
-        goal = n.pages[d['subgoal_id']]
-        n._commit(goal['id'], 'subgoal', goal['title'], goal['text'], review.evidence_ids,
-                  author=source, data={**goal['data'], 'status': review.subgoal_status,
-                                       'latest_experiment': page['id'], 'update': review.update,
-                                       'status_reason': review.understanding.subgoal_reason})
+        if isinstance(review, ExperimentReview):
+            goal = n.pages[d['subgoal_id']]
+            n._commit(goal['id'], 'subgoal', goal['title'], goal['text'], review.evidence_ids,
+                      author=source, data={**goal['data'], 'status': review.subgoal_status,
+                                           'latest_experiment': page['id'], 'update': review.update,
+                                           'status_reason': review.understanding.subgoal_reason})
         n.system_bookmark('active_experiment', '')
         n.system_bookmark('latest_review', page['id'])
         self.emit('experiment_reviewed', experiment=result)

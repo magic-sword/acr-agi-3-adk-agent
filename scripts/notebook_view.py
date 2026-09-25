@@ -7,7 +7,9 @@ from html import escape
 
 KINDS = {'goal': '大目標', 'subgoal': '小目標', 'hypothesis': '仮説', 'plan': '計画',
          'interpretation': '解釈', 'experiment': '実験', 'result': '観測結果'}
-WORK = {'experiment_design': '実験設計', 'experiment_review': '結果判定', 'skill_creation': 'スキル作成'}
+WORK = {'select_goal':'小目標選択', 'assess_goal':'小目標評価', 'design_experiment':'実験設計',
+        'inspect_target':'対象確認', 'judge_effect':'効果判定', 'choose_method':'方法選択',
+        'resolve_arguments':'引数決定', 'experiment_design': '実験設計', 'experiment_review': '結果判定', 'skill_creation': 'スキル作成'}
 STATUS = {'active': '進行中', 'open': '有効', 'completed': '完了', 'abandoned': '取り下げ',
           'withdrawn': '撤回済み', 'awaiting_observation': '操作結果待ち',
           'awaiting_review': '判定待ち', 'reviewed': '判定済み', 'interrupted': '中断'}
@@ -194,9 +196,10 @@ def notebook_html(snapshot):
     origin = note.get('opening_event') or {}
     segment = opening.get('segment')
     shown = origin.get('event') == 'notebook_opened'
+    human_only = origin.get('event') == 'task_opened'
     work = WORK.get(origin.get('work'), origin.get('work') or '担当の記録なし')
     step = snapshot['event'].get('step', '—')
-    intro = ('LLM呼び出し開始時の提示内容' if shown else '処理開始時のノート（LLMへの提示記録はまだありません）')
+    intro = ('人間用の参照ビュー（LLMにはタスクの限定入力だけを提示）' if human_only else 'LLM呼び出し開始時の提示内容' if shown else '処理開始時のノート（LLMへの提示記録はまだありません）')
     parts = [f'<header><h3>攻略ノート · step {_text(step)}</h3><p>{_text(work)} · {_text(intro)}</p></header>',
              '<p class="nbv-muted">記録された文章を、その時点の版で表示しています。追加の推論や翻訳は行っていません。</p>']
     displayed = {}
@@ -206,7 +209,7 @@ def notebook_html(snapshot):
         for depth, page in enumerate(path):
             label = '大目標' if depth == 0 else f'小目標 {depth}'
             parts.append('<li>' + page_html(page, label=label, segment=segment) + '</li>')
-            displayed[(page.get('id'), page.get('revision'))] = '本文を提示' if shown else '処理の入力'
+            displayed[(page.get('id'), page.get('revision'))] = '本文を提示' if shown else ('人間用の参照' if human_only else '処理の入力')
         parts.append('</ol>')
         for key, label in [('active_experiment', '今、検証していること'),
                            ('latest_review', '直前の実験から分かったこと'),
@@ -221,7 +224,7 @@ def notebook_html(snapshot):
                 parts.append(page_html(page, label=label, segment=segment))
                 abbreviated = key == 'latest_review' and 'kind' not in page
                 displayed[reference] = (
-                    '要点のみ提示' if abbreviated else '本文を提示') if shown else '処理の入力'
+                    '要点のみ提示' if abbreviated else '本文を提示') if shown else ('人間用の参照' if human_only else '処理の入力')
     else:
         parts.append('<p>このステップでは、まだ開始時のノートが記録されていません。</p>')
     reads = note.get('reads', ())

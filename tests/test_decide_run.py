@@ -6,7 +6,7 @@ import tempfile
 import unittest
 import uuid
 from unittest.mock import patch
-from agent.cognition.workflow import CognitiveRuntime
+from legacy_runtime_fixture import LegacyRuntime as CognitiveRuntime
 from agent.local_vlm import LocalVisionLlm
 from agent.cognition.state import Decision
 from test_skill_learning import obs, spec, candidate, promote

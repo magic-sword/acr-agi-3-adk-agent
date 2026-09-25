@@ -9,7 +9,8 @@ from scripts.agent_monitor import read_journal, Timeline, Run, discover_evaluati
 from agent.cognition.workflow import CognitiveRuntime
 from agent.local_vlm import LocalVisionLlm
 from test_skill_learning import obs
-from test_decide_run import call, act
+from test_decide_run import call, act, context
+from test_focused_tasks import answer_for
 
 
 class ReplayTests(unittest.TestCase):
@@ -76,13 +77,14 @@ class ReplayTests(unittest.TestCase):
                 s=timeline.snapshot(len(timeline.events)-1)
                 self.assertEqual(s['state'],'DECIDE');self.assertEqual(s['phase'],'処理中')
                 self.assertIsNone(s['output'])
-                return call('submit_decision',act())
+                return call(*answer_for(context(payload)))
             with patch.object(LocalVisionLlm,'_complete',answer):r.decide(obs())
             timeline=Timeline(Run(Path(d),r.session_id));timeline.load()
             rows=[e for e in timeline.events if e['_journal']=='states']
             self.assertEqual([(e['event'],e['state']) for e in rows],
                              [('state_entered','DECIDE'),('state_exited','DECIDE'),
-                              ('state_entered','RUN'),('state_exited','RUN')])
+                              ('state_entered','RUN'),('state_exited','RUN')]*3)
+            self.assertEqual(r.memory.last_result['status'],'action')
             sequence=[e['sequence'] for e in timeline.events]
             self.assertEqual(sequence,sorted(set(sequence)))
 

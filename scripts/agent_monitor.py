@@ -100,10 +100,12 @@ class Timeline:
         notebook_opening_event = None
         notebook_reads, notebook_changes = (), ()
         notebook_events = []
+        host_judgments = []
         machine = {'node': 'observe', 'phase': '初期観測待ち', 'work': None, 'job': None}
         for index,event in enumerate(self.events):
             kind, name = event['_journal'], event.get('event')
             if kind == 'observations':
+                host_judgments = []
                 notebook_view = notebook_read = notebook_change = notebook_opening_event = None
                 notebook_reads, notebook_changes = (), ()
                 incoming_action = action if action_step is not None and event.get('step') == action_step+1 else None
@@ -124,6 +126,7 @@ class Timeline:
                         job = (stage_input.get('job') or {}) if isinstance(stage_input, dict) else {}
                         job_kind = job.get('kind') or ('propose_skill' if 'spec' in job else 'submit_review' if 'verdict' in job else 'redesign' if 'blocked_action' in job else 'defer_skill' if 'reason' in job else None)
                         machine = {'node': ('build' if work == 'skill_creation' else
+                                            work if work in ('select_goal','assess_goal','design_experiment','inspect_target','judge_effect','choose_method','resolve_arguments') else
                                             'design' if work == 'experiment_design' else
                                             'review' if work == 'experiment_review' else 'decide')
                                    if state == 'DECIDE' else 'run',
@@ -159,12 +162,19 @@ class Timeline:
                     notebook_view = event.get('view')
                     notebook_opening_event = event
                     notebook_read, notebook_reads = None, ()
+                elif name == 'task_opened':
+                    context = event.get('task', {})
+                    notebook_view = event.get('human_view')
+                    notebook_opening_event = event
+                    notebook_read, notebook_reads = None, ()
                 elif name == 'notebook_read':
                     notebook_read = event
                     notebook_reads += (event,)
                 elif name in ('note_changed', 'bookmark_changed', 'notebook_boundary'):
                     notebook_change = event
                     notebook_changes += (event,)
+            if kind == 'artifacts' and name in ('target_checked','task_rejected','plan_delta'):
+                host_judgments.append(event)
             if kind == 'requests':
                 request = event
             if kind == 'model':
@@ -192,7 +202,7 @@ class Timeline:
                     display_status = '受付済み・次の観測あり（効果の成功とは別）'
             yield dict(event=event, index=index, total=len(self.events), current=current, before=before,
                         state=state, phase=phase, input=stage_input, output=stage_output,
-                        machine=machine,
+                        machine=machine, host_judgments=host_judgments[-8:],
                         context=context, action=action, action_step=action_step, action_status=display_status,
                         prediction=prediction, experiment=experiment, review=review,
                         incoming_action=incoming_action, incoming_status=incoming_status,
@@ -313,6 +323,8 @@ def dashboard_html(snapshot, directory, *, include_images=True):
     <b>この時点の選択操作（step {escape(str(s['action_step']))}）: {escape(action_label)}</b> · {escape(s['action_status'])}<br>赤丸は各画面に対して選択したクリック位置です。</p>
     <p><b>選択した操作の予測:</b> {escape(str(s['prediction'] or '記録なし'))}<br><b>表示中の前後差分:</b> {escape(delta)}</p>
     <p><b>攻略ノートの目標:</b> {escape(str(task))}<br><b>現在の目標経路:</b> {escape(goal_path) or '記録なし'}<br><b>攻略ノートのしおり:</b> {escape(str(summary)) or '更新なし／記録なし'}</p>
+    {focused_task_html(context)}
+    {host_judgments_html(s.get('host_judgments', []))}
     {experiment_panel}
     <details><summary>直近のイベント</summary><table style="text-align:left;width:100%"><tr><th>step</th><th>状態</th><th>イベント／ツール</th></tr>{recent}</table></details></div>'''
 
@@ -341,7 +353,7 @@ def experiment_html(snapshot):
         if verdict:
             rows += [('実測', data.get('measurement')),
                      ('判定', labels.get(verdict['verdict'], verdict['verdict']) + ' / ' + verdict['finding']),
-                     ('小目標の状態', verdict['subgoal_status']), ('次への更新', verdict['update'])]
+                     ('小目標の状態', verdict.get('subgoal_status', '別タスクで評価')), ('次への更新', verdict.get('update', '小目標の評価に渡す'))]
             understanding = verdict.get('understanding') or {}
             rows += [(label, understanding[key]) for key, label in (
                 ('reconsider_assumption', '見直す前提'), ('open_question', '残る疑問'),
@@ -352,3 +364,24 @@ def experiment_html(snapshot):
                         '</th><td>' + escape(pretty(v)) + '</td></tr>' for k, v in rows)
         parts.append('<p><b>' + label + ' · ' + escape(page['id']) + '</b></p><table>' + cells + '</table>')
     return ''.join(parts)
+
+
+def focused_task_html(context):
+    """Show the actual limited input, separately from the human notebook."""
+    if not context.get('task_id'):
+        return ''
+    labels = {'task_id':'タスクID', 'work':'担当', 'observation_id':'観測', 'goal':'固定された小目標',
+        'parent_goal':'親目標', 'previous_goal':'直前の小目標', 'question':'今回の問い', 'fact':'実験の事実',
+        'latest_fact':'直近の事実', 'rejection':'差し戻し理由', 'target':'確認する対象', 'action':'提案された操作',
+        'target_assessment':'対象確認の結果', 'last_execution':'直近の実行結果'}
+    rows = ''.join('<tr><th style="text-align:left;vertical-align:top">'+escape(labels.get(k,k))+
+                   '</th><td style="white-space:pre-wrap">'+escape(pretty(v))+'</td></tr>'
+                   for k,v in context.items() if k != 'notebook' and v is not None)
+    return '<details open><summary>この判断に渡した入力（攻略ノート全体とは別）</summary><table>'+rows+'</table></details>'
+
+
+def host_judgments_html(events):
+    labels={'target_checked':'対象矩形とクリック位置の照合', 'task_rejected':'差し戻し', 'plan_delta':'実験の変更点（ホスト比較）'}
+    rows=''.join('<li><b>'+escape(labels[e['event']])+'</b> '+escape(pretty({k:v for k,v in e.items()
+        if k in ('verdict','region','reason','details','recovery','changes')}))+'</li>' for e in events)
+    return '<details open><summary>この観測でのホスト判定</summary><ul>'+rows+'</ul></details>' if rows else ''
