@@ -1,6 +1,6 @@
 # ARC-AGI-3 skill-learning agent
 
-A local Google ADK 2.0 agent with one decision controller and a `DECIDE ↔ RUN` loop.
+A local Google ADK 2.0 agent with a shared puzzle notebook and a `DECIDE ↔ RUN` loop.
 It explores visual games, proposes executable skill candidates from acknowledged experience,
 tests candidates through real game actions, and promotes only versions passing host evaluation.
 Qwen3-VL-4B-Instruct runs locally. Without a model, the driver issues deterministic control probes.
@@ -52,8 +52,11 @@ make visualize                 # outputs/agent-visualization/index.html
 actual actions, observations, model requests and skill lifecycle events under `outputs/evaluations/`.
 It never uploads or submits to Kaggle. Short public-game runs are not leaderboard estimates.
 
-Learning starts with an empty procedural library per game. Two fixed method skills,
-`design-experiment` and `skill-creator`, are loaded on demand through ADK.
+Learning starts with an empty procedural library per game. Normal decisions and skill construction
+use separate prompts and share the same versioned puzzle notebook. `notebook` and `design-experiment`
+are available through ADK; `skill-creator` is supplied automatically only for construction jobs.
+The current goal and latest host result are opened automatically; other notes are read through bookmarks.
+See the [notebook design and references](docs/notebook-memory-design-ja.md).
 Learned procedures are scoped to a game version; they are not Python or shell code.
 The first implementation supports up to eight guarded steps and measurable pixel/level effects.
 Every step yields to the driver for a fresh observation. Unexpected effects stop reuse.
@@ -94,6 +97,8 @@ python3 scripts/analyze_agent.py outputs/cognition
 The HTML viewer links decisions, actual execution, and skill learning. `<run>.learning.jsonl`
 records experience, drafts, trials, evaluation, promotion and suspension.
 `<run>/skills/library.json` stores immutable versions and evaluation evidence.
+`<run>.notebook.jsonl` records opened/read pages, revisions, withdrawals and bookmarks.
+`<run>/notebook/` preserves each page version. Replay shows the pages known at that time.
 Requests, tool execution, observations and driver acknowledgements have separate journals.
 These are observable decision artifacts, not a reconstruction of private model reasoning.
 

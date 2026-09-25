@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 import struct
 
-JOURNALS = ('observations', 'states', 'requests', 'tools', 'model', 'artifacts', 'execution', 'learning')
+JOURNALS = ('observations', 'states', 'requests', 'tools', 'model', 'artifacts', 'execution', 'learning', 'notebook')
 PALETTE = ('#FFFFFF', '#CCCCCC', '#999999', '#666666', '#333333', '#000000', '#E53AA3', '#FF7BCC',
            '#F93C31', '#1E93FF', '#88D8F1', '#FFDC00', '#FF851B', '#921231', '#4FCC30', '#A356D6')
 
@@ -95,6 +95,8 @@ class Timeline:
         prediction = None
         incoming_action, incoming_status = None, None
         request = response = None
+        notebook_view = notebook_read = notebook_change = None
+        notebook_events = []
         for index,event in enumerate(self.events):
             kind, name = event['_journal'], event.get('event')
             if kind == 'observations':
@@ -115,9 +117,16 @@ class Timeline:
                     else:
                         stage_output = event.get('output')
                         if state == 'RUN' and isinstance(stage_output, dict):
-                            context = dict(context, **{k: stage_output[k] for k in ('task','hypotheses') if k in stage_output})
-                            if 'summary' in stage_output:
-                                context['previous_summary'] = stage_output['summary']
+                            if 'notebook' in stage_output:
+                                context = dict(context, notebook=stage_output['notebook'])
+            if kind == 'notebook':
+                notebook_events.append(event)
+                if name == 'notebook_opened':
+                    notebook_view = event.get('view')
+                elif name == 'notebook_read':
+                    notebook_read = event
+                elif name in ('note_changed', 'bookmark_changed', 'notebook_boundary'):
+                    notebook_change = event
             if kind == 'requests':
                 request = event
             if kind == 'model':
@@ -148,6 +157,8 @@ class Timeline:
                         prediction=prediction,
                         incoming_action=incoming_action, incoming_status=incoming_status,
                         request=request, response=response, tools=tools[-16:], learning=learning[-12:],
+                        notebook={'opening': notebook_view, 'last_read': notebook_read,
+                                  'last_change': notebook_change, 'recent': notebook_events[-12:]},
                         recent=self.events[max(0,index-11):index+1])
 
 
@@ -233,8 +244,9 @@ def dashboard_html(snapshot, directory, *, include_images=True):
     badges = ' → '.join('<span style="padding:6px 14px;border-radius:5px;background:'+('#2563eb;color:white' if s['state']==state else '#e2e8f0;color:#334155')+'">'+escape(str(state))+'</span>' for state in ('DECIDE','RUN'))
     recent = ''.join('<tr><td>'+escape(str(r.get('step', '—')))+'</td><td>'+escape(r.get('state', ''))+'</td><td>'+escape(str(r.get('event', '')))+' '+escape(str(r.get('tool', '')))+'</td></tr>' for r in s['recent'])
     context = s['context']
-    task = context.get('task', '記録なし')
-    summary = context.get('previous_summary', context.get('summary', ''))
+    notebook = context.get('notebook') or {}
+    task = (notebook.get('goal') or {}).get('text', '記録なし')
+    summary = ' / '.join(b['name']+': '+b['title'] for b in notebook.get('bookmarks', []))
     incoming = s['incoming_action'] or {}
     incoming_name = incoming.get('action','記録なし')
     incoming_label = buttons.get(incoming_name,incoming_name)
@@ -251,11 +263,11 @@ def dashboard_html(snapshot, directory, *, include_images=True):
     elif a and b and len(a)==len(b) and all(len(x)==len(y) for x,y in zip(a,b)):
         delta = str(sum(v!=w for x,y in zip(a,b) for v,w in zip(x,y)))+' セルが変化（成功判定ではありません）'
     return f'''<div style="font:14px system-ui;color:#172554;background:#f8fafc;padding:16px;border-radius:10px">
-    <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:16px"><b>{escape(str(e.get('game_id', 'ゲーム')))} · step {escape(str(e.get('step', '—')))}</b><div>{badges}</div></div>
+    <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:16px"><b>{escape(str(e.get('game_id', 'ゲーム')))} · step {escape(str(e.get('step', '—')))}</b><div>{badges}<p>仕事: {escape(str(context.get('work', '—')))}</p></div></div>
     <p><b>{escape(s['state'])} · {escape(s['phase'])}</b> · イベント {s['index']+1}/{s['total']} · {escape(str(e.get('timestamp', '時刻なし')))}</p>
     <div style="display:flex;flex-wrap:wrap;gap:18px">{''.join(cards)}</div>
     <p><b>前画面に対する操作記録:</b> {escape(incoming_label)} · {escape(incoming_status)}<br>
     <b>この時点の選択操作（step {escape(str(s['action_step']))}）: {escape(action_label)}</b> · {escape(s['action_status'])}<br>赤丸は各画面に対して選択したクリック位置です。</p>
     <p><b>選択した操作の予測:</b> {escape(str(s['prediction'] or '記録なし'))}<br><b>表示中の前後差分:</b> {escape(delta)}</p>
-    <p><b>保持している課題:</b> {escape(str(task))}<br><b>認識メモ:</b> {escape(str(summary)) or '更新なし／記録なし'}</p>
+    <p><b>攻略ノートの目標:</b> {escape(str(task))}<br><b>攻略ノートのしおり:</b> {escape(str(summary)) or '更新なし／記録なし'}</p>
     <details><summary>直近のイベント</summary><table style="text-align:left;width:100%"><tr><th>step</th><th>状態</th><th>イベント／ツール</th></tr>{recent}</table></details></div>'''

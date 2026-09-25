@@ -4,16 +4,18 @@
 
 ## 実行
 
-ADK Workflowは `DECIDE → RUN → 必要時DECIDE`。LLM役割は `decision_controller` 一つ。
-認識・仮説・課題の小さい更新と次の仕事を同じ判断で提出する。RUNが更新を反映し、操作の実行は既存のARCドライバが担当する。
+ADK Workflowは `DECIDE → RUN → 必要時DECIDE`。通常判断の `decision_controller` と、必要時だけ呼ぶ `skill_builder` が一冊の攻略ノートを共有する。並列実行はしない。
+目標・仮説・計画はノート用ツールで更新し、次の仕事を提出する。RUNが仕事を実行し、操作の実行は既存のARCドライバが担当する。旧 `MemoryPatch` と `Memory.task / summary / hypotheses` は削除した。
+ノートの仕様と変更理由は[攻略ノートの設計・実装記録](notebook-memory-design-ja.md)を参照。
 
-`submit_decision`の仕事は `act / invoke / trial / evaluate / stop`。
-`propose_skill`は候補作成・改版。モデルは候補IDを指定して試行・評価できるが、採用状態や評価結果を直接書けない。
+`submit_decision`の仕事は `act / invoke / trial / evaluate / learn / stop`。
+`propose_skill`はスキル作成の仕事だけで公開する候補作成・改版ツール。モデルは候補IDを指定して試行・評価できるが、採用状態や評価結果を直接書けない。
 
 - `act`: 利用可能な一操作。CLICKは元画像の整数座標を明示する。
 - `invoke`: active版の手続きを実行する。
 - `trial`: candidate版を現在の実ゲームで試す。通常と同じ操作・時間予算を使う。
 - `evaluate`: 固定したホスト評価を実行。未評価・不明は合格としない。
+- `learn`: 受付済み経験IDを指定し、スキル作成の仕事へ移る。専用の指示・Schemaをその呼び出しだけへ渡す。
 - `stop`: 課題の実行を終える。
 
 スキルの各手の後に実観測と受付を確認する。次の開始条件を満たせば、同じ手続き内ではLLMを呼ばず続行できる。効果不一致・判定不能・境界で戻る。実行受付のない変化は学習の成功証拠に使わない。
@@ -31,7 +33,9 @@ ADK Workflowは `DECIDE → RUN → 必要時DECIDE`。LLM役割は `decision_co
 
 ## 候補と登録
 
-固定メタスキルは `design-experiment` と `skill-creator` の二つ。ADKのネイティブな段階的ロードを維持し、旧13種類の推論スキルは削除した。
+固定スキルは `notebook`、`design-experiment`、`skill-creator`。前二つはADKから必要時にロードする。`skill-creator`は作成の仕事に入ったとき、ホストが専用プロンプトへ読み込み、ロード記録を残す。通常判断には手続きの詳細Schemaを渡さない。旧13種類の推論スキルは削除済み。
+
+通常判断と作成の各呼び出しには、ノートの現在目標・最新の自動記録・しおり一覧を渡す。その他のページは最大6件の索引から選んで読み出す。レベル／リセット境界で局所目標としおりを初期化し、旧ページはID指定や過去範囲の検索で参照できる。ノートの記述によって固定評価を変更することはできない。
 
 候補はゲーム版ID、説明、引数、手続き、根拠となる経験ID、実例の引数を持つ。完全な連続実行の記録に一致するseedがなければ作成できない。手書きの成功宣言では作れない。
 

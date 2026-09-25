@@ -43,6 +43,9 @@ def diagnostics(directory: Path) -> dict:
     calls = [r for p in directory.glob('*.model.jsonl') for r in read_jsonl(p)]
     tools = [r for p in directory.glob('*.tools.jsonl') for r in read_jsonl(p) if r.get('event')=='tool_finished']
     learning = [r for p in directory.glob('*.learning.jsonl') for r in read_jsonl(p)]
+    notebook = [r for p in directory.glob('*.notebook.jsonl') for r in read_jsonl(p)]
+    auto_skills = [r for p in directory.glob('*.tools.jsonl') for r in read_jsonl(p)
+                   if r.get('event') == 'skill_instructions_loaded']
     turns = [r for p in directory.glob('*.jsonl') if p.name.count('.')==1 for r in read_jsonl(p)]
     actions = [t for t in turns if t.get('action',{}).get('status')=='action']
     valid = sum(bool(c.get('schema_valid')) for c in calls)
@@ -70,6 +73,11 @@ def diagnostics(directory: Path) -> dict:
         'tokens':tokens if measured else None, 'usage_recorded_calls':measured,
         'state_visits':dict(Counter(s for t in turns for s in t.get('trace',[]))),
         'reasoning_calls_by_state':dict(Counter(c.get('state') for c in calls)),
+        'reasoning_calls_by_work':dict(Counter(c.get('work') for c in calls)),
+        'notebook_events':dict(Counter(r.get('event') for r in notebook)),
+        'notebook_tool_calls':dict(Counter(n for n in requests if n in
+            ('read_notebook','write_note','erase_note','set_bookmark'))),
+        'host_loaded_skills':dict(Counter(r['skill'] for r in auto_skills)),
         'skill_tool_calls':dict(Counter(n for n in requests if n in ('load_skill','load_skill_resource','propose_skill','read_skill'))),
         'loaded_skills':dict(Counter(t['arguments'].get('skill_name') for t in tools if t['tool']=='load_skill' and t['status']=='success')),
         'tool_execution_errors':sum(t.get('status')=='error' for t in tools),
@@ -119,6 +127,8 @@ def write_report(root: Path, results: list[dict]) -> dict:
               '- `cognition/*.tools.jsonl`: ツール実行前後の記録。読み込んだスキル名・成否・引数・結果。',
               '- `cognition/*.artifacts.jsonl`: 判断の更新と選択された操作。未実行も区別。',
               '- `cognition/*.learning.jsonl`: 経験・候補作成・実試行・評価・昇格・停止。',
+              '- `cognition/*.notebook.jsonl`: 攻略ノートの入力ページ・参照・版の変更・撤回・しおり。',
+              '- `cognition/<run>/notebook/`: ノートの各版としおりの保存先。',
               '- `cognition/<run>/skills/library.json`: 版と評価証拠を含むライブラリ。',
               '- `cognition/*.requests.jsonl` と `request-images/`: 実HTTP入力と画像参照。',
               '- `cognition/*.execution.jsonl`: ドライバの送信・受付・結果不明イベント。',

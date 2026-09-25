@@ -74,12 +74,12 @@ class BenchmarkReplay:
         for image in self.images:
             image.add_class('arc-replay-image')
         screens = W.HBox([W.VBox([label,img],layout=W.Layout(width='50%')) for label,img in zip(self.captions,self.images)])
-        self.panels = [W.HTML() for _ in range(6)]
+        self.panels = [W.HTML() for _ in range(7)]
         self.animation = W.Image(format='png',layout=W.Layout(width='384px',height='384px',object_fit='contain'))
         self.animation_caption = W.HTML()
         self.animation_slider = W.IntSlider(min=0,max=0,description='フレーム',continuous_update=False)
         self.details = W.Accordion(children=[*self.panels,W.VBox([self.animation_slider,self.animation_caption,self.animation])])
-        for i,name in enumerate(('状態の入力','状態の出力','選択イベント','HTTP入力','モデル応答','ツール・学習','記録済みアニメーション')):
+        for i,name in enumerate(('状態の入力','状態の出力','選択イベント','HTTP入力','モデル応答','ツール・学習','攻略ノート（入力・参照・変更）','記録済みアニメーション')):
             self.details.set_title(i,name)
         self.details.selected_index = None
         self.widget = W.VBox([W.HTML('<h3>ベンチマーク再生</h3><style>.arc-replay-image img{image-rendering:pixelated}</style>'),
@@ -227,7 +227,7 @@ class BenchmarkReplay:
         s=self.snapshot();index=self.details.selected_index
         if s is None or index is None:
             return
-        if index==6:
+        if index==7:
             obs=s['current'] or {}
             key=obs.get('observation_id')
             if key!=self._animation_key:
@@ -243,11 +243,11 @@ class BenchmarkReplay:
             self._render_animation()
             return
         values=[s['input'],s['output'] if s['output'] is not None else 'この時点の出力はまだ記録されていません。',
-                s['event'],s['request'],s['response'],{'tools':s['tools'],'learning':s['learning']}]
+                s['event'],s['request'],s['response'],{'tools':s['tools'],'learning':s['learning']},s['notebook']]
         self.panels[index].value=json_html(values[index])
 
     def _render_animation(self):
-        if self.details.selected_index!=6:
+        if self.details.selected_index!=7:
             return
         if not self._frames:
             self.animation.value=b'';self.animation_caption.value='途中フレームの記録なし'

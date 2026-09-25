@@ -23,7 +23,7 @@ def render(directory):
     sections = []
     for path in sorted(directory.glob('*.jsonl')):
         if path.name.endswith(('.model.jsonl', '.observations.jsonl', '.tools.jsonl',
-                               '.artifacts.jsonl', '.requests.jsonl', '.execution.jsonl', '.learning.jsonl', '.states.jsonl')):
+                               '.artifacts.jsonl', '.requests.jsonl', '.execution.jsonl', '.learning.jsonl', '.states.jsonl', '.notebook.jsonl')):
             continue
         rows = read_records(path)
         if not rows:
@@ -35,20 +35,20 @@ def render(directory):
                 return '<dt>'+escape(label)+'</dt><dd><pre>'+escape(value)+'</pre></dd>'
             sections.append('<details open><summary>Step '+escape(str(row.get('step')))
                             +' · '+escape(' → '.join(row.get('trace',[])))+'</summary><dl>')
-            for label,key in [('観測ID','observation_id'),('現在の課題','task'),('認識の更新','summary'),
+            for label,key in [('観測ID','observation_id'),('目標ノートの版','goal_ref'),
                               ('実操作と観測結果','outcome'),('次の操作／停止','action')]:
                 sections.append(field(label,row.get(key)))
             sections.append('</dl><details><summary>ツール実行・内部処理・エラー</summary><pre>'
                             + escape(json.dumps({k: row.get(k) for k in
                                       ('tool_executions', 'internal_trace', 'transitions', 'errors')},
                                       ensure_ascii=False, indent=2)) + '</pre></details></details>')
-    # Include attempts even if the process stopped before COMMIT or model logging.
+    # Include attempts even if the process stopped before a decision or model logging.
     for path in sorted(directory.glob('*.tools.jsonl')):
         sections.append('<details><summary>ツール実行イベント（未確定ターンを含む）: '
                         + escape(path.name) + '</summary><pre>'
                         + escape(json.dumps(read_records(path), ensure_ascii=False, indent=2))
                         + '</pre></details>')
-    for suffix, label in (('artifacts', '中間成果物（未実行を含む）'), ('execution', '実操作の送信と受付'), ('learning', '経験・スキル作成・試験・採用')):
+    for suffix, label in (('artifacts', '中間成果物（未実行を含む）'), ('execution', '実操作の送信と受付'), ('learning', '経験・スキル作成・試験・採用'), ('notebook', '攻略ノートの入力・参照・改訂')):
         for path in sorted(directory.glob(f'*.{suffix}.jsonl')):
             sections.append('<details><summary>' + label + ': ' + escape(path.name) + '</summary><pre>'
                             + escape(json.dumps(read_records(path), ensure_ascii=False, indent=2))

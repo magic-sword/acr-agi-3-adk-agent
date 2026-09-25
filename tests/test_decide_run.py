@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import uuid
 from unittest.mock import patch
 from agent.cognition.workflow import CognitiveRuntime
 from agent.local_vlm import LocalVisionLlm
@@ -12,7 +13,7 @@ from test_skill_learning import obs, spec, candidate, promote
 
 
 def call(name, arguments):
-    return {'choices':[{'message':{'tool_calls':[{'id':'test-call','type':'function',
+    return {'choices':[{'message':{'tool_calls':[{'id':uuid.uuid4().hex,'type':'function',
         'function':{'name':name,'arguments':json.dumps(arguments)}}]},'finish_reason':'tool_calls'}]}
 
 
@@ -21,9 +22,9 @@ def context(payload):
                 for p in m['content'] if p.get('type')=='text')
 
 
-def act(x=0, patch_data=None):
+def act(x=0):
     return {'kind':'act','action':{'action':'CLICK','x':x,'y':0,'reason':'Test the visible cell'},
-            'prediction':'This cell may change.', 'patch':patch_data or {}}
+            'prediction':'This cell may change.'}
 
 
 def ack(runtime):
@@ -36,29 +37,35 @@ class RuntimeTests(unittest.TestCase):
         self.addCleanup(r.close)
         return r
 
-    def test_one_controller_one_judgment_and_persistent_task(self):
-        r=self.runtime();requests=[]
-        def answer(model,p):
-            requests.append(p);return call('submit_decision',act(0,{'task':'Test zero cells','summary':'Observed zero row'}))
-        with patch.object(LocalVisionLlm,'_complete',answer):
-            result=r.decide(obs());self.assertEqual(result['action'],'ACTION6');ack(r)
-            r.decide(obs(1,[[1,0,0,0,0,0]]))
-        self.assertEqual(len(requests),2)
-        self.assertEqual(context(requests[1])['task'],'Test zero cells')
-        self.assertTrue(context(requests[1])['last_result']['acknowledged'])
-        self.assertEqual(r.memory.history[0]['trace'],['DECIDE','RUN'])
-        self.assertEqual(r.controller.name,'decision_controller')
-
-    def test_invalid_action_does_not_publish_patch(self):
+    def test_shared_notebook_goal_is_read_next_turn_without_full_history(self):
         r=self.runtime();requests=[]
         def answer(model,p):
             requests.append(p)
-            data=act(63,{'task':'invalid overwrite'}) if len(requests)==1 else act(0)
-            return call('submit_decision',data)
+            if len(requests)==1:
+                return call('write_note', {'kind':'goal','title':'Current goal','text':'Test zero cells',
+                    'evidence_ids':[], 'note_id':'goal','expected_revision':1})
+            return call('submit_decision',act())
+        with patch.object(LocalVisionLlm,'_complete',answer):
+            result=r.decide(obs());self.assertEqual(result['action'],'ACTION6');ack(r)
+            r.decide(obs(1,[[1,0,0,0,0,0]]))
+        self.assertEqual(len(requests),3)
+        c=context(requests[-1])
+        self.assertEqual(c['notebook']['goal']['text'],'Test zero cells')
+        self.assertTrue(c['notebook']['latest_result']['data']['outcome']['acknowledged'])
+        self.assertNotIn('previous_summary',c)
+        self.assertNotIn('hypotheses',c)
+        self.assertNotIn('task',r.memory.model_dump())
+        self.assertEqual(r.memory.history[0]['trace'],['DECIDE','RUN'])
+        self.assertEqual(r.controllers['action'].name,'decision_controller')
+
+    def test_invalid_action_can_be_corrected(self):
+        r=self.runtime();requests=[]
+        def answer(model,p):
+            requests.append(p)
+            return call('submit_decision',act(63) if len(requests)==1 else act())
         with patch.object(LocalVisionLlm,'_complete',answer):
             result=r.decide(obs())
         self.assertEqual(result['x'],0)
-        self.assertNotEqual(r.memory.task,'invalid overwrite')
         self.assertIn('error',json.loads(next(m['content'] for m in requests[1]['messages'] if m['role']=='tool')))
 
     def test_no_implicit_cursor_and_no_unavailable_buttons(self):
@@ -119,6 +126,9 @@ class RuntimeTests(unittest.TestCase):
             def answer(model,p):
                 requests.append(p);c=context(p);step=c['observation']['step'];skills=c['skills']
                 if step==0:return call('submit_decision',act(0))
+                if not skills and c['work']=='action':
+                    return call('submit_decision',{'kind':'learn','evidence_ids':['experience-1'],
+                        'prediction':'Build a reusable cell toggle.'})
                 if not skills:
                     return call('propose_skill',{'spec':spec(),'evidence_ids':['experience-1'],'examples':[{'x':0}]})
                 skill=skills[0];key=skill['id']
@@ -145,7 +155,7 @@ class RuntimeTests(unittest.TestCase):
             events=[json.loads(l)['event'] for l in next(Path(d).glob('*.learning.jsonl')).read_text().splitlines()]
             for event in ('skill_drafted','skill_trial_finished','skill_evaluated','skill_promoted','skill_execution_finished'):
                 self.assertIn(event,events)
-            self.assertEqual(r.memory.model_calls,7)
+            self.assertEqual(r.memory.model_calls,8)
 
     def test_active_effect_violation_suspends_and_returns_to_decision(self):
         r=self.runtime();key=candidate(r.library);promote(r.library,key)

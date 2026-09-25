@@ -1,4 +1,4 @@
-"""One ADK decision controller; RUN owns effects and evidence-gated learning."""
+"""Work-scoped ADK judgments share a notebook; RUN owns effects and skill gating."""
 from __future__ import annotations
 import asyncio
 import base64
@@ -25,9 +25,10 @@ from agent.local_vlm import LocalVisionLlm
 from .audit import append_record, compact, tool_status, request_snapshot
 from .completion import CompletionTool
 from .evidence import EvidenceStore
-from .instructions import INSTRUCTION
+from .instructions import COMMON, ACTION, BUILD
+from .notebook import Notebook
 from .library import SkillLibrary, check_all, step_action, digest
-from .skills import skill_toolset
+from .skills import skill_toolset, skill_instructions
 from .state import Decision, Draft, Memory
 from .validation import validate_action
 
@@ -57,7 +58,11 @@ class CognitiveRuntime:
         self.event_sequence = 0
         directory = self.log_dir / self.session_id / 'skills' if self.log_dir else None
         self.library = SkillLibrary(game_id, directory, source=skill_library, emit=self._learning_event)
-        self.controller = None
+        self.notebook = Notebook(game_id, self.session_id,
+            self.log_dir / self.session_id / 'notebook' if self.log_dir else None,
+            emit=self._notebook_event)
+        self.controllers = {}
+        self.work, self.learning_request = 'action', None
         self.workflow = self._build_graph()
         self.runner = Runner(agent=self.workflow, app_name=APP_NAME, session_service=self.service)
 
@@ -76,28 +81,64 @@ class CognitiveRuntime:
     def _learning_event(self, event, **data):
         self._record('learning', event, **data)
 
+    def _notebook_event(self, event, **data):
+        self._record('notebook', event, work=getattr(self, 'work', 'action'), **data)
+
+    def _note_operation(self, operation, *args, **kwargs):
+        if self.submission is not None:
+            return {'error': 'a job has already been submitted'}
+        try:
+            return controller_context(operation(*args, **kwargs))
+        except ValueError as exc:
+            return {'error': str(exc)}
+
+    def read_notebook(self, reference: str = '', query: str = '', offset: int = 0,
+                      include_previous: bool = False) -> dict:
+        """Open a note/bookmark; without reference search six index entries. Never advances time."""
+        return self._note_operation(self.notebook.read, reference, query, offset, include_previous)
+
+    def write_note(self, kind: str, title: str, text: str, evidence_ids: list[str],
+                   note_id: str = '', expected_revision: int = 0) -> dict:
+        """Write goal/hypothesis/plan/interpretation. Cite observation/experience/note IDs.
+
+        New notes use empty note_id and revision 0. Updates require the read revision.
+        For goal, update note_id='goal' with the revision from the opening page.
+        Title max 80; text max 400 for goal, otherwise 1000. Host result pages are read-only.
+        """
+        return self._note_operation(self.notebook.write, kind, title, text, evidence_ids,
+                                    note_id, expected_revision)
+
+    def erase_note(self, note_id: str, expected_revision: int, reason: str) -> dict:
+        """Withdraw an obsolete note; keep its past versions. Goal and results cannot be erased."""
+        return self._note_operation(self.notebook.erase, note_id, expected_revision, reason)
+
+    def set_bookmark(self, name: str, note_id: str) -> dict:
+        """Set a named note reference (max six custom bookmarks); empty note_id removes it."""
+        return self._note_operation(self.notebook.bookmark, name, note_id)
+
     def _agent(self):
-        if self.controller is None:
+        if self.work not in self.controllers:
             completion = [CompletionTool(self, 'submit_decision', Decision)]
-            if self.learning and self.library.experiences:
+            instruction = COMMON + ACTION
+            if self.work == 'skill_creation':
                 completion.append(CompletionTool(self, 'propose_skill', Draft))
-            self.controller = LlmAgent(name='decision_controller', include_contents='none',
+                instruction = COMMON + BUILD + skill_instructions('skill-creator')
+            self.controllers[self.work] = LlmAgent(
+                name='skill_builder' if self.work == 'skill_creation' else 'decision_controller',
+                include_contents='none',
                 model=LocalVisionLlm(model='qwen3-vl-4b-instruct',
                     api_base=os.getenv('VLM_API_BASE', 'http://vlm:8080/v1'), max_output_tokens=1800,
                     completion_tools=tuple(t.name for t in completion)),
-                instruction=INSTRUCTION,
-                tools=[*completion, skill_toolset(), self.list_observations, self.get_observation,
+                instruction=instruction,
+                tools=[*completion, skill_toolset(), self.read_notebook, self.write_note,
+                       self.erase_note, self.set_bookmark, self.list_observations, self.get_observation,
                        self.compare_observations, self.observe_animation, self.read_skill],
                 before_tool_callback=self._before_tool, after_tool_callback=self._after_tool,
                 on_tool_error_callback=self._tool_error)
-        if self.learning and self.library.experiences and not any(
-                isinstance(t, CompletionTool) and t.name=='propose_skill' for t in self.controller.tools):
-            self.controller.tools.append(CompletionTool(self, 'propose_skill', Draft))
-            self.controller.model.completion_tools = ('submit_decision','propose_skill')
-        return self.controller
+        return self.controllers[self.work]
 
     def _before_tool(self, tool, args, tool_context):
-        record = {'state': 'DECIDE', 'call_index': self.calls,
+        record = {'state': 'DECIDE', 'work': self.work, 'call_index': self.calls,
                   'tool_call_id': tool_context.function_call_id, 'tool': tool.name,
                   'arguments': compact(args), 'status': 'started'}
         self.tool_executions.append(record)
@@ -153,21 +194,23 @@ class CognitiveRuntime:
         if isinstance(job, Draft):
             if not self.learning:
                 raise ValueError('learning disabled')
+            if self.work != 'skill_creation':
+                raise ValueError('choose learn before constructing a skill')
             # Draft validation performs the full evidence check on an isolated library.
             trial = SkillLibrary(self.memory.game_id)
             trial.records, trial.experiences = deepcopy(self.library.records), deepcopy(self.library.experiences)
             trial.sequence = self.library.sequence
             trial.draft(job)
             return
-        if job.patch.hypotheses is not None:
-            ids = [h.id for h in job.patch.hypotheses]
-            if len(set(ids)) != len(ids):
-                raise ValueError('duplicate hypothesis IDs')
-            for h in job.patch.hypotheses:
-                if not set(h.evidence_ids) <= self.library.experiences.keys():
-                    raise ValueError('unknown experience reference')
-                if h.status != 'candidate' and not h.evidence_ids:
-                    raise ValueError('supported/refuted hypotheses need evidence')
+        if not set(job.evidence_ids) <= self.library.experiences.keys():
+            raise ValueError('unknown or expired experience reference')
+        if job.kind == 'learn':
+            if not self.learning:
+                raise ValueError('learning disabled')
+            if self.work != 'action':
+                raise ValueError('already constructing a skill')
+            if not all(self.library.experiences[k]['acknowledged'] for k in job.evidence_ids):
+                raise ValueError('learning requires acknowledged experiences')
         if job.kind == 'act':
             validate_action(job.action, self.obs)
         if job.kind in ('trial', 'evaluate') and not self.learning:
@@ -184,21 +227,17 @@ class CognitiveRuntime:
 
     def _context(self):
         obs = {k: v for k, v in self.obs.items() if k not in VISUAL_PAYLOAD_KEYS | {'grid', 'cursor'}}
-        experiences = list(self.library.experiences.values())[-6:]
-        recent = [{'id': e['id'], 'action': e['action'], 'acknowledged': e['acknowledged'],
-                   'before_id': e['before']['observation_id'], 'after_id': e['after']['observation_id'],
-                   'frame_changed': e['before'].get('frame_hash') != e['after'].get('frame_hash'),
-                   'boundary': e['boundary']} for e in experiences]
-        return controller_context({'observation': obs, 'task': self.memory.task,
-            'previous_summary': self.memory.summary, 'hypotheses': [h.model_dump() for h in self.memory.hypotheses],
-            'last_result': self.outcome, 'recent_experiences': recent,
+        context = {'work': self.work, 'observation': obs, 'notebook': self.notebook.opening(),
             'skills': self.library.catalog(), 'learning_enabled': self.learning,
             'last_tool_result': getattr(self, 'job_result', None), 'errors': self.errors[-1:],
-            'remaining_seconds': round(self.time_left(), 2)})
+            'remaining_seconds': round(self.time_left(), 2)}
+        if self.work == 'skill_creation':
+            context['learning_request'] = self.learning_request
+        return controller_context(context)
 
     def _request_record(self, payload):
         record = request_snapshot(payload, self.log_dir)
-        self._record('requests', 'model_request', state='DECIDE', call_index=self.calls, **record)
+        self._record('requests', 'model_request', state='DECIDE', work=self.work, call_index=self.calls, **record)
         return record['request_sha256']
 
     async def _ask(self, ctx):
@@ -206,6 +245,10 @@ class CognitiveRuntime:
         self.memory.model_calls += 1
         self.submission = None
         context = self._context()
+        self._notebook_event('notebook_opened', view=context['notebook'])
+        if self.work == 'skill_creation':
+            self._record('tools', 'skill_instructions_loaded', work=self.work,
+                         skill='skill-creator', source='host', instruction=skill_instructions('skill-creator'))
         parts = [types.Part(text=json.dumps(context, separators=(',', ':')))]
         for label, obs in [('BEFORE the issued action', self.previous), ('CURRENT original game pixels', self.obs)]:
             if not obs:
@@ -224,7 +267,7 @@ class CognitiveRuntime:
         agent.model.timeout_seconds = max(1, min(90, int(self.time_left())))
         agent.model._request_observer = self._request_record
         started = time.monotonic()
-        record = {'state': 'DECIDE', 'call_index': self.calls, 'context': context}
+        record = {'state': 'DECIDE', 'work': self.work, 'call_index': self.calls, 'context': context}
         try:
             async with asyncio.timeout(self.time_left()):
                 await ctx.run_node(agent, node_input=types.Content(role='user', parts=parts))
@@ -355,8 +398,7 @@ class CognitiveRuntime:
         self.memory.revision += 1
         if self.memory.lifecycle not in ('STOPPED','DONE'):
             self.memory.lifecycle = 'ACTIVE'
-        if boundary:
-            self.memory.summary = ''
+        self.notebook.record_observation(obs, self.outcome, boundary)
         return True
 
     def _log_observation(self):
@@ -391,7 +433,7 @@ class CognitiveRuntime:
     def _build_graph(self):
         @node(rerun_on_resume=True)
         async def decide(ctx: Context):
-            self._record('states', 'state_entered', state='DECIDE', input=self._context())
+            self._record('states', 'state_entered', state='DECIDE', work=self.work, input=self._context())
             try:
                 self.trace.append('DECIDE')
                 if self.result is not None:
@@ -421,13 +463,13 @@ class CognitiveRuntime:
                         self._stop('budget_exhausted' if self.time_left()<=0 else 'model_budget')
 
             finally:
-                self._record('states', 'state_exited', state='DECIDE', output={
+                self._record('states', 'state_exited', state='DECIDE', work=self.work, output={
                     'job': self.job.model_dump() if self.job is not None else None,
                     'result': self.result, 'errors': self.errors})
 
         @node(rerun_on_resume=True)
         async def run(ctx: Context):
-            self._record('states', 'state_entered', state='RUN', input={
+            self._record('states', 'state_entered', state='RUN', work=self.work, input={
                 'job': self.job.model_dump() if self.job is not None else None,
                 'selected_result': self.result,
                 'active_skill': compact(self.memory.active_skill)})
@@ -438,18 +480,22 @@ class CognitiveRuntime:
                         self.validate_job(self.job)
                         if isinstance(self.job, Draft):
                             self.job_result = self.library.draft(self.job)
+                            self.work, self.learning_request = 'action', None
                         else:
                             job = self.job
-                            for k,v in job.patch.model_dump(exclude_none=True).items():
-                                if k == 'hypotheses':
-                                    self.memory.hypotheses = job.patch.hypotheses
-                                else:
-                                    setattr(self.memory,k,v)
+                            if job.kind == 'learn':
+                                self.work = 'skill_creation'
+                                self.learning_request = {'evidence_ids': job.evidence_ids,
+                                                         'purpose': job.prediction}
+                            else:
+                                self.work, self.learning_request = 'action', None
                             self._record('artifacts', 'decision_accepted', state='RUN', decision=job.model_dump())
                             if job.kind=='act':
                                 self._select(job.action.model_dump(exclude_none=True), job.prediction)
                             elif job.kind=='stop':
                                 self._stop('model_stopped')
+                            elif job.kind=='learn':
+                                self.job_result = {'work': self.work, **self.learning_request}
                             elif job.kind=='evaluate':
                                 self.job_result = self.library.evaluate(job.skill_id)
                             else:
@@ -466,10 +512,9 @@ class CognitiveRuntime:
                 return Event(output=self.result, state={'cognition': self.memory.model_dump(mode='json')})
 
             finally:
-                self._record('states', 'state_exited', state='RUN', output={
+                self._record('states', 'state_exited', state='RUN', work=self.work, output={
                     'result': self.result, 'tool_result': getattr(self, 'job_result', None),
-                    'task': self.memory.task, 'summary': self.memory.summary,
-                    'hypotheses': [h.model_dump() for h in self.memory.hypotheses],
+                    'notebook': self.notebook.opening(),
                     'lifecycle': self.memory.lifecycle, 'errors': self.errors})
 
         return Workflow(name='skill_learning_loop', edges=[('START',decide), (decide,run), (run,{'DECIDE':decide})])
@@ -501,7 +546,8 @@ class CognitiveRuntime:
         self.memory.last_result = deepcopy(self.result)
         row = {'step':self.obs['step'], 'observation_id':self.obs['observation_id'],
                'frame_hash':self.obs.get('frame_hash'), 'trace':self.trace, 'action':self.result,
-               'task':self.memory.task, 'summary':self.memory.summary, 'outcome':self.outcome,
+               'goal_ref': {'id':'goal', 'revision':self.notebook.pages['goal']['revision']},
+               'outcome':self.outcome,
                'errors':self.errors, 'decision_seconds':time.monotonic()-started,
                'lifecycle':self.memory.lifecycle, 'stop_reason':self.memory.stop_reason}
         self.memory.history = (self.memory.history+[row])[-128:]

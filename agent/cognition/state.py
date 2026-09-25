@@ -1,4 +1,4 @@
-"""Contracts for one decision controller and evidence-gated executable skills."""
+"""Execution contracts; puzzle knowledge lives in the shared notebook."""
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -11,24 +11,14 @@ class Action(Contract):
     y: int | None = Field(default=None, ge=0, le=63)
     reason: str = Field(default="", max_length=300)
 
-class Hypothesis(Contract):
-    id: str = Field(min_length=1, max_length=40)
-    claim: str = Field(min_length=1, max_length=400)
-    status: Literal["candidate", "supported", "refuted"] = "candidate"
-    evidence_ids: list[str] = Field(default_factory=list, max_length=8)
-
-class MemoryPatch(Contract):
-    task: str | None = Field(default=None, max_length=300)
-    summary: str | None = Field(default=None, max_length=500)
-    hypotheses: list[Hypothesis] | None = Field(default=None, max_length=8)
-
 class Decision(Contract):
-    kind: Literal["act", "invoke", "trial", "evaluate", "stop"]
-    patch: MemoryPatch = Field(default_factory=MemoryPatch)
+    kind: Literal["act", "invoke", "trial", "evaluate", "learn", "stop"]
     action: Action | None = None
     skill_id: str | None = None
     arguments: dict[str, int] = Field(default_factory=dict)
     prediction: str = Field(min_length=1, max_length=400)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=8,
+        description='Optional retained experience references for this decision; required for learn.')
 
     @model_validator(mode="after")
     def selected_work(self):
@@ -38,6 +28,8 @@ class Decision(Contract):
             raise ValueError("invoke, trial and evaluate require a skill_id")
         if self.kind not in ("invoke", "trial") and self.arguments:
             raise ValueError("arguments are only for invoke or trial")
+        if self.kind == 'learn' and not self.evidence_ids:
+            raise ValueError('learn requires retained experience IDs')
         return self
 
 # A coordinate is an original pixel or the name of an integer argument ($x).
@@ -112,15 +104,12 @@ class Draft(Contract):
     parent_id: str | None = None
 
 class Memory(Contract):
-    schema_version: int = 4
+    schema_version: int = 5
     revision: int = 0
     run_id: str
     game_id: str
     lifecycle: Literal["BOOT", "ACTIVE", "AWAIT_FRAME", "DONE", "STOPPED"] = "BOOT"
     stop_reason: str = ""
-    task: str = "Discover the game goal and solve it using observed evidence."
-    summary: str = ""
-    hypotheses: list[Hypothesis] = Field(default_factory=list)
     pending: dict | None = None
     active_skill: dict | None = None
     history: list[dict] = Field(default_factory=list)

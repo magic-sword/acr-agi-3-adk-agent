@@ -49,7 +49,7 @@ class ReplayTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)
             (root/'r.states.jsonl').write_text(json.dumps({'event':'state_entered','state':'DECIDE',
-                'input':{'task':'<script>bad()</script>'},'sequence':2})+'\n')
+                'input':{'notebook':{'goal':{'text':'<script>bad()</script>'}}},'sequence':2})+'\n')
             (root/'r.observations.jsonl').write_text(json.dumps({'event':'observation_received',
                 'grid':[[8,9]],'step':0,'sequence':1})+'\n')
             # A tool's execution label must not replace the actual graph state.
