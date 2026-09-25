@@ -40,6 +40,8 @@ Choose its evaluation ID and game from the dropdowns, click **読み込む**, th
 A state diagram highlights experiment design, result review, skill construction, execution and observation waits.
 The replay pairs each subgoal and pre-action prediction with its measured result and verdict.
 Playback defaults to state transitions; action and full-event modes are also available.
+Click **攻略ノートを読む** for readable goal paths, experiment notes, bookmarks, pages actually
+read in that invocation, and before/after edits. Displayed notes keep their recorded versions.
 Playback reads only the selected game, updates images only when needed, and opens detailed logs on demand.
 It does not launch evaluations or poll for updates. See the [replay guide](docs/agent-monitor-ja.md).
 

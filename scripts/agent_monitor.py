@@ -97,11 +97,15 @@ class Timeline:
         incoming_action, incoming_status = None, None
         request = response = None
         notebook_view = notebook_read = notebook_change = None
+        notebook_opening_event = None
+        notebook_reads, notebook_changes = (), ()
         notebook_events = []
         machine = {'node': 'observe', 'phase': '初期観測待ち', 'work': None, 'job': None}
         for index,event in enumerate(self.events):
             kind, name = event['_journal'], event.get('event')
             if kind == 'observations':
+                notebook_view = notebook_read = notebook_change = notebook_opening_event = None
+                notebook_reads, notebook_changes = (), ()
                 incoming_action = action if action_step is not None and event.get('step') == action_step+1 else None
                 incoming_status = action_status if incoming_action else None
                 observations.append(event)
@@ -126,6 +130,9 @@ class Timeline:
                                    'phase': phase, 'work': work, 'job': job_kind}
                         if state == 'DECIDE':
                             context = stage_input if isinstance(stage_input, dict) else {}
+                            notebook_view = context.get('notebook')
+                            notebook_opening_event = event
+                            notebook_read, notebook_reads = None, ()
                     else:
                         stage_output = event.get('output')
                         # RUN may change work for the NEXT invocation. Keep the
@@ -150,10 +157,14 @@ class Timeline:
                 notebook_events.append(event)
                 if name == 'notebook_opened':
                     notebook_view = event.get('view')
+                    notebook_opening_event = event
+                    notebook_read, notebook_reads = None, ()
                 elif name == 'notebook_read':
                     notebook_read = event
+                    notebook_reads += (event,)
                 elif name in ('note_changed', 'bookmark_changed', 'notebook_boundary'):
                     notebook_change = event
+                    notebook_changes += (event,)
             if kind == 'requests':
                 request = event
             if kind == 'model':
@@ -187,6 +198,8 @@ class Timeline:
                         incoming_action=incoming_action, incoming_status=incoming_status,
                         request=request, response=response, tools=tools[-16:], learning=learning[-12:],
                         notebook={'opening': notebook_view, 'last_read': notebook_read,
+                                  'opening_event': notebook_opening_event, 'reads': notebook_reads,
+                                  'changes': notebook_changes,
                                   'last_change': notebook_change, 'recent': notebook_events[-12:]},
                         recent=self.events[max(0,index-11):index+1])
 
