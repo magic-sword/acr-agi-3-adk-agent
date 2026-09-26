@@ -103,13 +103,19 @@ class EvaluationReports(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)
             calls=[{'work':'ground','attempt':1,'seconds':4,'http_requests':1},
-                   {'work':'execute_step','seconds':.4,'http_requests':1}]
+                   {'work':'execute_step','seconds':.4,'http_requests':1},
+                   {'work':'aim','seconds':.7,'http_requests':1}]
             (root/'r.model.jsonl').write_text('\n'.join(map(json.dumps,calls)))
             events=[{'event':'plan_created'},{'event':'action_feedback','trial':{'frame_changed':False}},
-                    {'event':'reconciliation_requested'}]
+                    {'event':'reconciliation_requested'},
+                    {'event':'cursor_adjusted'}, {'event':'cursor_confirmed','seconds':2.1}]
             (root/'r.artifacts.jsonl').write_text('\n'.join(map(json.dumps,events)))
             report=diagnostics(root)['fast_slow']
             self.assertEqual(report['repairs'],1)
             self.assertEqual(report['no_visible_effect'],1)
             self.assertEqual(report['reconsiderations'],1)
             self.assertEqual(report['by_work']['execute_step']['latency_p50'],.4)
+            self.assertEqual(report['by_work']['aim']['latency_p50'],.7)
+            self.assertEqual(report['cursor_latency_p50'],2.1)
+            self.assertEqual(report['cursor_adjustments'],1)
+            self.assertEqual(report['cursor_confirmations'],1)

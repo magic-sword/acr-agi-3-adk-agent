@@ -13,7 +13,8 @@ from agent.local_vlm import LocalVisionLlm
 from .deliberation import DeliberationStages
 from .execution import ExecutionRuntime
 from .tasks import INSTRUCTIONS, SLOW_TASKS
-from .validation import validate_action
+from .validation import validate_intent
+from .cursor import start_cursor, cursor_options, adjust_cursor, cursor_parts
 
 
 class CognitiveRuntime(DeliberationStages, ExecutionRuntime):
@@ -34,7 +35,7 @@ class CognitiveRuntime(DeliberationStages, ExecutionRuntime):
                          decision_seconds=decision_seconds,log_dir=log_dir)
 
     def _snapshot(self):
-        keys=('phase','understanding','targets','goals','goal_status','selected_goal_id',
+        keys=('phase','understanding','concepts','cursor','goals','goal_status','selected_goal_id',
               'backchain','plan','causal_notes','skills','active_skill','review','reconciliations')
         self._record('artifacts','cognition_updated',cognition={
             **{k:getattr(self.memory,k) for k in keys},'recent_trials':self.recent_trials,
@@ -42,6 +43,8 @@ class CognitiveRuntime(DeliberationStages, ExecutionRuntime):
 
     def _on_observation(self, boundary):
         m=self.memory
+        # Bindings last for one observation only, even if the new pixels match.
+        m.cursor=None
         if self.outcome:
             trial={'observation_id':self.obs['observation_id'],'step':self.obs['step'],**self.outcome}
             self._record('artifacts','action_feedback',trial=trial)
@@ -52,7 +55,7 @@ class CognitiveRuntime(DeliberationStages, ExecutionRuntime):
                     m.active_skill['step_action_count']+=1
         if boundary:
             m.understanding=m.backchain=m.plan=m.active_skill=m.review=None
-            m.targets.clear();m.goals.clear();m.goal_status.clear()
+            m.goals.clear();m.goal_status.clear()
             m.selected_goal_id=None
             m.reconciliations.clear()
             m.phase='understand'
@@ -79,7 +82,7 @@ class CognitiveRuntime(DeliberationStages, ExecutionRuntime):
     def _queue_review(self, trigger, reason, transition):
         m=self.memory
         m.review={'trigger':trigger,'reason':reason,'observation_id':self.obs['observation_id'],
-                  'invocation':deepcopy(m.active_skill)}
+                  'invocation':deepcopy(m.active_skill),'cursor':deepcopy(m.cursor)}
         self.replan_reason=reason
         if trigger=='completion_candidate' and m.plan['intent']=='achieve':
             m.goal_status[m.plan['goal_id']]={'status':'candidate','observation_id':self.obs['observation_id'],
@@ -122,7 +125,8 @@ class CognitiveRuntime(DeliberationStages, ExecutionRuntime):
                 causal_notes=m.causal_notes,last_result=self.outcome,correction=self.rejection,
                 reason=self.replan_reason)
             if work=='understand':
-                common.update(previous_understanding=m.understanding,recent_trials=self.recent_trials[-4:])
+                common.update(previous_understanding=m.understanding,recent_trials=self.recent_trials[-4:],
+                              concept_catalogue=list(m.concepts.values()))
             elif work=='backchain':
                 common.update(understanding=m.understanding,goals=self._goal_context(),
                               last_reconciliation=m.reconciliations[-1:] )
@@ -132,27 +136,27 @@ class CognitiveRuntime(DeliberationStages, ExecutionRuntime):
                     last_reconciliation=m.reconciliations[-1:])
             else:
                 active=m.active_skill
-                common.update(plan=m.plan,review=m.review,active_skill=active,
+                common.update(plan=m.plan,review=m.review,active_skill=active,understanding=m.understanding,
                     procedure=m.skills[active['name']] if active else None,
                     current_invocation_result=self._current_result(),
                     attempt_results=[t for t in self.recent_trials if active and
                         (t.get('skill') or {}).get('invocation_id')==active['invocation_id']],
                     prior_reconciliations=m.reconciliations[-2:])
-            ids=set((m.plan or {}).get('target_ids',[])) if work=='reconcile' else set()
-            if work in ('backchain','ground'):
-                ids.update(t['id'] for t in (m.understanding or {}).get('targets',[]))
-                for g in self._goal_context().values():ids.update(g['target_ids'])
-            if ids:common['targets']={k:m.targets[k] for k in ids if k in m.targets}
         else:
+            understanding=m.understanding or {}
             common.update(goal=m.goals.get(m.plan['goal_id']),intent=m.plan['intent'],
                 question_to_test=m.plan['question'],baseline=m.plan['baseline'],
                 baseline_observation_id=m.plan['observation_id'],
-                targets={k:m.targets[k] for k in m.plan['target_ids']},
+                target_query=m.plan['target_query'],
+                scene_hypotheses={k:understanding.get(k) for k in ('observation_id','concepts','targets')},
                 last_result=self._current_result())
             if work=='execute_step':
                 active=m.active_skill;skill=m.skills[active['name']]
                 common.update(active_skill=active,procedure_effect=skill['effect'],
                     current_step={k:v for k,v in skill['steps'][active['index']].items() if k!='options'})
+            if work=='aim':
+                common.update(target_query=m.cursor['target_query'],cursor=deepcopy(m.cursor),
+                              image_size={'width':self.obs['width'],'height':self.obs['height']})
         return controller_context(common)
 
     def _views(self, slow=False):
@@ -167,7 +171,8 @@ class CognitiveRuntime(DeliberationStages, ExecutionRuntime):
 
     def _visual_parts(self, slow=False):
         parts = []
-        for label, obs in self._views(slow):
+        views=[('CURRENT board',self.obs)] if self.work=='aim' else self._views(slow)
+        for label, obs in views:
             parts.append({'type':'text', 'text':label})
             if obs.get('image_png_base64'):
                 parts.append({'type':'image_url','image_url':{'url':'data:image/png;base64,'+obs['image_png_base64']}})
@@ -189,12 +194,15 @@ class CognitiveRuntime(DeliberationStages, ExecutionRuntime):
         self.calls+=1;self.memory.model_calls+=1
         self._record('states','state_entered',state='DECIDE',work=work,input=context)
         parts=self._visual_parts()+[{'type':'text','text':json.dumps(context,separators=(',',':'))}]
-        record=await choose(self.choice_model,instruction=INSTRUCTIONS[work],parts=parts,
+        if work=='aim' and self.memory.cursor['mode']=='adjust':
+            parts=self._visual_parts()+cursor_parts(self.obs,self.memory.cursor)+[parts[-1]]
+        instruction='aim_locate' if work=='aim' and self.memory.cursor['mode']=='locate' else work
+        record=await choose(self.choice_model,instruction=INSTRUCTIONS[instruction],parts=parts,
                             options=options,observe_request=self._request_record,timeout=self.time_left())
         self.http_requests+=record['http_requests']
         self._record('model','model_decision',state='DECIDE',work=work,call_index=self.calls,context=context,**record)
         self._record('states','state_exited',state='DECIDE',work=work,output=record)
-        transition='skill_reconsider' if work=='choose_skill' else 'step_reconsider'
+        transition={'choose_skill':'skill_reconsider','execute_step':'step_reconsider','aim':'aim_reconsider'}[work]
         if not record['schema_valid']:
             self.errors.append(record['error'])
             self._queue_review('invalid_fast_output','Fast selection could not be read: '+record['error'],transition)
@@ -228,9 +236,9 @@ class CognitiveRuntime(DeliberationStages, ExecutionRuntime):
             step=m.skills[active['name']]['steps'][active['index']]
             options={str(i+1):{'kind':'action',**option} for i,option in enumerate(step['options'])}
             try:
-                for option in options.values():validate_action(option['action'],self.obs)
+                for option in options.values():validate_intent(option['action'],self.obs)
             except ValueError as exc:
-                self._queue_review('controls_changed','Re-ground controls or coordinates: '+str(exc),'step_reconsider')
+                self._queue_review('controls_changed','Re-ground controls or target descriptions: '+str(exc),'step_reconsider')
                 continue
             # A one-action probe finishes on its acknowledged observation, not on
             # a visual completion guess before it has been executed.
@@ -239,7 +247,12 @@ class CognitiveRuntime(DeliberationStages, ExecutionRuntime):
             choice=await self._fast('execute_step',options)
             if choice is None:continue
             if choice['kind']=='action':
-                self.job=choice
+                intent=validate_intent(choice['action'],self.obs)
+                if intent.action=='ACTION6':
+                    await self._aim(choice)
+                    if self.job is not None:break
+                    continue
+                self.job={**choice,'action':{'action':intent.action}}
                 break
             completion={'skill':deepcopy(active),'done_when':step['done_when'],'source':'fast_model_judgment'}
             self._record('artifacts','completion_candidate',**completion)
@@ -254,6 +267,36 @@ class CognitiveRuntime(DeliberationStages, ExecutionRuntime):
                 self._snapshot()
         if self.result is None and self.time_left()<=0:
             self._stop('budget_exhausted' if time.monotonic()>=self.deadline else 'decision_time_exhausted')
+
+    async def _aim(self, choice):
+        m=self.memory
+        started=time.monotonic()
+        m.cursor=start_cursor(self.obs,choice['action']['target_query'])
+        m.phase='aim'
+        self._record('artifacts','cursor_started',cursor=m.cursor)
+        self._machine_transition('aim_started')
+        self._snapshot()
+        while self.time_left()>0:
+            try:
+                option=await self._fast('aim',cursor_options(m.cursor,self.obs))
+            except ValueError as exc:
+                self._queue_review('pointing_unavailable',str(exc),'aim_reconsider')
+                return
+            if option is None or self.time_left()<=0:return
+            if option['kind']=='click_cursor':
+                if m.cursor['observation_id']!=self.obs['observation_id']:
+                    raise ValueError('stale cursor binding')
+                m.cursor['confirmed']=True
+                self.job={**choice,'action':{'action':'ACTION6','x':m.cursor['x'],'y':m.cursor['y']},
+                          'binding':deepcopy(m.cursor)}
+                m.phase='execute_step'
+                self._record('artifacts','cursor_confirmed',cursor=m.cursor,seconds=time.monotonic()-started)
+                self._snapshot()
+                return
+            adjust_cursor(m.cursor,option)
+            self._machine_transition('aim_adjusted')
+            self._record('artifacts','cursor_located' if option['kind']=='locate_cursor' else 'cursor_adjusted',cursor=m.cursor)
+            self._snapshot()
 
     def _build_graph(self):
         @node(rerun_on_resume=True)
@@ -295,6 +338,6 @@ class CognitiveRuntime(DeliberationStages, ExecutionRuntime):
                     self._stop('budget_exhausted')
                 else:
                     self._select(self.job['action'],self.job['expected_effect'])
-                    self._machine_transition('accepted')
+                    self._machine_transition('aim_clicked' if self.work=='aim' else 'accepted')
             self._record('states','state_exited',state='RUN',work=self.work,output={'result':self.result})
         return Workflow(name='fast_slow',edges=[('START',decide),(decide,run)])

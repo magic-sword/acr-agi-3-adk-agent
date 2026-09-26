@@ -1,6 +1,8 @@
 # 自律スキル学習の実装
 
-2026-09-26。現行仕様。対象と疑問の記憶は[世界記憶の設計・参考文献](object-world-memory-design-ja.md)。設計理由は[判断を限定したタスクへの設計](focused-task-refactor-design-ja.md)、スキル学習の背景は[初期設計](autonomous-skill-learning-design-ja.md)。
+> 旧実装の記録です。現行仕様は[段階別の熟考と高速実行](fast-slow-runtime-ja.md)を参照してください。
+
+2026-09-26時点の仕様。対象と疑問の記憶は[世界記憶の設計・参考文献](object-world-memory-design-ja.md)。設計理由は[判断を限定したタスクへの設計](focused-task-refactor-design-ja.md)、スキル学習の背景は[初期設計](autonomous-skill-learning-design-ja.md)。
 
 ## 実行
 

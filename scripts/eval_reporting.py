@@ -87,6 +87,10 @@ def diagnostics(directory: Path) -> dict:
             'confirmed_goals':sum(r.get('event')=='stage_accepted' and r.get('work')=='reconcile'
                                   and r.get('result',{}).get('goal_status')=='confirmed' for r in artifacts),
             'probe_results':sum(r.get('event')=='reconciliation_requested' and r.get('trigger')=='probe_result' for r in artifacts),
+            'cursor_adjustments':sum(r.get('event')=='cursor_adjusted' for r in artifacts),
+            'cursor_confirmations':sum(r.get('event')=='cursor_confirmed' for r in artifacts),
+            'cursor_latency_p50':percentile([r['seconds'] for r in artifacts
+                if r.get('event')=='cursor_confirmed' and 'seconds' in r],.5),
             'no_visible_effect':sum(r['trial'].get('frame_changed') is False for r in feedback),
             'repairs':sum(c.get('attempt',0)>0 for c in calls if c.get('work') in ('understand','backchain','ground','reconcile')),
             'by_work':{work:{'calls':len(selected),
@@ -94,7 +98,7 @@ def diagnostics(directory: Path) -> dict:
                 'latency_p50':percentile([c['seconds'] for c in selected if 'seconds' in c],.5),
                 'latency_p95':percentile([c['seconds'] for c in selected if 'seconds' in c],.95),
                 'completion_tokens':sum((c.get('usage') or {}).get('completion_tokens',0) for c in selected)}
-                for work in ('understand','backchain','ground','reconcile','choose_skill','execute_step')
+                for work in ('understand','backchain','ground','reconcile','choose_skill','execute_step','aim')
                 for selected in [[c for c in calls if c.get('work')==work]]}},
         'committed_actions':len(actions), 'hints':hints}
 

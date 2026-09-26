@@ -22,9 +22,10 @@ class FastSlowTests(unittest.TestCase):
         def respond(m,p):
             requests.append(p);c=context(p)
             if c['work']=='backchain':
-                self.assertEqual(c['understanding']['targets'][0]['id'],'actor')
+                self.assertEqual(c['understanding']['targets'][0]['role_hypothesis'],'actor')
                 schema=p['tools'][0]['function']['parameters']
-                self.assertEqual(schema['$defs']['Goal']['properties']['target_ids']['items']['enum'],['actor','target'])
+                self.assertIn('target_query',schema['$defs']['Goal']['properties'])
+                self.assertNotIn('target_ids',schema['$defs']['Goal']['properties'])
             if c['work']=='ground':self.assertEqual(c['current_goal']['id'],'approach')
             return answer(m,p)
         with patch.object(LocalVisionLlm,'_complete',respond):
@@ -59,7 +60,7 @@ class FastSlowTests(unittest.TestCase):
             r.decide(obs());ack(r);result=r.decide(obs(1,[[0,0,0,0,0,1]]))
         self.assertEqual(result['x'],2)
         self.assertEqual(works.count('understand'),1);self.assertEqual(works.count('backchain'),1)
-        self.assertEqual(works[-4:],['reconcile','ground','choose_skill','execute_step'])
+        self.assertEqual(works[-7:],['reconcile','ground','choose_skill','execute_step','aim','aim','aim'])
 
     def test_completion_candidate_is_not_confirmed_and_same_name_has_fresh_invocation(self):
         r=self.runtime();executions=0;old_id=None
@@ -140,7 +141,7 @@ class FastSlowTests(unittest.TestCase):
             return answer(m,p)
         with patch.object(LocalVisionLlm,'_complete',respond):
             r.decide(obs());ack(r);self.assertEqual(r.decide(obs(1))['x'],2)
-        self.assertEqual(r.memory.model_calls,7);self.assertEqual(r.memory.reconciliations,[])
+        self.assertEqual(r.memory.model_calls,10);self.assertEqual(r.memory.reconciliations,[])
 
     def test_reconcile_can_resume_same_invocation(self):
         r=self.runtime();executions=0
@@ -194,7 +195,7 @@ class FastSlowTests(unittest.TestCase):
                         v=backchain(c)
                         if bad=='parent_cycle':v['goals'][0]['parent_id']='approach'
                         if bad=='dependency_cycle':v['goals'][1]['requires']=['exit']
-                        if bad=='unknown_target':v['goals'][0]['target_ids']=['missing']
+                        if bad=='unknown_target':v['goals'][0]['target_query']=''
                         if bad=='selected_goal':v['selected_goal_id']='missing'
                         return call('submit_backchain',v)
                     if work=='ground':
@@ -272,13 +273,13 @@ class FastSlowTests(unittest.TestCase):
         r=self.runtime()
         def respond(m,p):
             c=context(p)
-            if c['work']=='ground' and c['available_actions']==['UP']:
-                v=grounding(c);v['plan']['skills'][0]['steps'][0]['options'][0]['action']={'action':'UP'}
+            if c['work']=='ground' and c['available_actions']==['DOWN']:
+                v=grounding(c);v['plan']['skills'][0]['steps'][0]['options'][0]['action']={'action':'DOWN'}
                 return call('submit_grounding',v)
             return answer(m,p)
         with patch.object(LocalVisionLlm,'_complete',respond):
-            r.decide(obs());ack(r);result=r.decide({**obs(1),'available_actions':['ACTION1']})
-        self.assertEqual(result['action'],'ACTION1')
+            r.decide(obs());ack(r);result=r.decide({**obs(1),'available_actions':['ACTION2']})
+        self.assertEqual(result['action'],'ACTION2')
         self.assertEqual(r.memory.reconciliations[-1]['trigger']['trigger'],'controls_changed')
 
     def test_deadline_during_slow_or_fast_never_sends_fallback_action(self):
@@ -311,7 +312,7 @@ class FastSlowTests(unittest.TestCase):
             def respond(m,p):
                 requests.append(p);c=context(p)
                 if c['work']=='ground':
-                    a=p['tools'][0]['function']['parameters']['$defs']['Action']
+                    a=p['tools'][0]['function']['parameters']['$defs']['ActionIntent']
                     self.assertNotIn('x',a['properties'])
                     self.assertEqual(a['properties']['action']['enum'],['UP'])
                     v=grounding(c);v['plan']['skills'][0]['steps'][0]['options'][0]['action']={'action':'UP'}
@@ -328,4 +329,4 @@ class FastSlowTests(unittest.TestCase):
             self.assertEqual([c['work'] for c in calls[:3]],['understand','backchain','ground'])
             self.assertTrue(all(c['schema_valid'] for c in calls))
             memory=json.loads((Path(d)/(r.session_id+'.json')).read_text())
-            self.assertIn('approach',memory['goals']);self.assertEqual(memory['schema_version'],10)
+            self.assertIn('approach',memory['goals']);self.assertEqual(memory['schema_version'],11)

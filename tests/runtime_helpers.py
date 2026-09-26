@@ -6,7 +6,7 @@ def obs(step=0, grid=None):
     grid = deepcopy(grid if grid is not None else [[0]*6])
     return {'game_id':'test','step':step,'observation_id':f'o{step}', 'grid':grid,
             'width':len(grid[0]),'height':len(grid),'state':'NOT_FINISHED',
-            'levels_completed':0,'available_actions':['ACTION6'],'remaining_actions':30-step}
+            'levels_completed':0,'available_actions':['ACTION1','ACTION6'],'remaining_actions':30-step}
 
 
 def context(payload):
@@ -32,18 +32,19 @@ def token(label):
             'timings':{'cache_n':0}}
 
 
-def skill(name='move', x=0):
+def skill(name='move', x=None):
     return {'name':name,'when_to_use':'The target is visible.','effect':'Move the actor to the marked target.',
         'steps':[{'purpose':'Move the actor into the target.', 'continue_when':'The actor is outside the target.',
                   'done_when':'The actor is inside the marked target.',
                   'reconsider_when':'The actor does not move as expected.',
-                  'options':[{'action':{'action':'CLICK','x':x,'y':0},'expected_effect':'The actor moves into the target.'}]}]}
+                  'options':[{'action':({'action':'UP'} if x is None else {'action':'CLICK','target_query':'The marked cell.'}),'expected_effect':'The actor moves into the target.'}]}]}
 
 
 def understanding(c):
     return {'observation_id':c['observation_id'],
-            'targets':[{'id':'actor','appearance':'Small square','x':0,'y':0},
-                       {'id':'target','appearance':'Marked square','x':2,'y':0}],
+            'concepts':[{'name':'square','description':'Small square objects with different roles.'}],
+            'targets':[{'concept':'square','appearance':'Small square','role_hypothesis':'actor','relations':'Left of the marked square'},
+                       {'concept':'square','appearance':'Marked square','role_hypothesis':'destination','relations':'Right of the actor'}],
             'observed':'The actor is left of the marked target.',
             'goal_hypothesis':'Enter the marked target.', 'causal_hypotheses':'Clicking may move the actor.',
             'question':'Does clicking move the actor?', 'next':'backchain'}
@@ -52,16 +53,16 @@ def understanding(c):
 def backchain(c):
     return {'observation_id':c['observation_id'],'goals':[
         {'id':'exit','parent_id':None,'desired_state':'The exit admits the actor.',
-         'target_ids':['actor','target'],'requires':['approach']},
+         'target_query':'The actor and the marked destination.','requires':['approach']},
         {'id':'approach','parent_id':'exit','desired_state':'The actor is inside the target.',
-         'target_ids':['actor','target'],'requires':[]}],
+         'target_query':'The actor and the marked destination.','requires':[]}],
         'selected_goal_id':'approach','rationale':'Entering the target enables testing whether it is an exit.'}
 
 
-def grounding(c, x=0):
+def grounding(c, x=None):
     return {'observation_id':c['observation_id'],'next':'execute','reason':'Ground the selected goal.',
         'plan':{'goal_id':(c.get('current_goal') or {}).get('id'),'intent':'achieve','question':'',
-                'target_ids':['actor','target'],'baseline':'The actor is left of the target.',
+                'target_query':'The actor and the marked destination.','baseline':'The actor is left of the target.',
                 'skills':[skill(x=x)],'reuse':[]}}
 
 
@@ -79,6 +80,10 @@ def answer(model, payload):
             'reconcile':('submit_reconciliation',reconciliation)}
     if c['work'] in stages:
         tool, fn=stages[c['work']];return call(tool,fn(c))
+    if c['work']=='aim':
+        if c['cursor']['mode']=='locate':return token('1')
+        if c['cursor']['x']<2:return token('4')
+        return token('7')
     return token('1')
 
 

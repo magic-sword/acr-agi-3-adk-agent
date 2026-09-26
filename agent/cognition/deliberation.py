@@ -13,7 +13,7 @@ from google.genai import types
 from agent.controls import ACTION_TO_BUTTON
 from agent.local_vlm import LocalVisionLlm
 from .tasks import TASKS, INSTRUCTIONS, OUTPUT_TOKENS
-from .validation import validate_action
+from .validation import validate_intent
 
 
 class StageTool(BaseTool):
@@ -29,9 +29,6 @@ class StageTool(BaseTool):
         # Expose the IDs and routes that this stage can actually use, rather than
         # asking the model to discover structural restrictions through rejections.
         m = self.runtime.memory
-        for name in ('Goal', 'GroundedPlan'):
-            if name in definitions:
-                definitions[name]['properties']['target_ids']['items']['enum'] = list(m.targets)
         if 'GroundedPlan' in definitions:
             p = definitions['GroundedPlan']['properties']
             p['goal_id']['enum'] = [None] if m.selected_goal_id is None else [None, m.selected_goal_id]
@@ -48,23 +45,17 @@ class StageTool(BaseTool):
                 schema['properties']['goal_status']['enum'] = ['active', 'unknown']
             if m.plan['intent'] == 'probe' or m.active_skill is None:
                 schema['properties']['next']['enum'] = ['understand', 'backchain', 'ground']
-        if 'Action' in definitions:
-            action = definitions['Action']
+        if 'ActionIntent' in definitions:
+            action = definitions['ActionIntent']
             allowed = [ACTION_TO_BUTTON[a] for a in self.runtime.obs['available_actions']
                        if a in ACTION_TO_BUTTON and a != 'RESET']
             action['properties']['action']['enum'] = allowed
-            action['properties'].pop('reason')
-            for axis, dimension in [('x','width'), ('y','height')]:
-                if 'CLICK' in allowed:
-                    action['properties'][axis] = {'type':'integer','minimum':0,
-                        'maximum':self.runtime.obs.get(dimension,64)-1}
-                else:
-                    action['properties'].pop(axis)
-            if allowed == ['CLICK']:
-                action['required'] = ['action','x','y']
-        if 'Target' in definitions:
-            for axis, dimension in [('x','width'), ('y','height')]:
-                definitions['Target']['properties'][axis]['maximum'] = self.runtime.obs.get(dimension,64)-1
+            if 'CLICK' not in allowed:
+                action['properties'].pop('target_query')
+            elif allowed == ['CLICK']:
+                action['properties']['target_query'] = {'type':'string', 'minLength':1, 'maxLength':300,
+                    'description':'Visible instance and part to click, described by appearance and relations; no coordinates.'}
+                action['required'] = ['action', 'target_query']
         return types.FunctionDeclaration(name=self.name, description=self.description, parameters_json_schema=schema)
 
     async def run_async(self, *, args, tool_context):
@@ -111,23 +102,17 @@ class DeliberationStages:
         if value.observation_id != self.obs['observation_id']:
             raise ValueError('stale observation_id')
         m = self.memory
-        def targets(ids):
-            unique(ids,'target IDs')
-            missing = [key for key in ids if key not in m.targets]
-            if missing:
-                raise ValueError(f'unknown target reference {missing}; available IDs: {list(m.targets)}')
         if work=='understand':
-            unique([t.id for t in value.targets],'target IDs')
-            for t in value.targets:
-                if t.x>=self.obs.get('width',64) or t.y>=self.obs.get('height',64):
-                    raise ValueError('target outside board')
+            unique([c.name for c in value.concepts], 'concept names')
+            names = {c.name for c in value.concepts}
+            if any(t.concept not in names for t in value.targets):
+                raise ValueError('target concept must be described in concepts')
         elif work=='backchain':
             unique([g.id for g in value.goals],'goal IDs')
             merged = {**m.goals, **{g.id:g.model_dump() for g in value.goals}}
             if value.selected_goal_id not in merged:
                 raise ValueError('unknown selected goal')
             for g in value.goals:
-                targets(g.target_ids)
                 unique(g.requires,'prerequisites')
             for field in ('parent_id','requires'):
                 acyclic(merged,field)
@@ -139,7 +124,6 @@ class DeliberationStages:
             p = value.plan
             if p is None:
                 raise ValueError('execution requires a grounded plan')
-            targets(p.target_ids)
             if p.goal_id is not None and p.goal_id!=m.selected_goal_id:
                 raise ValueError('ground the selected goal; use backchain to select another')
             if p.intent=='achieve' and (p.goal_id is None or p.goal_id not in m.goals):
@@ -158,7 +142,7 @@ class DeliberationStages:
                     raise ValueError('a probe has one action step, then observation and reconciliation')
                 for step in skills[name]['steps']:
                     for option in step['options']:
-                        validate_action(option['action'],self.obs)
+                        validate_intent(option['action'],self.obs)
         elif work=='reconcile':
             if m.review is None or m.plan is None or value.goal_id!=m.plan['goal_id']:
                 raise ValueError('reconcile the reviewed goal')
@@ -169,7 +153,7 @@ class DeliberationStages:
                     raise ValueError('resume requires an unfinished achievement procedure')
                 active=m.active_skill
                 for option in m.skills[active['name']]['steps'][active['index']]['options']:
-                    validate_action(option['action'],self.obs)
+                    validate_intent(option['action'],self.obs)
 
     def _accept_stage(self, work, value):
         self.validate_stage(work,value)
@@ -177,8 +161,11 @@ class DeliberationStages:
         data=value.model_dump()
         if work=='understand':
             m.understanding=data
-            for target in value.targets:
-                m.targets[target.id]={**target.model_dump(),'observed_at':value.observation_id}
+            for concept in value.concepts:
+                m.concepts.pop(concept.name, None)
+                m.concepts[concept.name]={**concept.model_dump(),'observed_at':value.observation_id}
+            while len(m.concepts)>16:
+                m.concepts.pop(next(iter(m.concepts)))
             m.causal_notes=value.causal_hypotheses
             m.active_skill=None
             m.phase=value.next

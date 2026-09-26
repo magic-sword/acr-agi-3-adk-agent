@@ -40,7 +40,7 @@ No API key or internet is needed during local model inference.
 Open [agent_observatory.ipynb](notebooks/agent_observatory.ipynb) in JupyterLab after a benchmark.
 Choose its evaluation ID and game from the dropdowns, click **読み込む**, then play the saved run.
 A state diagram highlights the four deliberation stages, fast selection, execution and observation waits.
-The replay shows grounded targets, goal dependencies and assessments, the active
+The replay shows semantic targets, concept and role hypotheses, the exact cursor preview, goal dependencies and assessments, the active
 procedure and invocation ID, predicted effects, measured changes,
 one-token choice and returns to deliberation. Playback defaults to state transitions;
 action and full-event modes are also available. Click **計画・スキルを読む** to inspect
@@ -94,8 +94,16 @@ or rejecting repeated actions. Procedures contain action options, expected effec
 step completion criteria and reasons to reconsider. Their meaning remains a model
 hypothesis; pixel differences alone do not establish success.
 
-Level/reset boundaries clear grounded targets, goals, the plan and active step. Causal notes and
-procedures remain available to deliberation for re-grounding. Fast calls receive the current small goal, named targets, baseline, step, options
+Targets describe shared concepts, instance/group appearance, role hypotheses and relations.
+Goals and skills use natural-language target queries; they never store click coordinates.
+CLICK first selects a quadrant with one token (1–4), then enters a cursor loop:
+1–4 move, 5/6 change stride, 7 clicks, 8 returns to
+reconciliation. Host previews include a local zoom; cursor moves do not operate the game.
+Bindings expire at the next observation. Directional controls bypass the cursor.
+See [semantic targeting and cursor execution](docs/semantic-cursor-runtime-ja.md).
+
+Level/reset boundaries clear scene instances, goals, the plan and active step. Concepts, causal notes and
+procedures remain available to deliberation for re-grounding. Fast calls receive the current small goal, semantic targets, baseline, step, options
 and the result belonging to this invocation and step. Selection probabilities are
 logged as model diagnostics, not calibrated success probabilities.
 
@@ -106,7 +114,8 @@ python3 scripts/analyze_agent.py outputs/cognition
 `*.model.jsonl` records the exact judgment context, response, requests and timing.
 `*.artifacts.jsonl` records stage results, persistent goals, procedure invocations,
 completion candidates, reconciliation and acknowledged measurements. Evaluation reports split latency
-and token counts by deliberation, skill selection and step execution.
+and token counts by deliberation, skill selection, step execution and cursor aiming.
+Cursor confirmation counts and total aiming latency are separate from environment actions.
 Requests, tool execution, observations and driver acknowledgements have separate
 journals. These are observable decision artifacts, not private model reasoning.
 

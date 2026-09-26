@@ -17,6 +17,8 @@ def cognition_html(snapshot):
           ('現在の小目標',memory.get('goals',{}).get(goal_id) or context.get('current_goal') or context.get('goal') or '未設定'),
           ('小目標の確認状態',memory.get('goal_status',{}).get(goal_id)),
           ('状況理解・注目対象・疑問',memory.get('understanding')),
+          ('再利用する概念（仮説）',memory.get('concepts')),
+          ('照準・対象の記述・観測との対応',context.get('cursor') or memory.get('cursor')),
           ('前提条件の逆算',memory.get('backchain')),
           ('目標の依存関係',memory.get('goals')),
           ('各目標の状態と根拠',memory.get('goal_status')),

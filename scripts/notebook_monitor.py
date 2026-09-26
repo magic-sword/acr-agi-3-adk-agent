@@ -54,6 +54,25 @@ def picture(observation, directory, action=None):
     return stream.getvalue()
 
 
+def aim_preview(snapshot, directory):
+    """Return the exact saved preview seen by the model, scoped to this observation."""
+    request=snapshot.get('request') or {}
+    current=snapshot.get('current') or {}
+    if request.get('work')!='aim' or request.get('observation_id')!=current.get('observation_id'):
+        return b''
+    messages=request.get('request',{}).get('messages',[])
+    contexts=[json.loads(message['content'][-1]['text']) for message in messages
+              if message.get('role')=='user' and isinstance(message.get('content'),list)
+              and message['content'] and message['content'][-1].get('type')=='text']
+    if not contexts or (contexts[-1].get('cursor') or {}).get('mode')!='adjust':
+        return b''
+    images=[part['image_url'] for message in request.get('request',{}).get('messages',[])
+            if isinstance(message.get('content'),list) for part in message['content']
+            if part.get('type')=='image_url']
+    if not images:return b''
+    return safe_asset(directory,images[-1]['path']).read_bytes()
+
+
 class BenchmarkReplay:
     def __init__(self, root, source_root=None):
         self.root = Path(root).expanduser().resolve()
@@ -83,6 +102,10 @@ class BenchmarkReplay:
         self._machine_key = None
         self.images = [W.Image(format='png',layout=W.Layout(width='100%',height='340px',object_fit='contain')) for _ in range(2)]
         self.captions = [W.HTML(),W.HTML()]
+        self.aim_image = W.Image(format='png',layout=W.Layout(width='100%',height='340px',object_fit='contain'))
+        self.aim_caption = W.HTML()
+        self._aim_key = None
+        aim_screen = W.VBox([self.aim_caption,self.aim_image])
         for image in self.images:
             image.add_class('arc-replay-image')
         screens = W.HBox([W.VBox([label,img],layout=W.Layout(width='50%')) for label,img in zip(self.captions,self.images)])
@@ -98,7 +121,7 @@ class BenchmarkReplay:
                               self.evaluation,self.game,W.HBox([self.load_button,self.refresh_button]),
                               W.HBox([self.mode,self.speed,self.previous,self.next,self.notes_button]),W.HBox([self.play,self.slider]),
                               self.structure_refresh,self.structure_status,self.diagram,
-                              self.problem,self.status,self.trace,screens,self.board,self.details])
+                              self.problem,self.status,self.trace,screens,aim_screen,self.board,self.details])
         self._link = W.jslink((self.play,'value'),(self.slider,'value'))
         self.evaluation.observe(self._select_evaluation,names='value')
         self.game.observe(lambda _: self._clear(),names='value')
@@ -156,6 +179,9 @@ class BenchmarkReplay:
         self.timeline=None
         self._positions=[]
         self._image_keys=[None,None]
+        self._aim_key=None
+        self.aim_image.value=b'';self.aim_caption.value=''
+        self.aim_image.layout.display='none'
         self._machine_key=None
         self.diagram.value=structure_html(self.structure) if self.structure else ''
         self.trace.value=''
@@ -284,6 +310,14 @@ class BenchmarkReplay:
                 self._image_keys[i]=key
             self.captions[i].value=f'<b>{label}</b> · step {obs.get("step","—") if obs else "—"}'
         self.trace.value=trace_html(self.timeline.events,s['index'])
+        request=s.get('request') or {}
+        aim_key=(request.get('sequence'),(s.get('current') or {}).get('observation_id'),
+                 (s.get('context',{}).get('cursor') or {}).get('mode'))
+        if aim_key!=self._aim_key:
+            self.aim_image.value=aim_preview(s,directory)
+            self.aim_image.layout.display='' if self.aim_image.value else 'none'
+            self.aim_caption.value='<b>直近の照準判断へ渡したホスト画像（ゲーム操作ではありません）</b>' if self.aim_image.value else ''
+            self._aim_key=aim_key
         self.board.value=dashboard_html(s,directory,include_images=False)
         if self.details.selected_index is not None:
             self._render_detail()

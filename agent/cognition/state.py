@@ -14,16 +14,28 @@ class Action(Contract):
     reason: str = Field(default='', max_length=300)
 
 
+class Concept(Contract):
+    name: str = Field(min_length=1, max_length=60)
+    description: str = Field(min_length=1, max_length=240)
+
+
 class Target(Contract):
-    id: str = Field(min_length=1, max_length=40)
+    concept: str = Field(min_length=1, max_length=60)
     appearance: str = Field(min_length=1, max_length=160)
-    x: int = Field(ge=0, le=63)
-    y: int = Field(ge=0, le=63)
+    role_hypothesis: str = Field(max_length=180)
+    relations: str = Field(max_length=240)
+
+
+class ActionIntent(Contract):
+    action: str
+    target_query: str = Field(default='', max_length=300,
+        description='For CLICK: describe the visible instance and part to click by appearance, role and relations.')
 
 
 class Understanding(Contract):
     observation_id: str
-    targets: list[Target] = Field(min_length=1, max_length=4)
+    concepts: list[Concept] = Field(min_length=1, max_length=4)
+    targets: list[Target] = Field(min_length=1, max_length=6)
     observed: str = Field(min_length=1, max_length=400)
     goal_hypothesis: str = Field(min_length=1, max_length=200)
     causal_hypotheses: str = Field(max_length=400)
@@ -35,7 +47,7 @@ class Goal(Contract):
     id: str = Field(min_length=1, max_length=40)
     parent_id: str | None
     desired_state: str = Field(min_length=1, max_length=200)
-    target_ids: list[str] = Field(min_length=1, max_length=4)
+    target_query: str = Field(min_length=1, max_length=300)
     requires: list[str] = Field(max_length=6,
         description='IDs of prerequisite goals declared in goals or retained goals. Empty if none; not action names.')
 
@@ -48,7 +60,7 @@ class Backchain(Contract):
 
 
 class ActionOption(Contract):
-    action: Action
+    action: ActionIntent
     expected_effect: str = Field(min_length=1, max_length=180)
 
 
@@ -71,7 +83,7 @@ class GroundedPlan(Contract):
     goal_id: str | None
     intent: Literal['achieve', 'probe']
     question: str = Field(max_length=200)
-    target_ids: list[str] = Field(min_length=1, max_length=4)
+    target_query: str = Field(min_length=1, max_length=300)
     baseline: str = Field(min_length=1, max_length=200)
     skills: list[Procedure] = Field(max_length=2)
     reuse: list[str] = Field(default_factory=list, max_length=2,
@@ -101,7 +113,7 @@ class FastSelection(Contract):
 
 
 class Memory(Contract):
-    schema_version: int = 10
+    schema_version: int = 11
     revision: int = 0
     run_id: str
     game_id: str
@@ -109,7 +121,8 @@ class Memory(Contract):
     stop_reason: str = ''
     phase: str = 'understand'
     understanding: dict | None = None
-    targets: dict = Field(default_factory=dict)
+    concepts: dict = Field(default_factory=dict)
+    cursor: dict | None = None
     goals: dict = Field(default_factory=dict)
     goal_status: dict = Field(default_factory=dict)
     selected_goal_id: str | None = None

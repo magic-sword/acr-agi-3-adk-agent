@@ -103,6 +103,8 @@ class ExecutionRuntime:
             'step': self.obs['step'], 'action': action.model_dump(exclude_none=True),
             'prediction': prediction, 'execution': 'selected',
             'skill': deepcopy(self.memory.active_skill)}
+        if self.job and self.job.get('binding'):
+            self.memory.pending['binding']=deepcopy(self.job['binding'])
         self.memory.lifecycle = 'AWAIT_FRAME'
         self._record('artifacts', 'action_selected', state='RUN', pending=self.memory.pending)
 
@@ -142,6 +144,7 @@ class ExecutionRuntime:
             self.outcome = {'decision_id':pending['decision_id'], 'before_observation_id':pending['observation_id'],
                             'after_observation_id':obs['observation_id'], 'action': pending['action'], 'acknowledged': acknowledged,
                             'prediction': pending['prediction'], 'skill': pending.get('skill'),
+                            'binding': pending.get('binding'),
                             'boundary': boundary, 'frame_changed': None if boundary else
                             obs.get('frame_hash') != last.get('frame_hash')}
             a, b = self.previous.get('grid'), obs.get('grid')

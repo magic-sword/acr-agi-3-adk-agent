@@ -2,7 +2,21 @@
 from __future__ import annotations
 
 from agent.controls import ground_button
-from .state import Action
+from .state import Action, ActionIntent
+
+
+def validate_intent(raw: dict | ActionIntent, obs: dict) -> ActionIntent:
+    """Check controller availability without prematurely binding a click to pixels."""
+    value = raw.model_dump() if isinstance(raw, ActionIntent) else dict(raw)
+    value = ground_button(value, obs)
+    intent = ActionIntent.model_validate(value)
+    if intent.action not in set(obs.get('available_actions', [])) - {'RESET'}:
+        raise ValueError('unavailable action intent: '+intent.action)
+    if intent.action == 'ACTION6' and not intent.target_query.strip():
+        raise ValueError('CLICK requires a target_query identifying a visible instance and part')
+    if intent.action != 'ACTION6' and intent.target_query:
+        raise ValueError('target_query belongs to CLICK; directional actions need no cursor')
+    return intent
 
 
 def validate_action(raw: dict | Action, obs: dict, *, reset: bool = False) -> Action:
