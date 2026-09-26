@@ -52,13 +52,31 @@ make eval GAME=ls20 STEPS=20    # deterministic driver probe, no model
 make eval-model GAME=ls20 STEPS=50
 make test
 make benchmark-prepare         # cache public games
-make benchmark                 # three games, 12 actions / 90 seconds each
+make benchmark                 # evaluation limits from .env (defaults: 12 actions / 90 seconds)
 make visualize                 # outputs/agent-visualization/index.html
 ```
 
 `make benchmark` records a source snapshot, model/environment hashes, official SDK scores,
 actual actions, observations, model requests and skill lifecycle events under `outputs/evaluations/`.
 It never uploads or submits to Kaggle. Short public-game runs are not leaderboard estimates.
+
+Set benchmark parameters in `.env` (plain `NAME=value` assignments):
+
+```dotenv
+EVAL_GAMES=ls20,vc33,ft09
+EVAL_STEPS=12
+EVAL_LEVELS=1
+EVAL_SECONDS=600
+EVAL_HARD_SECONDS=660
+```
+
+`EVAL_LEVELS=0` disables the cleared-level limit. `EVAL_HARD_SECONDS` must exceed
+`EVAL_SECONDS`; it caps the entire worker process including initialization and cleanup.
+Command-line assignments take precedence, for example `make benchmark EVAL_STEPS=80`.
+Without `.env` settings, Makefile defaults apply. Each run's `manifest.json` records
+the resolved games and limits for later comparison, including command-line overrides.
+`make eval` is a deterministic driver probe; `make eval-model` plays with the model.
+Use `make benchmark` for score measurement and comparison reports.
 
 Learning starts with an empty procedural library per game. The model receives one focused task
 at a time: goal selection/assessment, experiment design, target inspection, semantic effect judgment,

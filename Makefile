@@ -1,3 +1,6 @@
+# Local settings; command-line assignments still take precedence.
+-include .env
+
 DC := docker compose
 RUN := $(DC) run --rm --no-deps dev
 LOCAL_UID := $(shell id -u)
