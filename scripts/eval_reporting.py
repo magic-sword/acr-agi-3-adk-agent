@@ -82,16 +82,19 @@ def diagnostics(directory: Path) -> dict:
         'identical_frame_action_repeats':identical_frame_repeats,
         'fast_slow': {
             'plans':sum(r.get('event')=='plan_created' for r in artifacts),
-            'reconsiderations':sum(r.get('event')=='reconsider_requested' for r in artifacts),
-            'completed_skills':sum(r.get('event')=='skill_completed' for r in artifacts),
+            'reconsiderations':sum(r.get('event')=='reconciliation_requested' for r in artifacts),
+            'completion_candidates':sum(r.get('event')=='completion_candidate' for r in artifacts),
+            'confirmed_goals':sum(r.get('event')=='stage_accepted' and r.get('work')=='reconcile'
+                                  and r.get('result',{}).get('goal_status')=='confirmed' for r in artifacts),
+            'probe_results':sum(r.get('event')=='reconciliation_requested' and r.get('trigger')=='probe_result' for r in artifacts),
             'no_visible_effect':sum(r['trial'].get('frame_changed') is False for r in feedback),
-            'repairs':sum(c.get('attempt',0)>0 for c in calls if c.get('work')=='deliberate'),
+            'repairs':sum(c.get('attempt',0)>0 for c in calls if c.get('work') in ('understand','backchain','ground','reconcile')),
             'by_work':{work:{'calls':len(selected),
                 'seconds':sum(c.get('seconds',0) for c in selected),
                 'latency_p50':percentile([c['seconds'] for c in selected if 'seconds' in c],.5),
                 'latency_p95':percentile([c['seconds'] for c in selected if 'seconds' in c],.95),
                 'completion_tokens':sum((c.get('usage') or {}).get('completion_tokens',0) for c in selected)}
-                for work in ('deliberate','choose_skill','execute_step')
+                for work in ('understand','backchain','ground','reconcile','choose_skill','execute_step')
                 for selected in [[c for c in calls if c.get('work')==work]]}},
         'committed_actions':len(actions), 'hints':hints}
 
@@ -123,6 +126,13 @@ def write_report(root: Path, results: list[dict]) -> dict:
         score = f"{r['sdk_score_full_game']:.3f}" if r.get('sdk_score_full_game') is not None else '未取得'
         lines.append(f"|[{r['game_id']}]({r['game_id']}/cognition/decisions.html)|{r.get('levels_completed', '—')}|{r.get('actions', '—')}|{score}|"
                      f"{r.get('wall_seconds', 0):.1f}|{r.get('stop_reason', 'error')} {r.get('limit_reached', '')}|{r.get('model_calls', 0)}|")
+    lines += ['', '## 工程別の判断時間', '', '|ゲーム|工程|呼出し数|中央値（秒）|出力トークン合計|',
+              '|---|---|---:|---:|---:|']
+    for r in results:
+        for work, metrics in r.get('fast_slow',{}).get('by_work',{}).items():
+            median=metrics.get('latency_p50')
+            latency=f'{median:.3f}' if median is not None else '—'
+            lines.append(f"|{r['game_id']}|{work}|{metrics['calls']}|{latency}|{metrics['completion_tokens']}|")
     lines += ['', '## 改善の調査箇所', '']
     for r in results:
         lines.append(f"### {r['game_id']}")
@@ -136,7 +146,7 @@ def write_report(root: Path, results: list[dict]) -> dict:
               '- `cognition/*.jsonl`: 各手の予測照合・遷移・検証エラー。',
               '- `cognition/*.tools.jsonl`: ツール実行前後の記録。計画の提出・検証結果。',
               '- `cognition/*.artifacts.jsonl`: 判断の更新と選択された操作。未実行も区別。',
-              '- `cognition/*.artifacts.jsonl` の `plan_created` / `fast_selected` / `reconsider_requested` / `action_feedback`: 計画・高速選択・熟考への復帰・実測結果。',
+              '- `cognition/*.artifacts.jsonl` の `plan_created` / `fast_selected` / `reconciliation_requested` / `stage_accepted` / `action_feedback`: 計画・高速選択・熟考への復帰・実測結果。',
               '- `cognition/*.requests.jsonl` と `request-images/`: 実HTTP入力と画像参照。',
               '- `cognition/*.execution.jsonl`: ドライバの送信・受付・結果不明イベント。',
               '- `cognition/*.observations.jsonl` と `cognition/frames/`: 実観測の色ID・PNG。',

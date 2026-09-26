@@ -1,4 +1,4 @@
-"""Render the recorded plan, grounded skills and routing without future-state leakage."""
+"""Render the visible prefix of goals, stage results and procedure evidence."""
 from html import escape
 import json
 
@@ -9,23 +9,28 @@ def display(value):
 
 
 def cognition_html(snapshot):
-    memory = snapshot.get('cognition') or {}
-    context = snapshot.get('context') or {}
-    plan = memory.get('plan') or {}
-    response = snapshot.get('response') or {}
-    rows = [('現在の目標',plan.get('goal') or context.get('goal')),
-            ('熟考での解釈',plan.get('interpretation')),
-            ('ゴールからの逆算',plan.get('backward_plan')),
-            ('因果関係のメモ（仮説）',memory.get('causal_notes') or plan.get('causal_notes')),
-            ('実行中のスキル・段階',memory.get('active_skill')),
-            ('今回の期待効果と実測結果',context.get('last_result')),
-            ('今回の選択肢',context.get('choices'))]
+    memory=snapshot.get('cognition') or {}
+    context=snapshot.get('context') or {}
+    response=snapshot.get('response') or {}
+    goal_id=memory.get('selected_goal_id')
+    rows=[('熟考・実行の工程',memory.get('phase')),
+          ('現在の小目標',memory.get('goals',{}).get(goal_id) or context.get('current_goal') or context.get('goal') or '未設定'),
+          ('小目標の確認状態',memory.get('goal_status',{}).get(goal_id)),
+          ('状況理解・注目対象・疑問',memory.get('understanding')),
+          ('前提条件の逆算',memory.get('backchain')),
+          ('目標の依存関係',memory.get('goals')),
+          ('各目標の状態と根拠',memory.get('goal_status')),
+          ('因果関係のメモ（仮説）',memory.get('causal_notes')),
+          ('具体化した計画・観測の基準点',memory.get('plan')),
+          ('実行中のスキル・起動ID・段階',memory.get('active_skill')),
+          ('今回の期待効果と実測結果',context.get('last_result')),
+          ('照合待ちの結果・完了候補',memory.get('review')),
+          ('今回の選択肢',context.get('choices'))]
     if (response.get('step')==(snapshot.get('current') or {}).get('step') and
             response.get('work')==context.get('work') and response.get('schema_valid')):
         rows.append(('モデルの提出結果',response.get('response')))
-    rows += [('熟考へ戻る理由',memory.get('replan_reason')),
-             ('手順完了の判断履歴（モデル仮説）',memory.get('completion_history')),
-             ('熟考への復帰履歴',memory.get('routing_history'))]
+    rows += [('次の工程へ戻る理由',memory.get('replan_reason')),
+             ('結果照合と仮説更新の履歴',memory.get('reconciliations'))]
     table=''.join('<tr><th style="text-align:left;vertical-align:top">'+escape(k)+
         '</th><td style="white-space:pre-wrap">'+display(v)+'</td></tr>' for k,v in rows if v is not None)
     skills=''.join('<details><summary>'+escape(name)+'</summary><pre style="white-space:pre-wrap">'+

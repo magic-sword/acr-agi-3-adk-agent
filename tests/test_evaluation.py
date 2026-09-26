@@ -69,7 +69,7 @@ class EvaluationReports(unittest.TestCase):
             (root / 'run.jsonl').write_text('\n'.join(map(json.dumps, turns)))
             calls = [{'schema_valid': True, 'seconds': 2, 'usage': {'prompt_tokens': 8, 'completion_tokens': 2},
                       'http_requests': 2, 'exchanges': [{'response': {'tool_calls': [
-                          {'function': {'name': 'submit_plan'}}]}}]},
+                          {'function': {'name': 'submit_grounding'}}]}}]},
                      {'error': 'invalid JSON', 'seconds': 4}]
             (root / 'run.model.jsonl').write_text('\n'.join(map(json.dumps, calls)))
             (root / 'run.observations.jsonl').write_text('{}\n')
@@ -80,7 +80,7 @@ class EvaluationReports(unittest.TestCase):
             self.assertEqual(result['model_latency_p50'], 3)
             self.assertEqual(result['tokens']['prompt_tokens'], 8)
             self.assertEqual(result['model_http_requests'], 3)
-            self.assertEqual(result['tool_calls'], {'submit_plan': 1})
+            self.assertEqual(result['tool_calls'], {'submit_grounding': 1})
             self.assertTrue(result['hints'])
 
     def test_hard_timeout_counts_acknowledged_actions_not_planned_actions(self):
@@ -102,11 +102,11 @@ class EvaluationReports(unittest.TestCase):
     def test_fast_slow_diagnostics_separate_deliberation_and_execution(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)
-            calls=[{'work':'deliberate','attempt':1,'seconds':4,'http_requests':1},
+            calls=[{'work':'ground','attempt':1,'seconds':4,'http_requests':1},
                    {'work':'execute_step','seconds':.4,'http_requests':1}]
             (root/'r.model.jsonl').write_text('\n'.join(map(json.dumps,calls)))
             events=[{'event':'plan_created'},{'event':'action_feedback','trial':{'frame_changed':False}},
-                    {'event':'reconsider_requested'}]
+                    {'event':'reconciliation_requested'}]
             (root/'r.artifacts.jsonl').write_text('\n'.join(map(json.dumps,events)))
             report=diagnostics(root)['fast_slow']
             self.assertEqual(report['repairs'],1)

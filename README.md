@@ -1,10 +1,11 @@
 # ARC-AGI-3 fast/slow agent
 
 A local Google ADK 2.0 agent with two decision speeds using Qwen3-VL-4B-Instruct.
-Deliberation interprets causal evidence, works backwards from a goal, and builds
-small grounded procedures. The fast path selects a skill or action with one
-output token. It can advance a step with `7` or return to deliberation with `8`,
-without sending a game action. Active procedures persist across observations.
+Deliberation has four stages: understand the relevant objects, backchain from a goal,
+ground a small executable procedure, and reconcile its result. Goals and their
+prerequisites persist across replanning. The fast path selects a skill or action
+with one output token. `7` proposes step completion; `8` returns to reconciliation.
+One-action probes return their acknowledged result for learning without confirming a goal.
 Without a model the driver uses deterministic smoke probes.
 
 See the [current design and limits](docs/fast-slow-runtime-ja.md),
@@ -38,8 +39,9 @@ No API key or internet is needed during local model inference.
 
 Open [agent_observatory.ipynb](notebooks/agent_observatory.ipynb) in JupyterLab after a benchmark.
 Choose its evaluation ID and game from the dropdowns, click **読み込む**, then play the saved run.
-A state diagram highlights deliberation, fast selection, execution and observation waits.
-The replay shows the plan, active procedure, predicted effect, measured changes,
+A state diagram highlights the four deliberation stages, fast selection, execution and observation waits.
+The replay shows grounded targets, goal dependencies and assessments, the active
+procedure and invocation ID, predicted effects, measured changes,
 one-token choice and returns to deliberation. Playback defaults to state transitions;
 action and full-event modes are also available. Click **計画・スキルを読む** to inspect
 the recorded causal hypotheses and procedures at that point in time.
@@ -92,9 +94,9 @@ or rejecting repeated actions. Procedures contain action options, expected effec
 step completion criteria and reasons to reconsider. Their meaning remains a model
 hypothesis; pixel differences alone do not establish success.
 
-Level/reset boundaries clear the grounded plan and active step. Causal notes and
-procedures remain available to deliberation for re-grounding. Fast calls receive
-only the current goal, step, options and last result. Selection probabilities are
+Level/reset boundaries clear grounded targets, goals, the plan and active step. Causal notes and
+procedures remain available to deliberation for re-grounding. Fast calls receive the current small goal, named targets, baseline, step, options
+and the result belonging to this invocation and step. Selection probabilities are
 logged as model diagnostics, not calibrated success probabilities.
 
 ```bash
@@ -102,8 +104,8 @@ python3 scripts/analyze_agent.py outputs/cognition
 ```
 
 `*.model.jsonl` records the exact judgment context, response, requests and timing.
-`*.artifacts.jsonl` records plans, procedure state, fast choices, returns to
-deliberation and acknowledged measurements. Evaluation reports split latency
+`*.artifacts.jsonl` records stage results, persistent goals, procedure invocations,
+completion candidates, reconciliation and acknowledged measurements. Evaluation reports split latency
 and token counts by deliberation, skill selection and step execution.
 Requests, tool execution, observations and driver acknowledgements have separate
 journals. These are observable decision artifacts, not private model reasoning.

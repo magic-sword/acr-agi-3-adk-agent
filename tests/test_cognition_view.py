@@ -12,7 +12,7 @@ class CognitionViewTests(unittest.TestCase):
             root=Path(d)
             events=[{'event':'cognition_updated','sequence':1,'cognition':{'plan':{'goal':'first'},'skills':{}}},
                     {'event':'cognition_updated','sequence':2,'cognition':{'plan':{'goal':'<script>future</script>'},
-                     'skills':{'probe':{'effect':'new effect'}},'routing_history':[{'reason':'unexpected'}]}}]
+                     'skills':{'probe':{'effect':'new effect'}},'reconciliations':[{'reason':'unexpected'}]}}]
             (root/'r.artifacts.jsonl').write_text('\n'.join(map(json.dumps,events))+'\n')
             timeline=Timeline(Run(root,'r')).load()
             self.assertNotIn('future',cognition_html(timeline.snapshot(0)))

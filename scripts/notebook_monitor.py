@@ -181,7 +181,7 @@ class BenchmarkReplay:
         self.status.value='<p>選択したゲームの記録を読み込んでいます。</p>'
         try:
             manifest=json.loads((Path(self.evaluation.value)/'manifest.json').read_text())
-            if manifest.get('observatory_schema') != 2:
+            if manifest.get('observatory_schema') != 3:
                 raise ValueError('旧形式の実行ログです。最新実装で記録を作成してください')
             settings=manifest.get('cognition_settings') or {}
             self.run_settings=('実行時のモデル: '+str(manifest.get('agent_model','記録なし'))

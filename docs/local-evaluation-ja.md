@@ -47,3 +47,5 @@ make benchmark EVAL_GAMES=ls20 EVAL_STEPS=40 EVAL_SECONDS=180 EVAL_HARD_SECONDS=
 1レベルで止めてもSDKのスコア分母はゲーム全体。未取得のスコアはnull、全件揃わなければ全体平均もnull。ワーカー強制終了ではゲートウェイの受付済み操作から復元するが、実行中の結果不明が残り得る。
 
 公開環境の短時間試験であり、非公開環境、KaggleのGPU・並行実行・推論サーバとの同一性は保証しない。旧方式の評価は[履歴](history/README.md)を参照。
+
+工程別の呼出し数・中央値・出力トークンをreport.mdとsummary.jsonに記録する。熟考はunderstand/backchain/ground/reconcile、高速側はchoose_skill/execute_step。最新ログ形式はobservatory_schema=3。

@@ -48,7 +48,7 @@ class ExecutionRuntime:
         self.trace, self.errors, self.tool_executions = [], [], []
         self.job = self.result = self.submission = None
         self.initialized = self.closed = False
-        self.work = 'deliberate'
+        self.work = 'understand'
         self.workflow = self._build_graph()
         self.runner = Runner(agent=self.workflow, app_name=APP_NAME, session_service=self.service)
 
@@ -139,7 +139,8 @@ class ExecutionRuntime:
         self.outcome = None
         if pending:
             acknowledged = pending['execution']=='action_acknowledged' and obs['step']==pending['step']+1
-            self.outcome = {'action': pending['action'], 'acknowledged': acknowledged,
+            self.outcome = {'decision_id':pending['decision_id'], 'before_observation_id':pending['observation_id'],
+                            'after_observation_id':obs['observation_id'], 'action': pending['action'], 'acknowledged': acknowledged,
                             'prediction': pending['prediction'], 'skill': pending.get('skill'),
                             'boundary': boundary, 'frame_changed': None if boundary else
                             obs.get('frame_hash') != last.get('frame_hash')}

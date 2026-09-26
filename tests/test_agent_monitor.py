@@ -48,7 +48,7 @@ class ReplayTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)
             (root/'r.states.jsonl').write_text(json.dumps({'event':'state_entered','state':'DECIDE',
-                'input':{'goal':'<script>bad()</script>'},'sequence':2})+'\n')
+                'input':{'current_goal':'<script>bad()</script>'},'sequence':2})+'\n')
             (root/'r.observations.jsonl').write_text(json.dumps({'event':'observation_received',
                 'grid':[[8,9]],'step':0,'sequence':1})+'\n')
             # A tool's execution label must not replace the actual graph state.
@@ -80,7 +80,7 @@ class ReplayTests(unittest.TestCase):
             timeline=Timeline(Run(Path(d),r.session_id));timeline.load()
             rows=[e for e in timeline.events if e['_journal']=='states']
             self.assertEqual([(e['event'],e['state']) for e in rows],
-                             [('state_entered','DECIDE'),('state_exited','DECIDE')]*3+
+                             [('state_entered','DECIDE'),('state_exited','DECIDE')]*5+
                              [('state_entered','RUN'),('state_exited','RUN')])
             self.assertEqual(r.memory.last_result['status'],'action')
             sequence=[e['sequence'] for e in timeline.events]
@@ -88,7 +88,7 @@ class ReplayTests(unittest.TestCase):
 
     def fixture(self, root, evaluation='20260925T100000Z',game='ls20'):
         folder=root/evaluation;directory=folder/game/'cognition';directory.mkdir(parents=True)
-        (folder/'manifest.json').write_text('{"observatory_schema":2}')
+        (folder/'manifest.json').write_text('{"observatory_schema":3}')
         (directory.parent/'result.json').write_text('{}')
         for kind,rows in {
             'observations':[{'event':'observation_received','sequence':1,'step':0,'grid':[[8,9]],'observation_id':'o0'}],
@@ -142,10 +142,10 @@ class ReplayTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)
             events=[('observations',{'event':'observation_received','step':0,'grid':[[0]]}),
-                    ('states',{'event':'state_entered','state':'DECIDE','work':'deliberate','input':{}}),
-                    ('states',{'event':'state_exited','state':'DECIDE','work':'deliberate','output':{}}),
+                    ('states',{'event':'state_entered','state':'DECIDE','work':'understand','input':{}}),
+                    ('states',{'event':'state_exited','state':'DECIDE','work':'understand','output':{}}),
                     ('states',{'event':'state_entered','state':'DECIDE','work':'execute_step','input':{}}),
-                    ('artifacts',{'event':'machine_transition','target':'deliberate','condition':'R'}),
+                    ('artifacts',{'event':'machine_transition','target':'understand','condition':'R'}),
                     ('states',{'event':'state_entered','state':'RUN','work':'execute_step','input':{}}),
                     ('states',{'event':'state_exited','state':'RUN','output':{'result':{'status':'action'}}}),
                     ('execution',{'event':'action_acknowledged','step':0,'action':{'action':'UP'}})]
@@ -153,12 +153,12 @@ class ReplayTests(unittest.TestCase):
                 with (root/f'r.{kind}.jsonl').open('a') as f:f.write(json.dumps(dict(row,sequence=i+1))+'\n')
             t=Timeline(Run(root,'r')).load()
             self.assertEqual([s['machine']['node'] for s in t.snapshots],
-                             ['observe','deliberate','deliberate','execute_step','deliberate','wait','wait','wait'])
+                             ['observe','understand','understand','execute_step','understand','wait','wait','wait'])
             self.assertIn('未送信',t.snapshot(6)['machine']['phase'])
             self.assertIn('次の観測待ち',t.snapshot(7)['machine']['phase'])
             html=state_diagram_html(t.snapshot(3)['machine'])
             self.assertIn('data-state="execute_step" data-active="true"',html)
-            self.assertNotIn('<script>',state_diagram_html({'node':'deliberate','phase':'<script>x</script>'}))
+            self.assertNotIn('<script>',state_diagram_html({'node':'understand','phase':'<script>x</script>'}))
 
     def test_state_replay_skips_same_state_events_and_caches_the_diagram(self):
         from scripts.notebook_monitor import BenchmarkReplay

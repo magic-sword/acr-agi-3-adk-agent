@@ -1,4 +1,4 @@
-"""Contracts for deliberation, grounded procedures and acknowledged execution."""
+"""Small, stage-specific contracts for grounded goals, procedures and evidence."""
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -14,35 +14,86 @@ class Action(Contract):
     reason: str = Field(default='', max_length=300)
 
 
+class Target(Contract):
+    id: str = Field(min_length=1, max_length=40)
+    appearance: str = Field(min_length=1, max_length=160)
+    x: int = Field(ge=0, le=63)
+    y: int = Field(ge=0, le=63)
+
+
+class Understanding(Contract):
+    observation_id: str
+    targets: list[Target] = Field(min_length=1, max_length=4)
+    observed: str = Field(min_length=1, max_length=400)
+    goal_hypothesis: str = Field(min_length=1, max_length=200)
+    causal_hypotheses: str = Field(max_length=400)
+    question: str = Field(max_length=200)
+    next: Literal['backchain', 'ground']
+
+
+class Goal(Contract):
+    id: str = Field(min_length=1, max_length=40)
+    parent_id: str | None
+    desired_state: str = Field(min_length=1, max_length=200)
+    target_ids: list[str] = Field(min_length=1, max_length=4)
+    requires: list[str] = Field(max_length=6,
+        description='IDs of prerequisite goals declared in goals or retained goals. Empty if none; not action names.')
+
+
+class Backchain(Contract):
+    observation_id: str
+    goals: list[Goal] = Field(min_length=1, max_length=6)
+    selected_goal_id: str
+    rationale: str = Field(min_length=1, max_length=250)
+
+
 class ActionOption(Contract):
     action: Action
-    expected_effect: str = Field(min_length=1, max_length=200)
+    expected_effect: str = Field(min_length=1, max_length=180)
 
 
 class ProcedureStep(Contract):
-    purpose: str = Field(min_length=1, max_length=200)
-    done_when: str = Field(min_length=1, max_length=200)
-    reconsider_when: str = Field(min_length=1, max_length=200)
+    purpose: str = Field(min_length=1, max_length=180)
+    continue_when: str = Field(min_length=1, max_length=180)
+    done_when: str = Field(min_length=1, max_length=180)
+    reconsider_when: str = Field(min_length=1, max_length=180)
     options: list[ActionOption] = Field(min_length=1, max_length=6)
 
 
 class Procedure(Contract):
     name: str = Field(pattern=r'^[a-z][a-z0-9-]{0,47}$')
-    when_to_use: str = Field(min_length=1, max_length=200)
-    effect: str = Field(min_length=1, max_length=200)
-    steps: list[ProcedureStep] = Field(min_length=1, max_length=6)
+    when_to_use: str = Field(min_length=1, max_length=180)
+    effect: str = Field(min_length=1, max_length=180)
+    steps: list[ProcedureStep] = Field(min_length=1, max_length=4)
 
 
-class Deliberation(Contract):
+class GroundedPlan(Contract):
+    goal_id: str | None
+    intent: Literal['achieve', 'probe']
+    question: str = Field(max_length=200)
+    target_ids: list[str] = Field(min_length=1, max_length=4)
+    baseline: str = Field(min_length=1, max_length=200)
+    skills: list[Procedure] = Field(max_length=2)
+    reuse: list[str] = Field(default_factory=list, max_length=2,
+        description='Names of existing procedures to reuse. New skills automatically become candidates.')
+
+
+class Grounding(Contract):
     observation_id: str
-    interpretation: str = Field(min_length=1, max_length=600)
-    goal: str = Field(min_length=1, max_length=200)
-    backward_plan: list[str] = Field(min_length=1, max_length=6)
-    causal_notes: str = Field(max_length=800)
-    skills: list[Procedure] = Field(max_length=4,
-        description='Create or replace named procedures. Reuse existing procedures by name when appropriate.')
-    candidates: list[str] = Field(min_length=1, max_length=4,
-        description='Names of procedures suitable for this goal and current board; include new or retained skills.')
+    next: Literal['execute', 'understand', 'backchain']
+    reason: str = Field(max_length=200)
+    plan: GroundedPlan | None
+
+
+class Reconciliation(Contract):
+    observation_id: str
+    goal_id: str | None
+    assessment: Literal['matched', 'unexpected', 'unclear', 'probe_result']
+    evidence: str = Field(min_length=1, max_length=300)
+    goal_status: Literal['active', 'confirmed', 'unknown']
+    causal_notes: str = Field(max_length=600)
+    next: Literal['understand', 'backchain', 'ground', 'resume']
+    reason: str = Field(min_length=1, max_length=200)
 
 
 class FastSelection(Contract):
@@ -50,12 +101,21 @@ class FastSelection(Contract):
 
 
 class Memory(Contract):
-    schema_version: int = 9
+    schema_version: int = 10
     revision: int = 0
     run_id: str
     game_id: str
     lifecycle: Literal['BOOT', 'ACTIVE', 'AWAIT_FRAME', 'DONE', 'STOPPED'] = 'BOOT'
     stop_reason: str = ''
+    phase: str = 'understand'
+    understanding: dict | None = None
+    targets: dict = Field(default_factory=dict)
+    goals: dict = Field(default_factory=dict)
+    goal_status: dict = Field(default_factory=dict)
+    selected_goal_id: str | None = None
+    backchain: dict | None = None
+    review: dict | None = None
+    reconciliations: list[dict] = Field(default_factory=list)
     pending: dict | None = None
     active_skill: dict | None = None
     plan: dict | None = None

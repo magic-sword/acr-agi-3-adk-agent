@@ -221,7 +221,7 @@ def main():
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
         hashes[rel] = sha256(target)
-    manifest = {'observatory_schema': 2, 'created_utc': stamp, 'games': [d['game_id'] for _, d in selected],
+    manifest = {'observatory_schema': 3, 'created_utc': stamp, 'games': [d['game_id'] for _, d in selected],
                 'policy': 'fast_slow',
                 'limits': {'steps': args.steps, 'levels': args.levels, 'seconds': args.seconds, 'hard_seconds': args.hard_seconds},
                 'agent_model': model, 'server_info': server_info, 'source_sha256': hashes,
