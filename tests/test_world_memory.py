@@ -1,17 +1,9 @@
-"""Grounding, evidence scope, revisable identity and question-driven production flow."""
-import json
-from pathlib import Path
-import tempfile
+"""Standalone geometric memory utilities; not used by the image-led production policy."""
 import unittest
-from unittest.mock import patch
 
 from agent.cognition.notebook import Notebook
 from agent.cognition.world import WorldMemory, components
-from agent.cognition.tasks import WorldInterpretation, GoalSelection
-from agent.cognition.workflow import CognitiveRuntime
-from agent.local_vlm import LocalVisionLlm
-from test_focused_tasks import answer_for
-from test_decide_run import call, context, ack
+from agent.cognition.tasks import WorldInterpretation
 from test_skill_learning import obs
 
 
@@ -140,75 +132,6 @@ class WorldTests(unittest.TestCase):
         self.assertEqual(old['segment'],0)
         self.assertIsNone(w.notebook.opening()['world'])
 
-    def test_remote_effect_is_recorded_against_question_and_original_target(self):
-        r=CognitiveRuntime('test','local/qwen3-vl-4b-instruct',max_calls=8,max_http_requests=16)
-        self.addCleanup(r.close)
-        def answer(model,p):
-            c=context(p);name,data=answer_for(c)
-            if c['work']=='interpret_world':
-                data['questions'][0]['observe']=['1']
-            if c['work']=='design_experiment':
-                data['expected']['region']={'x':1,'y':0,'width':1,'height':1}
-            return call(name,data)
-        with patch.object(LocalVisionLlm,'_complete',answer):
-            r.decide(obs(grid=[[0,1]]));target=r.proposal.target_object_id;ack(r)
-            r.decide(obs(1,[[0,2]]))
-        fact=r.world.findings[0]
-        self.assertEqual(fact['target_object']['id'],target)
-        self.assertNotEqual(fact['question']['observe'],[target])
-        self.assertEqual(fact['measurement']['changed_cells_in_region'],1)
-        self.assertEqual(fact['verdict'],'supported')
-        self.assertEqual(fact['target_grounding'],'pixel_mask')
-        self.assertNotIn('interactive',str(r.world.objects))
-
-    def test_rejected_goal_cannot_be_recreated_by_changing_only_its_text(self):
-        r=CognitiveRuntime('test','local/qwen3-vl-4b-instruct');self.addCleanup(r.close)
-        r.obs=obs();r.world.observe(r.obs);r.world.apply(interpretation(r.world))
-        qid=next(iter(r.world.questions));r.closed_goal={'question_id':qid}
-        r.work='select_goal';r._open_task()
-        with self.assertRaisesRegex(ValueError,'change the question_id'):
-            r.validate_job(GoalSelection(task_id=r.task_id,question_id=qid,text='New wording',
-                goal_type='knowledge',done_when='Either outcome observed',reason='Rewording'))
-        self.assertIsNone(r._goal())
-
-    def test_failed_local_prediction_retains_changes_elsewhere(self):
-        r=CognitiveRuntime('test','local/qwen3-vl-4b-instruct',max_calls=8,max_http_requests=16)
-        self.addCleanup(r.close)
-        with patch.object(LocalVisionLlm,'_complete',lambda m,p:call(*answer_for(context(p)))):
-            r.decide(obs(grid=[[0,1]]));ack(r);r.decide(obs(1,[[0,2]]))
-        fact=r.world.view()['conditional_findings'][0]
-        self.assertEqual(fact['verdict'],'unsupported')
-        self.assertEqual(fact['measurement']['changed_cells_in_region'],0)
-        self.assertEqual(fact['observed_change']['changed_cell_count'],1)
-        self.assertEqual(fact['observed_change']['changed_cells'][0]['x'],1)
-
-    def test_semantic_review_binds_receipt_even_when_model_only_cites_frames(self):
-        r=CognitiveRuntime('test','local/qwen3-vl-4b-instruct',max_calls=8,max_http_requests=16)
-        self.addCleanup(r.close)
-        def answer(model,p):
-            c=context(p);name,data=answer_for(c,1 if ':1:' in c['observation_id'] else 0)
-            if c['work']=='design_experiment':data['expected']['kind']='semantic'
-            if c['work']=='judge_effect':data['evidence_ids']=c['evidence_ids'][:2]
-            return call(name,data)
-        with patch.object(LocalVisionLlm,'_complete',answer):
-            r.decide(obs());ack(r);r.decide(obs(1))
-        fact=r.world.findings[0]
-        self.assertIn('experience-1',fact['evidence_ids'])
-        self.assertEqual(fact['verdict'],'unsupported')
-
-    def test_notebook_replays_world_versions_without_future_information(self):
-        from scripts.agent_monitor import Timeline,Run
-        from scripts.notebook_view import notebook_html
-        with tempfile.TemporaryDirectory() as directory:
-            r=CognitiveRuntime('test','local/qwen3-vl-4b-instruct',log_dir=directory,max_calls=8)
-            self.addCleanup(r.close)
-            with patch.object(LocalVisionLlm,'_complete',lambda m,p:call(*answer_for(context(p)))):
-                r.decide(obs());ack(r);r.decide(obs(1))
-            timeline=Timeline(Run(Path(directory),r.session_id)).load()
-            early=next(s for s in timeline.snapshots if s['event']['event']=='task_opened' and s['event'].get('work')=='select_goal')
-            self.assertIn('対象・関係・未解決の疑問',notebook_html(early))
-            self.assertEqual(early['notebook']['opening']['world']['data']['conditional_findings'],[])
-            self.assertTrue(r.notebook.pages['world']['data']['conditional_findings'])
 
 
 if __name__ == '__main__':

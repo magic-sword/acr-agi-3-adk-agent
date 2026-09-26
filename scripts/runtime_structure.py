@@ -4,14 +4,14 @@ import hashlib
 from html import escape
 from pathlib import Path
 
-LABELS = {'interpret_world':'対象・関係・疑問を更新', 'select_goal':'小目標選択', 'assess_goal':'小目標評価', 'design_experiment':'実験設計',
+LABELS = {'attend':'画面から注意と操作を選ぶ', 'interpret_world':'対象・関係・疑問を更新', 'select_goal':'小目標選択', 'assess_goal':'小目標評価', 'design_experiment':'実験設計',
           'inspect_target':'対象認識', 'judge_effect':'効果判定', 'choose_method':'方法選択',
           'resolve_arguments':'引数決定', 'skill_creation':'スキル作成'}
 
 
 def read_structure(root):
     root = Path(root)
-    paths = [root/'agent/cognition'/name for name in ('workflow.py','tasks.py','focused.py','routing.py','state.py','machine.py','world.py')]
+    paths = [root/'agent/cognition'/name for name in ('workflow.py','attention.py','tasks.py','state.py','machine.py')]
     sources = {str(p.relative_to(root)):p.read_text() for p in paths if p.is_file()}
     if 'agent/cognition/workflow.py' not in sources:
         raise ValueError('この場所には実装ソースが保存されていません')
@@ -25,7 +25,7 @@ def read_structure(root):
     if set(declarations) != {'STATES','TRANSITIONS','GLOBAL_GATES'}:
         raise ValueError('ステート・遷移・共通条件の宣言が不足しています')
     tasks = []
-    source = sources.get('agent/cognition/tasks.py')
+    source = sources.get('agent/cognition/attention.py') or sources.get('agent/cognition/tasks.py')
     if source:
         tree = ast.parse(source)
         assignments = {n.targets[0].id:n.value for n in tree.body if isinstance(n,ast.Assign)
@@ -49,7 +49,7 @@ def read_structure(root):
                 return inherited+[n.target.id for n in node.body if isinstance(n,ast.AnnAssign) and isinstance(n.target,ast.Name)]
             tasks.append({'id':name,'tool':tool,'contract':contract,'fields':fields(contract),
                           'instruction':instructions.get(name,''),'line':getattr(value,'lineno',None)})
-    tree=ast.parse(sources['agent/cognition/workflow.py'])
+    tree=ast.parse(sources.get('agent/cognition/attention.py') or sources['agent/cognition/workflow.py'])
     def literal(node):
         if isinstance(node,ast.Constant):return node.value
         if isinstance(node,ast.Name):return node.id.upper()

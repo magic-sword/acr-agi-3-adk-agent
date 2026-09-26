@@ -45,6 +45,8 @@ def diagnostics(directory: Path) -> dict:
     learning = [r for p in directory.glob('*.learning.jsonl') for r in read_jsonl(p)]
     notebook = [r for p in directory.glob('*.notebook.jsonl') for r in read_jsonl(p)]
     artifacts = [r for p in directory.glob('*.artifacts.jsonl') for r in read_jsonl(p)]
+    attention = [r for r in artifacts if r.get('event') == 'attention_selected']
+    feedback = [r for r in artifacts if r.get('event') == 'attention_feedback']
     worlds = [r['after']['data'] for r in notebook
               if r.get('event')=='note_changed' and r.get('after',{}).get('kind')=='world']
     findings = {f['experiment_id']:f for w in worlds for f in w['conditional_findings']}
@@ -77,7 +79,7 @@ def diagnostics(directory: Path) -> dict:
     outcomes = Counter(r.get('outcome') for r in learning if r.get('event')=='skill_execution_finished')
     hints = []
     if consecutive_repeats:
-        hints.append(f'同じ操作の連続箇所: {consecutive_repeats}。対象領域の実験判定と有限回の再試行理由を確認。')
+        hints.append(f'同じ操作の連続箇所: {consecutive_repeats}。画面の変化・注目対象・事前に宣言した反復回数を確認。')
     if valid<len(calls): hints.append('モデル要求・提出に失敗あり。model.jsonlを確認。')
     if events['skill_drafted'] and not events['skill_promoted']: hints.append('候補は未昇格。固定評価と実試行結果を確認。')
     return {'model_calls':len(calls), 'schema_valid_calls':valid,
@@ -111,6 +113,11 @@ def diagnostics(directory: Path) -> dict:
             'note':'Mask matches measure geometric consistency, not semantic object-recognition accuracy.'},
         'bounded_experiment_retries':sum(r['event']=='experiment_started' and
             bool(r['experiment']['data']['plan']['retry_of']) for r in experiments),
+        'attention': {'decisions': len(attention),
+            'measured_results': len(feedback),
+            'no_visible_effect': sum(r['trial']['frame_changed'] is False for r in feedback),
+            'repairs': sum(c.get('call_index', 1) > 1 for c in calls if c.get('work') == 'attend'),
+            'http_requests_per_decision': sum(c.get('http_requests', 1) for c in calls) / len(attention) if attention else None},
         'committed_actions':len(actions), 'hints':hints}
 
 
@@ -154,11 +161,7 @@ def write_report(root: Path, results: list[dict]) -> dict:
               '- `cognition/*.jsonl`: 各手の予測照合・遷移・検証エラー。',
               '- `cognition/*.tools.jsonl`: ツール実行前後の記録。読み込んだスキル名・成否・引数・結果。',
               '- `cognition/*.artifacts.jsonl`: 判断の更新と選択された操作。未実行も区別。',
-              '- `cognition/*.learning.jsonl`: 経験・候補作成・実試行・評価・昇格・停止。',
-              '- `cognition/*.notebook.jsonl`: 攻略ノートの入力ページ・参照・版の変更・撤回・しおり。',
-              '- `cognition/*.experiments.jsonl`: 操作前の小目標・仮説・予測、実測、判定・更新・中断。',
-              '- `cognition/<run>/notebook/`: ノートの各版としおりの保存先。',
-              '- `cognition/<run>/skills/library.json`: 版と評価証拠を含むライブラリ。',
+              '- `cognition/*.artifacts.jsonl` の `attention_selected` / `attention_feedback`: 注目対象・予想・短い記憶と実測結果。',
               '- `cognition/*.requests.jsonl` と `request-images/`: 実HTTP入力と画像参照。',
               '- `cognition/*.execution.jsonl`: ドライバの送信・受付・結果不明イベント。',
               '- `cognition/*.observations.jsonl` と `cognition/frames/`: 実観測の色ID・PNG。',

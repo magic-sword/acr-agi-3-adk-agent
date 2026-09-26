@@ -128,7 +128,7 @@ class Timeline:
                         job = (stage_input.get('job') or {}) if isinstance(stage_input, dict) else {}
                         job_kind = job.get('kind') or ('propose_skill' if 'spec' in job else 'submit_review' if 'verdict' in job else 'redesign' if 'blocked_action' in job else 'defer_skill' if 'reason' in job else None)
                         machine = {'node': ('build' if work == 'skill_creation' else
-                                            work if work in ('interpret_world','select_goal','assess_goal','design_experiment','inspect_target','judge_effect','choose_method','resolve_arguments') else
+                                            work if work in ('attend','interpret_world','select_goal','assess_goal','design_experiment','inspect_target','judge_effect','choose_method','resolve_arguments') else
                                             'design' if work == 'experiment_design' else
                                             'review' if work == 'experiment_review' else 'decide')
                                    if state == 'DECIDE' else 'run',
@@ -319,6 +319,12 @@ def dashboard_html(snapshot, directory, *, include_images=True):
     elif a and b and len(a)==len(b) and all(len(x)==len(y) for x,y in zip(a,b)):
         delta = str(sum(v!=w for x,y in zip(a,b) for v,w in zip(x,y)))+' セルが変化（成功判定ではありません）'
     experiment_panel = experiment_html(s)
+    if context.get('work') == 'attend':
+        memory_panel = attention_html(s)
+    else:
+        memory_panel = (f'<p><b>攻略ノートの目標:</b> {escape(str(task))}<br>'
+            f'<b>現在の目標経路:</b> {escape(goal_path) or "記録なし"}<br>'
+            f'<b>攻略ノートのしおり:</b> {escape(str(summary)) or "更新なし／記録なし"}</p>')
     return f'''<div style="font:14px system-ui;color:#172554;background:#f8fafc;padding:16px;border-radius:10px">
     <b>{escape(str(e.get('game_id', 'ゲーム')))} · step {escape(str(e.get('step', '—')))}</b>
     <p>実行ログ: <b>{escape(s['state'])} · {escape(s['phase'])}</b> · イベント {s['index']+1}/{s['total']} · {escape(str(e.get('timestamp', '時刻なし')))}</p>
@@ -326,11 +332,33 @@ def dashboard_html(snapshot, directory, *, include_images=True):
     <p><b>前画面に対する操作記録:</b> {escape(incoming_label)} · {escape(incoming_status)}<br>
     <b>この時点の選択操作（step {escape(str(s['action_step']))}）: {escape(action_label)}</b> · {escape(s['action_status'])}<br>赤丸は各画面に対して選択したクリック位置です。</p>
     <p><b>選択した操作の予測:</b> {escape(str(s['prediction'] or '記録なし'))}<br><b>表示中の前後差分:</b> {escape(delta)}</p>
-    <p><b>攻略ノートの目標:</b> {escape(str(task))}<br><b>現在の目標経路:</b> {escape(goal_path) or '記録なし'}<br><b>攻略ノートのしおり:</b> {escape(str(summary)) or '更新なし／記録なし'}</p>
+    {memory_panel}
     {focused_task_html(context)}
     {host_judgments_html(s.get('host_judgments', []))}
     {experiment_panel}
     <details><summary>直近のイベント</summary><table style="text-align:left;width:100%"><tr><th>step</th><th>状態</th><th>イベント／ツール</th></tr>{recent}</table></details></div>'''
+
+
+def attention_html(snapshot):
+    context = snapshot['context']
+    response = snapshot.get('response') or {}
+    decision = {}
+    if response.get('step') == (snapshot.get('current') or {}).get('step') and response.get('schema_valid'):
+        try:
+            decision = json.loads(response.get('response') or '{}')
+        except (TypeError, ValueError):
+            pass
+    rows = [('入力メモ（仮説）', context.get('working_notes_hypotheses', '')),
+            ('直前の実測結果', context.get('last_result')),
+            ('モデルの結果解釈', decision.get('interpretation')),
+            ('今回の注目対象', decision.get('focus')),
+            ('次に確かめること', decision.get('expectation')),
+            ('更新した短い記憶（仮説）', decision.get('notes'))]
+    body = ''.join('<tr><th style="text-align:left;vertical-align:top">'+escape(label)+
+                   '</th><td>'+escape(pretty(value))+'</td></tr>' for label, value in rows if value is not None)
+    return '<h4>画面からの注意と操作</h4><table>'+body+'</table><details><summary>最近の試行・同条件の無反応</summary>'+json_html({
+        'recent_trials': context.get('recent_trials', []),
+        'unchanged_state_trials': context.get('unchanged_state_trials', [])})+'</details>'
 
 
 def experiment_html(snapshot):

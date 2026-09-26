@@ -8,13 +8,10 @@ from .cognition.workflow import CognitiveRuntime
 def create_runtime(game_id: str) -> CognitiveRuntime:
     return CognitiveRuntime(
         game_id, os.getenv("ADK_MODEL") or None,
-        max_calls=int(os.getenv("COGNITION_MAX_CALLS", "4")),
-        max_http_requests=int(os.getenv("COGNITION_MAX_HTTP_REQUESTS", "8")),
+        repair_attempts=int(os.getenv("COGNITION_REPAIR_ATTEMPTS", "1")),
         max_resets=int(os.getenv("COGNITION_MAX_RESETS", "2")),
         seconds=float(os.getenv("COGNITION_SECONDS", "600")),
         log_dir=os.getenv("COGNITION_LOG_DIR") or None,
-        learning=os.getenv("COGNITION_LEARNING", "1") == "1",
-        skill_library=os.getenv("COGNITION_SKILL_LIBRARY") or None,
     )
 
 

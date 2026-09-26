@@ -601,8 +601,8 @@ class ExecutionRuntime:
                 self.closed = True
 
 
-from .focused import FocusedTasks
+from .attention import AttentionPolicy
 
 
-class CognitiveRuntime(FocusedTasks, ExecutionRuntime):
-    """Focused cognition with the shared acknowledged execution engine."""
+class CognitiveRuntime(AttentionPolicy, ExecutionRuntime):
+    """Image-led attention with the shared acknowledged execution engine."""

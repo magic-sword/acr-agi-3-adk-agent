@@ -10,7 +10,7 @@ from agent.cognition.workflow import CognitiveRuntime
 from agent.local_vlm import LocalVisionLlm
 from test_skill_learning import obs
 from test_decide_run import call, act, context
-from test_focused_tasks import answer_for
+from test_attention import answer_for
 
 
 class ReplayTests(unittest.TestCase):
@@ -83,7 +83,7 @@ class ReplayTests(unittest.TestCase):
             rows=[e for e in timeline.events if e['_journal']=='states']
             self.assertEqual([(e['event'],e['state']) for e in rows],
                              [('state_entered','DECIDE'),('state_exited','DECIDE'),
-                              ('state_entered','RUN'),('state_exited','RUN')]*4)
+                              ('state_entered','RUN'),('state_exited','RUN')])
             self.assertEqual(r.memory.last_result['status'],'action')
             sequence=[e['sequence'] for e in timeline.events]
             self.assertEqual(sequence,sorted(set(sequence)))
@@ -201,4 +201,4 @@ class ReplayTests(unittest.TestCase):
                 diagram.assert_not_called()
                 w.slider.value=3
                 diagram.assert_called_once()
-            self.assertIn('完了',w.diagram.value)
+            self.assertIn('attend',w.diagram.value)

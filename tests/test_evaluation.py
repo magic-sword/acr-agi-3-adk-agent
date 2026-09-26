@@ -99,11 +99,12 @@ class EvaluationReports(unittest.TestCase):
         self.assertEqual(percentile([4], .95), 4)
 
 
-    def test_frozen_input_library_does_not_change_with_source(self):
-        from scripts.benchmark_local import freeze_library
+    def test_attention_diagnostics_count_repairs_and_no_effect(self):
         with tempfile.TemporaryDirectory() as d:
-            root=Path(d); source=root/'source.json'; source.write_text('{"version":1}')
-            output=root/'run';output.mkdir()
-            snapshot=freeze_library(source,output)
-            source.write_text('{"version":2}')
-            self.assertEqual(json.loads(snapshot.read_text()),{'version':1})
+            root = Path(d)
+            (root/'r.model.jsonl').write_text(json.dumps({'work':'attend', 'call_index':1, 'http_requests':1})+'\n'+json.dumps({'work':'attend', 'call_index':2, 'http_requests':1})+'\n')
+            (root/'r.artifacts.jsonl').write_text(json.dumps({'event':'attention_selected'})+'\n'+json.dumps({'event':'attention_feedback', 'trial':{'frame_changed':False}})+'\n')
+            report = diagnostics(root)['attention']
+            self.assertEqual(report['repairs'], 1)
+            self.assertEqual(report['no_visible_effect'], 1)
+            self.assertEqual(report['http_requests_per_decision'], 2)

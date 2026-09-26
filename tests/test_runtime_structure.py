@@ -12,10 +12,10 @@ class StructureTests(unittest.TestCase):
     def test_registry_and_contracts_are_read_from_current_source(self):
         data=read_structure(ROOT)
         tasks={t['id']:t for t in data['tasks']}
-        self.assertEqual(tasks['inspect_target']['tool'],'submit_target')
-        self.assertIn('region',tasks['inspect_target']['fields'])
-        self.assertIn('spec',tasks['skill_creation']['fields'])
-        self.assertIn('task_id',tasks['skill_creation']['fields'])
+        self.assertEqual(set(tasks), {'attend'})
+        self.assertEqual(tasks['attend']['tool'], 'submit_attention')
+        self.assertIn('focus', tasks['attend']['fields'])
+        self.assertIn('action', tasks['attend']['fields'])
         self.assertEqual(data['edges'][0],['START','DECIDE'])
 
     def test_changed_registry_appears_without_execution_or_display_changes(self):
@@ -84,7 +84,7 @@ class StructureTests(unittest.TestCase):
         self.assertIn('<svg',html)
         for task in data['tasks']:
             self.assertIn('data-state="'+task['id']+'"',html)
-        for event in ('next_observation','recover_goal','recover_target','recover_exhausted'):
+        for event in ('next_observation','repair','repair_exhausted'):
             self.assertIn('data-transition="'+event+'"',html)
 
     def test_missing_machine_definition_is_an_error(self):
@@ -96,9 +96,7 @@ class StructureTests(unittest.TestCase):
 
     def test_runtime_routing_and_graph_share_transition_targets(self):
         from agent.cognition.machine import destination, TRANSITIONS
-        from agent.cognition.routing import after_goal, recovery_route
         data=read_structure(ROOT)
         self.assertEqual(data['transitions'],TRANSITIONS)
-        self.assertEqual(after_goal('replace'),destination('goal_replace'))
-        self.assertEqual(recovery_route('target_mismatch',attempts=1),destination('recover_target'))
-        self.assertEqual(recovery_route('target_mismatch',attempts=3),destination('recover_exhausted'))
+        self.assertEqual(destination('repair'), 'attend')
+        self.assertEqual(destination('repair_exhausted'), 'stop')
