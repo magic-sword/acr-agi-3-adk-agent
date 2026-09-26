@@ -91,6 +91,11 @@ def diagnostics(directory: Path) -> dict:
             'cursor_confirmations':sum(r.get('event')=='cursor_confirmed' for r in artifacts),
             'cursor_latency_p50':percentile([r['seconds'] for r in artifacts
                 if r.get('event')=='cursor_confirmed' and 'seconds' in r],.5),
+            'memory_records':sum(r.get('event')=='memory_written' for r in artifacts),
+            'memory_reads':sum(r.get('event')=='memory_prepared' and r.get('calls',0)>0 for r in artifacts),
+            'memory_read_seconds':sum(r.get('seconds',0) for r in artifacts if r.get('event')=='memory_prepared'),
+            'memory_selected_records':sum(len(r.get('brief',{}).get('selected',[])) for r in artifacts if r.get('event')=='memory_prepared'),
+            'memory_read_timeouts':sum(r.get('event')=='memory_prepared' and r.get('brief',{}).get('end_reason')=='read_time_budget' for r in artifacts),
             'no_visible_effect':sum(r['trial'].get('frame_changed') is False for r in feedback),
             'repairs':sum(c.get('attempt',0)>0 for c in calls if c.get('work') in ('understand','backchain','ground','reconcile')),
             'by_work':{work:{'calls':len(selected),
@@ -98,7 +103,7 @@ def diagnostics(directory: Path) -> dict:
                 'latency_p50':percentile([c['seconds'] for c in selected if 'seconds' in c],.5),
                 'latency_p95':percentile([c['seconds'] for c in selected if 'seconds' in c],.95),
                 'completion_tokens':sum((c.get('usage') or {}).get('completion_tokens',0) for c in selected)}
-                for work in ('understand','backchain','ground','reconcile','choose_skill','execute_step','aim')
+                for work in ('understand','backchain','ground','reconcile','choose_skill','execute_step','aim','read_memory')
                 for selected in [[c for c in calls if c.get('work')==work]]}},
         'committed_actions':len(actions), 'hints':hints}
 
@@ -137,6 +142,13 @@ def write_report(root: Path, results: list[dict]) -> dict:
             median=metrics.get('latency_p50')
             latency=f'{median:.3f}' if median is not None else '—'
             lines.append(f"|{r['game_id']}|{work}|{metrics['calls']}|{latency}|{metrics['completion_tokens']}|")
+    lines += ['', '## 記憶の読み出し', '', '|ゲーム|保存記録|読み出し工程数|合計秒|採用延べ件数|時間枠終了|',
+              '|---|---:|---:|---:|---:|---:|']
+    for r in results:
+        memory=r.get('fast_slow',{})
+        lines.append(f"|{r['game_id']}|{memory.get('memory_records',0)}|{memory.get('memory_reads',0)}|"
+                     f"{memory.get('memory_read_seconds',0):.3f}|{memory.get('memory_selected_records',0)}|"
+                     f"{memory.get('memory_read_timeouts',0)}|")
     lines += ['', '## 改善の調査箇所', '']
     for r in results:
         lines.append(f"### {r['game_id']}")

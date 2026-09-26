@@ -15,9 +15,10 @@ from .execution import ExecutionRuntime
 from .tasks import INSTRUCTIONS, SLOW_TASKS
 from .validation import validate_intent
 from .cursor import start_cursor, cursor_options, adjust_cursor, cursor_parts
+from .notebook import NotebookRuntime, reader_context
 
 
-class CognitiveRuntime(DeliberationStages, ExecutionRuntime):
+class CognitiveRuntime(NotebookRuntime, DeliberationStages, ExecutionRuntime):
     def __init__(self, game_id, model=None, *, repair_attempts=1, max_resets=2,
                  seconds=600, decision_seconds=45, log_dir=None):
         if type(repair_attempts) is not int or repair_attempts not in (0,1):
@@ -35,10 +36,11 @@ class CognitiveRuntime(DeliberationStages, ExecutionRuntime):
                          decision_seconds=decision_seconds,log_dir=log_dir)
 
     def _snapshot(self):
-        keys=('phase','understanding','concepts','cursor','goals','goal_status','selected_goal_id',
-              'backchain','plan','causal_notes','skills','active_skill','review','reconciliations')
+        keys=('phase','understanding','cursor','goals','goal_status','selected_goal_id',
+              'backchain','plan','skills','active_skill','review','reconciliations',
+              'reader','memory_brief','handoff_question','episode')
         self._record('artifacts','cognition_updated',cognition={
-            **{k:getattr(self.memory,k) for k in keys},'recent_trials':self.recent_trials,
+            **{k:getattr(self.memory,k) for k in keys},'note_count':len(self.memory.notes),'recent_trials':self.recent_trials,
             'replan_reason':self.replan_reason})
 
     def _on_observation(self, boundary):
@@ -48,6 +50,9 @@ class CognitiveRuntime(DeliberationStages, ExecutionRuntime):
         if self.outcome:
             trial={'observation_id':self.obs['observation_id'],'step':self.obs['step'],**self.outcome}
             self._record('artifacts','action_feedback',trial=trial)
+            count=trial.get('changed_cell_count')
+            measured=f'{count} changed cells' if count is not None else 'pixel change not measured across this boundary'
+            m.last_outcome_id=self._write_note('outcome',f'{trial["action"]}: {measured}',trial,author='host')
             if self.outcome['acknowledged'] and not boundary:
                 self.recent_trials=(self.recent_trials+[trial])[-8:]
                 if self._current_result() is not None:
@@ -58,6 +63,9 @@ class CognitiveRuntime(DeliberationStages, ExecutionRuntime):
             m.goals.clear();m.goal_status.clear()
             m.selected_goal_id=None
             m.reconciliations.clear()
+            m.stage_notes.clear()
+            m.episode+=1
+            m.handoff_question='What target relations and controls are visible in this new episode?'
             m.phase='understand'
             self.plan_anchor=None
             self.recent_trials.clear()
@@ -88,17 +96,13 @@ class CognitiveRuntime(DeliberationStages, ExecutionRuntime):
             m.goal_status[m.plan['goal_id']]={'status':'candidate','observation_id':self.obs['observation_id'],
                                              'evidence':'Fast model claim; awaiting reconciliation.'}
         m.phase='reconcile'
+        m.handoff_question='What did this attempt establish, and what target or condition should be investigated next? '+reason
         self._record('artifacts','reconciliation_requested',**m.review)
         self._machine_transition(transition)
         self._snapshot()
 
     def _retained_skills(self):
-        retained={};size=0
-        for name,skill in reversed(list(self.memory.skills.items())):
-            length=len(json.dumps(skill,ensure_ascii=False))
-            if len(retained)<4 and size+length<=10000:
-                retained[name]=skill;size+=length
-        return retained
+        return self._selected_skills()
 
     def _goal_context(self):
         m=self.memory
@@ -118,30 +122,30 @@ class CognitiveRuntime(DeliberationStages, ExecutionRuntime):
         goal=m.goals.get(m.selected_goal_id)
         common={'work':work,'observation_id':self.obs['observation_id'],
                 'remaining_actions':self.obs['remaining_actions'],'seconds_left':round(self.time_left(),2)}
+        if work=='read_memory':
+            common.update(reader_context(m.reader,m.notes),last_result=self.outcome,
+                          current_goal=goal,last_review=m.reconciliations[-1:] )
+            return controller_context(common)
         if work in SLOW_TASKS:
             common.update(available_actions=self.obs['available_actions'],
                 image_size={'width':self.obs.get('width',64),'height':self.obs.get('height',64)},
                 current_goal=goal,goal_status=m.goal_status.get(m.selected_goal_id),
-                causal_notes=m.causal_notes,last_result=self.outcome,correction=self.rejection,
+                question=m.handoff_question,last_result=self.outcome,correction=self.rejection,
+                last_review=m.reconciliations[-1:],
+                memory_brief={**m.memory_brief,'records':[m.notes[key] for key in m.memory_brief.get('selected',[])]},
                 reason=self.replan_reason)
-            if work=='understand':
-                common.update(previous_understanding=m.understanding,recent_trials=self.recent_trials[-4:],
-                              concept_catalogue=list(m.concepts.values()))
-            elif work=='backchain':
-                common.update(understanding=m.understanding,goals=self._goal_context(),
-                              last_reconciliation=m.reconciliations[-1:] )
+            if work=='backchain':
+                common.update(understanding=m.understanding,goals=self._goal_context())
             elif work=='ground':
                 common.update(understanding=m.understanding,goals=self._goal_context(),
-                    previous_plan=m.plan,retained_skills=self._retained_skills(),
-                    last_reconciliation=m.reconciliations[-1:])
-            else:
+                    retained_skills=self._retained_skills())
+            elif work=='reconcile':
                 active=m.active_skill
                 common.update(plan=m.plan,review=m.review,active_skill=active,understanding=m.understanding,
                     procedure=m.skills[active['name']] if active else None,
                     current_invocation_result=self._current_result(),
                     attempt_results=[t for t in self.recent_trials if active and
-                        (t.get('skill') or {}).get('invocation_id')==active['invocation_id']],
-                    prior_reconciliations=m.reconciliations[-2:])
+                        (t.get('skill') or {}).get('invocation_id')==active['invocation_id']])
         else:
             understanding=m.understanding or {}
             common.update(goal=m.goals.get(m.plan['goal_id']),intent=m.plan['intent'],
@@ -186,22 +190,30 @@ class CognitiveRuntime(DeliberationStages, ExecutionRuntime):
                 'effect':self.memory.skills[name]['effect']}
                 for i,name in enumerate(self.memory.plan['candidates'])}
 
-    async def _fast(self, work, options):
+    async def _fast(self, work, options, *, timeout=None):
         self.work=work
-        options={**options,'8':{'kind':'reconsider','meaning':'Unexpected result or uncertainty: reconcile'}}
+        if work!='read_memory':
+            options={**options,'8':{'kind':'reconsider','meaning':'Unexpected result or uncertainty: reconcile'}}
         context=self._context(work)
         context['choices']=controller_context(options)
         self.calls+=1;self.memory.model_calls+=1
         self._record('states','state_entered',state='DECIDE',work=work,input=context)
-        parts=self._visual_parts()+[{'type':'text','text':json.dumps(context,separators=(',',':'))}]
+        parts=([] if work=='read_memory' else self._visual_parts())+[
+            {'type':'text','text':json.dumps(context,separators=(',',':'))}]
         if work=='aim' and self.memory.cursor['mode']=='adjust':
             parts=self._visual_parts()+cursor_parts(self.obs,self.memory.cursor)+[parts[-1]]
         instruction='aim_locate' if work=='aim' and self.memory.cursor['mode']=='locate' else work
         record=await choose(self.choice_model,instruction=INSTRUCTIONS[instruction],parts=parts,
-                            options=options,observe_request=self._request_record,timeout=self.time_left())
+                            options=options,observe_request=self._request_record,
+                            timeout=self.time_left() if timeout is None else timeout)
         self.http_requests+=record['http_requests']
         self._record('model','model_decision',state='DECIDE',work=work,call_index=self.calls,context=context,**record)
         self._record('states','state_exited',state='DECIDE',work=work,output=record)
+        if work=='read_memory':
+            if not record['schema_valid']:return None
+            option=options[record['label']]
+            self._record('artifacts','fast_selected',work=work,label=record['label'],selection=option)
+            return option
         transition={'choose_skill':'skill_reconsider','execute_step':'step_reconsider','aim':'aim_reconsider'}[work]
         if not record['schema_valid']:
             self.errors.append(record['error'])
@@ -218,7 +230,9 @@ class CognitiveRuntime(DeliberationStages, ExecutionRuntime):
         m=self.memory
         while self.result is None and self.job is None and self.time_left()>0:
             if m.phase in SLOW_TASKS:
-                await self._deliberate(ctx,m.phase)
+                work=m.phase
+                await self._read_memory(work)
+                await self._deliberate(ctx,work)
                 continue
             if m.phase=='choose_skill':
                 choice=await self._fast('choose_skill',self._skill_options())

@@ -5,6 +5,7 @@ STATES = {
     'backchain': ('熟考：前提条件を逆算', 'llm', 700, 50),
     'ground': ('熟考：実行手順へ具体化', 'llm', 1030, 50),
     'reconcile': ('熟考：結果照合・更新', 'llm', 370, 300),
+    'read_memory': ('高速：記憶の選択 / 8', 'llm', 700, 300),
     'choose_skill': ('高速：スキル選択 / 8', 'llm', 1030, 300),
     'execute_step': ('高速：操作 / 7 / 8', 'llm', 700, 530),
     'aim': ('高速：照準 / 7 / 8', 'llm', 1030, 530),
@@ -44,6 +45,15 @@ TRANSITIONS = {
     'invalid_backchain': ('backchain','stop','依存関係の出力契約エラー','stop'),
     'invalid_ground': ('ground','stop','手順の出力契約エラー','stop'),
     'invalid_reconcile': ('reconcile','stop','照合の出力契約エラー','stop'),
+    'read_for_understand': ('understand','read_memory','理解の問いに必要な記録','normal'),
+    'read_for_backchain': ('backchain','read_memory','逆算の問いに必要な記録','normal'),
+    'read_for_ground': ('ground','read_memory','手順化の問いに必要な記録','normal'),
+    'read_for_reconcile': ('reconcile','read_memory','結果照合に必要な記録','normal'),
+    'memory_navigation': ('read_memory','read_memory','開く・採用・除外・ページ移動','normal'),
+    'memory_to_understand': ('read_memory','understand','選んだ記録を渡す','normal'),
+    'memory_to_backchain': ('read_memory','backchain','選んだ記録を渡す','normal'),
+    'memory_to_ground': ('read_memory','ground','選んだ記録を渡す','normal'),
+    'memory_to_reconcile': ('read_memory','reconcile','選んだ記録を渡す','normal'),
 }
 GLOBAL_GATES = [
     '熟考は理解・逆算・具体化・結果照合。必要な工程だけに戻る',
@@ -52,6 +62,7 @@ GLOBAL_GATES = [
     '概念・役割の仮説と意味による対象指定を保持。座標は実行時に照準で確定',
     '照準は観測ごとに再取得。ホストのカーソル移動はゲームの操作・変化に含めない',
     '同条件の反復拒否なし。合法操作・観測ID・受付・実時間予算を検証',
+    '実測とモデル解釈は追記で保持。読み出しの8は選んだ記憶を次の熟考へ渡す',
 ]
 
 

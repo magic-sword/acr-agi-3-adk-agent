@@ -32,7 +32,7 @@ class StageTool(BaseTool):
         if 'GroundedPlan' in definitions:
             p = definitions['GroundedPlan']['properties']
             p['goal_id']['enum'] = [None] if m.selected_goal_id is None else [None, m.selected_goal_id]
-            if m.skills:
+            if self.runtime._retained_skills():
                 p['reuse']['items']['enum'] = list(self.runtime._retained_skills())
             else:
                 p['reuse']['maxItems'] = 0
@@ -134,9 +134,9 @@ class DeliberationStages:
             unique(p.reuse,'reuse names')
             if not p.skills and not p.reuse:
                 raise ValueError('provide a new skill or reuse an existing skill')
-            if any(n not in m.skills for n in p.reuse):
-                raise ValueError('reused procedure does not exist')
-            skills = {**m.skills, **{s.name:s.model_dump() for s in p.skills}}
+            if any(n not in self._retained_skills() for n in p.reuse):
+                raise ValueError('reuse must name a procedure selected into memory_brief')
+            skills = {**self._retained_skills(), **{s.name:s.model_dump() for s in p.skills}}
             for name in set(p.reuse) | {s.name for s in p.skills}:
                 if p.intent=='probe' and len(skills[name]['steps'])!=1:
                     raise ValueError('a probe has one action step, then observation and reconciliation')
@@ -161,12 +161,7 @@ class DeliberationStages:
         data=value.model_dump()
         if work=='understand':
             m.understanding=data
-            for concept in value.concepts:
-                m.concepts.pop(concept.name, None)
-                m.concepts[concept.name]={**concept.model_dump(),'observed_at':value.observation_id}
-            while len(m.concepts)>16:
-                m.concepts.pop(next(iter(m.concepts)))
-            m.causal_notes=value.causal_hypotheses
+            m.handoff_question=value.question or value.goal_hypothesis
             m.active_skill=None
             m.phase=value.next
             self._machine_transition('understood' if value.next=='backchain' else 'direct_ground')
@@ -180,15 +175,21 @@ class DeliberationStages:
                 m.goals[goal.id]=updated
             m.backchain=data
             m.selected_goal_id=value.selected_goal_id
+            m.handoff_question='How can this small goal be established? '+m.goals[value.selected_goal_id]['desired_state']
             m.phase='ground'
             self._machine_transition('backchained')
         elif work=='ground':
             if value.next!='execute':
                 m.phase=value.next
                 self.replan_reason=value.reason
+                m.handoff_question=(value.next_question.strip() or
+                                    (value.plan.question if value.plan else '') or value.reason)
                 self._machine_transition('ground_'+value.next)
             else:
                 p=value.plan
+                retained=self._retained_skills()
+                for name in p.reuse:
+                    m.skills[name]=deepcopy(retained[name])
                 for skill in p.skills:
                     m.skills.pop(skill.name,None)
                     m.skills[skill.name]=skill.model_dump()
@@ -209,7 +210,7 @@ class DeliberationStages:
         elif work=='reconcile':
             m.reconciliations=(m.reconciliations+[{
                 **data,'trigger':m.review,'invocation':deepcopy(m.active_skill)}])[-6:]
-            m.causal_notes=value.causal_notes
+            m.handoff_question=value.next_question
             if value.goal_id is not None:
                 m.goal_status[value.goal_id]={'status':value.goal_status,'observation_id':value.observation_id,
                                               'evidence':value.evidence}
@@ -222,6 +223,7 @@ class DeliberationStages:
             self.replan_reason=value.reason
             self._machine_transition('review_'+value.next)
         self._record('artifacts','stage_accepted',work=work,result=data)
+        self._write_stage_notes(work,value)
         self._snapshot()
 
     def _agent(self, work):

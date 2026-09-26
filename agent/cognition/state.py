@@ -92,9 +92,12 @@ class GroundedPlan(Contract):
 
 class Grounding(Contract):
     observation_id: str
-    next: Literal['execute', 'understand', 'backchain']
+    plan: GroundedPlan | None = Field(description='An executable procedure, or null if a missing fact prevents even a one-action probe.')
+    next: Literal['execute', 'understand', 'backchain'] = Field(
+        description='execute when plan is provided. understand or backchain only when plan is null.')
     reason: str = Field(max_length=200)
-    plan: GroundedPlan | None
+    next_question: str = Field(default='', max_length=240,
+        description='If plan is null, the missing fact to investigate next. Empty string when executing.')
 
 
 class Reconciliation(Contract):
@@ -106,6 +109,7 @@ class Reconciliation(Contract):
     causal_notes: str = Field(max_length=600)
     next: Literal['understand', 'backchain', 'ground', 'resume']
     reason: str = Field(min_length=1, max_length=200)
+    next_question: str = Field(min_length=1, max_length=240)
 
 
 class FastSelection(Contract):
@@ -113,7 +117,7 @@ class FastSelection(Contract):
 
 
 class Memory(Contract):
-    schema_version: int = 11
+    schema_version: int = 12
     revision: int = 0
     run_id: str
     game_id: str
@@ -121,7 +125,6 @@ class Memory(Contract):
     stop_reason: str = ''
     phase: str = 'understand'
     understanding: dict | None = None
-    concepts: dict = Field(default_factory=dict)
     cursor: dict | None = None
     goals: dict = Field(default_factory=dict)
     goal_status: dict = Field(default_factory=dict)
@@ -132,7 +135,14 @@ class Memory(Contract):
     pending: dict | None = None
     active_skill: dict | None = None
     plan: dict | None = None
-    causal_notes: str = ''
+    notes: dict = Field(default_factory=dict)
+    note_sequence: int = 0
+    episode: int = 0
+    stage_notes: dict = Field(default_factory=dict)
+    last_outcome_id: str | None = None
+    handoff_question: str = 'What useful target relation or uncertainty should be investigated on this board?'
+    reader: dict | None = None
+    memory_brief: dict = Field(default_factory=dict)
     skills: dict = Field(default_factory=dict)
     history: list[dict] = Field(default_factory=list)
     last_observation: dict = Field(default_factory=dict)

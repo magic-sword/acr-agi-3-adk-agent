@@ -60,7 +60,7 @@ def backchain(c):
 
 
 def grounding(c, x=None):
-    return {'observation_id':c['observation_id'],'next':'execute','reason':'Ground the selected goal.',
+    return {'observation_id':c['observation_id'],'next':'execute','reason':'Ground the selected goal.','next_question':'',
         'plan':{'goal_id':(c.get('current_goal') or {}).get('id'),'intent':'achieve','question':'',
                 'target_query':'The actor and the marked destination.','baseline':'The actor is left of the target.',
                 'skills':[skill(x=x)],'reuse':[]}}
@@ -70,7 +70,8 @@ def reconciliation(c):
     return {'observation_id':c['observation_id'],'goal_id':c['plan']['goal_id'],
             'assessment':'unclear','evidence':'The intended target relation is not yet confirmed.',
             'goal_status':'active','causal_notes':'Clicking has not yet established target entry.',
-            'next':'ground','reason':'Specify a new concrete attempt.'}
+            'next':'ground','reason':'Specify a new concrete attempt.',
+            'next_question':'Which target or condition would distinguish the unresolved effect?' }
 
 
 def answer(model, payload):
@@ -80,6 +81,7 @@ def answer(model, payload):
             'reconcile':('submit_reconciliation',reconciliation)}
     if c['work'] in stages:
         tool, fn=stages[c['work']];return call(tool,fn(c))
+    if c['work']=='read_memory':return token('8')
     if c['work']=='aim':
         if c['cursor']['mode']=='locate':return token('1')
         if c['cursor']['x']<2:return token('4')

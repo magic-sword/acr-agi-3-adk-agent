@@ -31,7 +31,7 @@ class FastSlowTests(unittest.TestCase):
         with patch.object(LocalVisionLlm,'_complete',respond):
             for step in range(6):
                 result=r.decide(obs(step));self.assertEqual(result['status'],'action');ack(r)
-        self.assertEqual([context(p)['work'] for p in requests],
+        self.assertEqual([context(p)['work'] for p in requests if context(p)['work']!='read_memory'],
                          ['understand','backchain','ground','choose_skill']+['execute_step']*6)
         for p in requests[3:]:
             self.assertEqual(p['max_tokens'],1);self.assertNotIn('tools',p)
@@ -43,7 +43,7 @@ class FastSlowTests(unittest.TestCase):
         r=self.runtime();executions=0;works=[]
         def respond(m,p):
             nonlocal executions
-            c=context(p);works.append(c['work'])
+            c=context(p);works.extend([c['work']] if c['work']!='read_memory' else [])
             if c['work']=='execute_step':
                 executions+=1
                 return token('8' if executions==2 else '1')
@@ -52,8 +52,8 @@ class FastSlowTests(unittest.TestCase):
                 self.assertEqual(c['current_invocation_result']['changed_cell_count'],1)
                 self.assertEqual(c['current_goal']['id'],'approach')
                 self.assertIsNone(r.memory.pending)
-            if c['work']=='ground' and c['last_reconciliation']:
-                self.assertIn('not yet',c['causal_notes'])
+            if c['work']=='ground' and c['last_review']:
+                self.assertIn('not yet',c['last_review'][-1]['causal_notes'])
                 return call('submit_grounding',grounding(c,x=2))
             return answer(m,p)
         with patch.object(LocalVisionLlm,'_complete',respond):
@@ -88,7 +88,7 @@ class FastSlowTests(unittest.TestCase):
     def test_probe_bypasses_backchain_and_receipt_returns_to_reconcile_without_fast_call(self):
         r=self.runtime();works=[]
         def respond(m,p):
-            c=context(p);works.append(c['work'])
+            c=context(p);works.extend([c['work']] if c['work']!='read_memory' else [])
             if c['work']=='understand':
                 v=understanding(c);v['next']='ground';return call('submit_understanding',v)
             if c['work']=='ground':
@@ -156,7 +156,7 @@ class FastSlowTests(unittest.TestCase):
         with patch.object(LocalVisionLlm,'_complete',respond):
             r.decide(obs());old=r.memory.active_skill['invocation_id'];ack(r);r.decide(obs(1))
         self.assertEqual(r.memory.active_skill['invocation_id'],old)
-        self.assertEqual(r.calls,3)
+        self.assertEqual(r.calls,4)  # read_memory, reconciliation and two execution choices
 
     def test_confirmed_leaf_is_preserved_when_backchaining_to_parent(self):
         r=self.runtime();executions=0;backchains=0
@@ -225,18 +225,25 @@ class FastSlowTests(unittest.TestCase):
         self.assertEqual(result['status'],'action');self.assertEqual(r.memory.model_calls,6)
 
     def test_invalid_fast_output_reconciles_and_reuses_grounded_skill(self):
-        r=self.runtime();selections=0
+        r=self.runtime();selections=0;reused=[]
         def respond(m,p):
             nonlocal selections
             c=context(p)
             if c['work']=='choose_skill':
                 selections+=1
                 if selections==1:return token('not a digit')
+            if c['work']=='read_memory' and c['for_work']=='ground':
+                if c['selected']:return token('8')
+                if c['opened_record']:return token('7')
+                for label,option in c['choices'].items():
+                    if option.get('record_kind')=='procedure' or option.get('key')=='procedures':return token(label)
             if c['work']=='ground' and c['retained_skills']:
+                reused.append(c['retained_skills']['move'])
                 v=grounding(c);v['plan']['skills']=[];v['plan']['reuse']=['move'];return call('submit_grounding',v)
             return answer(m,p)
         with patch.object(LocalVisionLlm,'_complete',respond):result=r.decide(obs())
         self.assertEqual(result['status'],'action');self.assertEqual(selections,2)
+        self.assertEqual(len(reused),1)
         self.assertEqual(r.memory.reconciliations[-1]['trigger']['trigger'],'invalid_fast_output')
 
     def test_grounding_can_return_to_understanding_without_sending_action(self):
@@ -249,7 +256,7 @@ class FastSlowTests(unittest.TestCase):
                 grounds+=1
                 if grounds==1:
                     return call('submit_grounding',{'observation_id':c['observation_id'],
-                        'next':'understand','reason':'Locate the moving actor again.','plan':None})
+                        'next':'understand','reason':'Locate the moving actor again.','next_question':'Where did the actor move?','plan':None})
             return answer(m,p)
         with patch.object(LocalVisionLlm,'_complete',respond):result=r.decide(obs())
         self.assertEqual(result['status'],'action');self.assertEqual(understandings,2)
@@ -265,8 +272,9 @@ class FastSlowTests(unittest.TestCase):
                         r.decide({**obs(1),'state':'GAME_OVER'});ack(r);r.decide(obs(2))
                     else:r.decide({**obs(1),'levels_completed':1})
                 u=[c for c in inputs if c['work']=='understand'][-1]
-                self.assertIsNone(u['previous_understanding']);self.assertIsNone(u['current_goal'])
-                self.assertEqual(u['recent_trials'],[]);self.assertIn('Clicking',u['causal_notes'])
+                self.assertNotIn('previous_understanding',u);self.assertIsNone(u['current_goal'])
+                self.assertNotIn('recent_trials',u);self.assertEqual(u['last_review'],[])
+                self.assertTrue(any(n['kind']=='hypothesis' for n in r.memory.notes.values()))
                 self.assertIn('move',r.memory.skills)
 
     def test_changed_legal_controls_require_reconciliation_and_regrounding(self):
@@ -329,4 +337,4 @@ class FastSlowTests(unittest.TestCase):
             self.assertEqual([c['work'] for c in calls[:3]],['understand','backchain','ground'])
             self.assertTrue(all(c['schema_valid'] for c in calls))
             memory=json.loads((Path(d)/(r.session_id+'.json')).read_text())
-            self.assertIn('approach',memory['goals']);self.assertEqual(memory['schema_version'],11)
+            self.assertIn('approach',memory['goals']);self.assertEqual(memory['schema_version'],12)

@@ -44,7 +44,9 @@ The replay shows semantic targets, concept and role hypotheses, the exact cursor
 procedure and invocation ID, predicted effects, measured changes,
 one-token choice and returns to deliberation. Playback defaults to state transitions;
 action and full-event modes are also available. Click **計画・スキルを読む** to inspect
-the recorded causal hypotheses and procedures at that point in time.
+the recorded causal hypotheses, procedures, memory navigation and selected working set at that point in time.
+Deliberation appends evidence and interpretations; one-token memory navigation selects the records
+for the next question. See the [memory retrieval design](docs/memory-retrieval-runtime-ja.md).
 Playback reads only the selected game, updates images only when needed, and opens detailed logs on demand.
 It does not launch evaluations or poll for updates. See the [replay guide](docs/agent-monitor-ja.md).
 

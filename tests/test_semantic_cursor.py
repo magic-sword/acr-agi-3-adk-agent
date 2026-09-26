@@ -167,7 +167,8 @@ class SemanticCursorTests(unittest.TestCase):
             result=r.decide(board());self.assertEqual(result['status'],'action')
             self.assertEqual(r.memory.goal_status['approach']['status'],'active')
             ack(r);r.decide(board(1))
-        self.assertEqual(works[works.index('reconcile')-1],'aim')
+        execution_works=[w for w in works if w!='read_memory']
+        self.assertEqual(execution_works[execution_works.index('reconcile')-1],'aim')
         self.assertEqual(r.memory.reconciliations[0]['trigger']['trigger'],'probe_result')
 
     def test_rendering_preserves_raw_pixels_and_checks_observation_binding(self):
