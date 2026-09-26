@@ -12,10 +12,10 @@ class StructureTests(unittest.TestCase):
     def test_registry_and_contracts_are_read_from_current_source(self):
         data=read_structure(ROOT)
         tasks={t['id']:t for t in data['tasks']}
-        self.assertEqual(set(tasks), {'attend'})
-        self.assertEqual(tasks['attend']['tool'], 'submit_attention')
-        self.assertIn('focus', tasks['attend']['fields'])
-        self.assertIn('action', tasks['attend']['fields'])
+        self.assertEqual(set(tasks), {'deliberate','choose_skill','execute_step'})
+        self.assertEqual(tasks['deliberate']['tool'], 'submit_plan')
+        self.assertIn('goal', tasks['deliberate']['fields'])
+        self.assertIn('skills', tasks['deliberate']['fields'])
         self.assertEqual(data['edges'][0],['START','DECIDE'])
 
     def test_changed_registry_appears_without_execution_or_display_changes(self):
@@ -55,7 +55,7 @@ class StructureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);evaluation=root/'evaluations'/'current';game=evaluation/'game'
             log=game/'cognition';log.mkdir(parents=True)
-            (evaluation/'manifest.json').write_text('{"observatory_schema":1}')
+            (evaluation/'manifest.json').write_text('{"observatory_schema":2}')
             (game/'result.json').write_text('{}')
             (log/'r.states.jsonl').write_text(json.dumps({'event':'state_entered','state':'DECIDE','work':'assess_goal','sequence':1,'input':{'work':'assess_goal'}})+'\n'+json.dumps({'event':'state_exited','state':'RUN','sequence':2,'output':{'result':{'status':'stop','reason':'model_budget'}}})+'\n')
             viewer=BenchmarkReplay(root,source_root=ROOT);self.addCleanup(viewer.close)
@@ -98,5 +98,5 @@ class StructureTests(unittest.TestCase):
         from agent.cognition.machine import destination, TRANSITIONS
         data=read_structure(ROOT)
         self.assertEqual(data['transitions'],TRANSITIONS)
-        self.assertEqual(destination('repair'), 'attend')
+        self.assertEqual(destination('repair'), 'deliberate')
         self.assertEqual(destination('repair_exhausted'), 'stop')

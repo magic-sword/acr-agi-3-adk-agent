@@ -13,7 +13,7 @@ from PIL import Image, ImageDraw
 
 from scripts.agent_monitor import (Timeline, discover_evaluations, discover_runs, dashboard_html,
                                   json_html, safe_asset, PALETTE)
-from scripts.notebook_view import notebook_html
+from scripts.cognition_view import cognition_html
 from scripts.runtime_structure import read_structure, structure_html, failure_points, trace_html
 
 
@@ -77,7 +77,7 @@ class BenchmarkReplay:
         self.slider = W.IntSlider(min=0,max=0,value=0,description='位置',continuous_update=False,layout=W.Layout(width='75%'))
         self.speed = W.Dropdown(description='間隔',options=[('2秒',2000),('1秒',1000),('0.5秒',500)],value=1000,layout=W.Layout(width='180px'))
         self.previous,self.next = W.Button(description='前へ'),W.Button(description='次へ')
-        self.notes_button = W.Button(description='攻略ノートを読む', icon='book', disabled=True)
+        self.notes_button = W.Button(description='計画・スキルを読む', icon='book', disabled=True)
         self.status,self.board = W.HTML(),W.HTML()
         self.diagram = W.HTML()
         self._machine_key = None
@@ -91,7 +91,7 @@ class BenchmarkReplay:
         self.animation_caption = W.HTML()
         self.animation_slider = W.IntSlider(min=0,max=0,description='フレーム',continuous_update=False)
         self.details = W.Accordion(children=[*self.panels,W.VBox([self.animation_slider,self.animation_caption,self.animation])])
-        for i,name in enumerate(('状態の入力','状態の出力','選択イベント','HTTP入力','モデル応答','ツール・学習','攻略ノート（読む・参照・更新）','記録済みアニメーション')):
+        for i,name in enumerate(('状態の入力','状態の出力','選択イベント','HTTP入力','モデル応答','計画ツール','計画・スキル・熟考への復帰','記録済みアニメーション')):
             self.details.set_title(i,name)
         self.details.selected_index = None
         self.widget = W.VBox([W.HTML('<h3>ベンチマーク再生</h3><style>.arc-replay-image img{image-rendering:pixelated}</style>'),
@@ -181,10 +181,13 @@ class BenchmarkReplay:
         self.status.value='<p>選択したゲームの記録を読み込んでいます。</p>'
         try:
             manifest=json.loads((Path(self.evaluation.value)/'manifest.json').read_text())
-            if manifest.get('observatory_schema') != 1:
+            if manifest.get('observatory_schema') != 2:
                 raise ValueError('旧形式の実行ログです。最新実装で記録を作成してください')
             settings=manifest.get('cognition_settings') or {}
-            self.run_settings='実行時のモデル: '+str(manifest.get('agent_model','記録なし'))+' · 一観測あたりの上限: '+str(settings.get('COGNITION_MAX_CALLS','不明'))+'判断 / '+str(settings.get('COGNITION_MAX_HTTP_REQUESTS','不明'))+'HTTP'
+            self.run_settings=('実行時のモデル: '+str(manifest.get('agent_model','記録なし'))
+                +' · 一観測の判断時間: '+str(settings.get('COGNITION_DECISION_SECONDS','45'))+'秒'
+                +' · 計画の出力修正: '+str(settings.get('COGNITION_REPAIR_ATTEMPTS','1'))+'回'
+                +' · 高速選択: 1トークン')
             self.timeline=Timeline(run).load()
             self.problem.options=[('全記録の問題イベントを選択',None), *failure_points(self.timeline.events)]
             self._read_structure()
@@ -290,7 +293,7 @@ class BenchmarkReplay:
         if s is None or index is None:
             return
         if index==6:
-            self.panels[index].value=notebook_html(s)
+            self.panels[index].value=cognition_html(s)
             return
         if index==7:
             obs=s['current'] or {}
@@ -308,7 +311,7 @@ class BenchmarkReplay:
             self._render_animation()
             return
         values=[s['input'],s['output'] if s['output'] is not None else 'この時点の出力はまだ記録されていません。',
-                s['event'],s['request'],s['response'],{'tools':s['tools'],'learning':s['learning']}]
+                s['event'],s['request'],s['response'],{'tools':s['tools']}]
         self.panels[index].value=json_html(values[index])
 
     def _render_animation(self):

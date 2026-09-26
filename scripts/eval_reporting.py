@@ -42,21 +42,8 @@ def tool_requests(exchange):
 def diagnostics(directory: Path) -> dict:
     calls = [r for p in directory.glob('*.model.jsonl') for r in read_jsonl(p)]
     tools = [r for p in directory.glob('*.tools.jsonl') for r in read_jsonl(p) if r.get('event')=='tool_finished']
-    learning = [r for p in directory.glob('*.learning.jsonl') for r in read_jsonl(p)]
-    notebook = [r for p in directory.glob('*.notebook.jsonl') for r in read_jsonl(p)]
     artifacts = [r for p in directory.glob('*.artifacts.jsonl') for r in read_jsonl(p)]
-    attention = [r for r in artifacts if r.get('event') == 'attention_selected']
-    feedback = [r for r in artifacts if r.get('event') == 'attention_feedback']
-    worlds = [r['after']['data'] for r in notebook
-              if r.get('event')=='note_changed' and r.get('after',{}).get('kind')=='world']
-    findings = {f['experiment_id']:f for w in worlds for f in w['conditional_findings']}
-    target_checks = [r for r in artifacts if r.get('event')=='target_checked'
-                     and r.get('source')=='host_region_and_pixel_mask']
-    experiments = [r for p in directory.glob('*.experiments.jsonl') for r in read_jsonl(p)]
-    reviews = list({(r.get('run_id'), r['experiment']['id']): r['experiment']['data']
-                    for r in experiments if r['event'] == 'experiment_reviewed'}.values())
-    auto_skills = [r for p in directory.glob('*.tools.jsonl') for r in read_jsonl(p)
-                   if r.get('event') == 'skill_instructions_loaded']
+    feedback = [r for r in artifacts if r.get('event') == 'action_feedback']
     turns = [r for p in directory.glob('*.jsonl') if p.name.count('.')==1 for r in read_jsonl(p)]
     actions = [t for t in turns if t.get('action',{}).get('status')=='action']
     valid = sum(bool(c.get('schema_valid')) for c in calls)
@@ -75,13 +62,10 @@ def diagnostics(directory: Path) -> dict:
             consecutive_repeats += same
             identical_frame_repeats += bool(same and a.get('frame_hash') and a['frame_hash'] == b.get('frame_hash'))
     errors = [e for t in turns for e in t.get('errors',[])]
-    events = Counter(r.get('event') for r in learning)
-    outcomes = Counter(r.get('outcome') for r in learning if r.get('event')=='skill_execution_finished')
     hints = []
     if consecutive_repeats:
-        hints.append(f'同じ操作の連続箇所: {consecutive_repeats}。画面の変化・注目対象・事前に宣言した反復回数を確認。')
+        hints.append(f'同じ操作の連続箇所: {consecutive_repeats}。実測された変化とモデルの解釈・注目対象を確認。')
     if valid<len(calls): hints.append('モデル要求・提出に失敗あり。model.jsonlを確認。')
-    if events['skill_drafted'] and not events['skill_promoted']: hints.append('候補は未昇格。固定評価と実試行結果を確認。')
     return {'model_calls':len(calls), 'schema_valid_calls':valid,
         'model_http_requests':sum(c.get('http_requests',1) for c in calls),
         'schema_valid_rate':valid/len(calls) if calls else None,
@@ -92,32 +76,23 @@ def diagnostics(directory: Path) -> dict:
         'state_visits':dict(Counter(s for t in turns for s in t.get('trace',[]))),
         'reasoning_calls_by_state':dict(Counter(c.get('state') for c in calls)),
         'reasoning_calls_by_work':dict(Counter(c.get('work') for c in calls)),
-        'notebook_events':dict(Counter(r.get('event') for r in notebook)),
-        'notebook_tool_calls':dict(Counter(n for n in requests if n in
-            ('read_notebook','write_note','erase_note','set_bookmark'))),
-        'host_loaded_skills':dict(Counter(r['skill'] for r in auto_skills)),
-        'skill_tool_calls':dict(Counter(n for n in requests if n in ('load_skill','load_skill_resource','propose_skill','read_skill'))),
-        'loaded_skills':dict(Counter(t['arguments'].get('skill_name') for t in tools if t['tool']=='load_skill' and t['status']=='success')),
+        'tool_calls':dict(Counter(requests)),
         'tool_execution_errors':sum(t.get('status')=='error' for t in tools),
-        'learning_events':dict(events), 'skill_execution_outcomes':dict(outcomes),
         'validation_errors':errors, 'consecutive_action_repeats':consecutive_repeats,
         'identical_frame_action_repeats':identical_frame_repeats,
-        'experiment_events':dict(Counter(r['event'] for r in experiments)),
-        'experiment_verdicts':dict(Counter(r['review']['verdict'] for r in reviews)),
-        'experiment_reviewers':dict(Counter(r['reviewer'] for r in reviews)),
-        'world_memory': {'versions':len(worlds), 'conditional_trials':len(findings),
-            'questions_tested':len({f['question_id'] for f in findings.values() if f['resolved_test']}),
-            'pixel_mask_checks':len(target_checks),
-            'pixel_mask_matches':sum(r['verdict']=='matched' for r in target_checks),
-            'last_open_questions':sum(q['status']=='open' for q in worlds[-1]['questions']) if worlds else 0,
-            'note':'Mask matches measure geometric consistency, not semantic object-recognition accuracy.'},
-        'bounded_experiment_retries':sum(r['event']=='experiment_started' and
-            bool(r['experiment']['data']['plan']['retry_of']) for r in experiments),
-        'attention': {'decisions': len(attention),
-            'measured_results': len(feedback),
-            'no_visible_effect': sum(r['trial']['frame_changed'] is False for r in feedback),
-            'repairs': sum(c.get('call_index', 1) > 1 for c in calls if c.get('work') == 'attend'),
-            'http_requests_per_decision': sum(c.get('http_requests', 1) for c in calls) / len(attention) if attention else None},
+        'fast_slow': {
+            'plans':sum(r.get('event')=='plan_created' for r in artifacts),
+            'reconsiderations':sum(r.get('event')=='reconsider_requested' for r in artifacts),
+            'completed_skills':sum(r.get('event')=='skill_completed' for r in artifacts),
+            'no_visible_effect':sum(r['trial'].get('frame_changed') is False for r in feedback),
+            'repairs':sum(c.get('attempt',0)>0 for c in calls if c.get('work')=='deliberate'),
+            'by_work':{work:{'calls':len(selected),
+                'seconds':sum(c.get('seconds',0) for c in selected),
+                'latency_p50':percentile([c['seconds'] for c in selected if 'seconds' in c],.5),
+                'latency_p95':percentile([c['seconds'] for c in selected if 'seconds' in c],.95),
+                'completion_tokens':sum((c.get('usage') or {}).get('completion_tokens',0) for c in selected)}
+                for work in ('deliberate','choose_skill','execute_step')
+                for selected in [[c for c in calls if c.get('work')==work]]}},
         'committed_actions':len(actions), 'hints':hints}
 
 
@@ -159,9 +134,9 @@ def write_report(root: Path, results: list[dict]) -> dict:
               '- 各ゲームの `scorecard.json`: 公式SDKの生スコアカード。',
               '- `cognition/*.model.jsonl`: 入力記憶・モデル生応答・型検証・時間・トークン数。',
               '- `cognition/*.jsonl`: 各手の予測照合・遷移・検証エラー。',
-              '- `cognition/*.tools.jsonl`: ツール実行前後の記録。読み込んだスキル名・成否・引数・結果。',
+              '- `cognition/*.tools.jsonl`: ツール実行前後の記録。計画の提出・検証結果。',
               '- `cognition/*.artifacts.jsonl`: 判断の更新と選択された操作。未実行も区別。',
-              '- `cognition/*.artifacts.jsonl` の `attention_selected` / `attention_feedback`: 注目対象・予想・短い記憶と実測結果。',
+              '- `cognition/*.artifacts.jsonl` の `plan_created` / `fast_selected` / `reconsider_requested` / `action_feedback`: 計画・高速選択・熟考への復帰・実測結果。',
               '- `cognition/*.requests.jsonl` と `request-images/`: 実HTTP入力と画像参照。',
               '- `cognition/*.execution.jsonl`: ドライバの送信・受付・結果不明イベント。',
               '- `cognition/*.observations.jsonl` と `cognition/frames/`: 実観測の色ID・PNG。',

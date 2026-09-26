@@ -1,6 +1,6 @@
 # ローカル評価
 
-現行エージェントは[画面から注意と操作を選ぶループ](visual-attention-runtime-ja.md)。
+現行エージェントは[熟考と1トークン実行を分けるループ](fast-slow-runtime-ja.md)。
 
 画面・操作・状態の入出力を並べて調べる場合は、[JupyterLab観測ノートブック](../notebooks/agent_observatory.ipynb)を使う。[評価IDを選択して再生する手順](agent-monitor-ja.md)。
 
@@ -19,7 +19,7 @@ make benchmark EVAL_GAMES=ls20 EVAL_STEPS=40 EVAL_SECONDS=180 EVAL_HARD_SECONDS=
    --offline-policy --games ls20 --steps 2 --seconds 10 --hard-seconds 25
 ```
 
-通常は1操作1要求。不正な出力だけ追加1要求で修正する。`COGNITION_REPAIR_ATTEMPTS=0`で修正を無効化できる。旧学習・ライブラリ指定のCLI引数は廃止した。
+通常の継続は1操作1回の高速選択。初回・再計画・手順移行は複数回呼び出す。計画の不正出力だけ追加1要求で修正する。`COGNITION_REPAIR_ATTEMPTS=0`で修正を無効化できる。旧学習・ライブラリ指定のCLI引数は廃止した。
 
 ## 出力
 
@@ -34,7 +34,7 @@ make benchmark EVAL_GAMES=ls20 EVAL_STEPS=40 EVAL_SECONDS=180 EVAL_HARD_SECONDS=
 |cognition/*.model.jsonl|判断入力、生応答、HTTP往復、時間・トークン|
 |cognition/*.requests.jsonl / request-images/|実際に送信したテキスト・ツール定義・画像|
 |cognition/*.tools.jsonl|操作提出ツールの開始と終了|
-|cognition/*.artifacts.jsonl|注目対象・予想・短い記憶と実測結果。選択と実行受付は別|
+|cognition/*.artifacts.jsonl|計画・手順・高速選択・熟考への復帰と実測結果。選択と実行受付は別|
 |cognition/*.execution.jsonl|実行送信、受付、結果不明|
 |cognition/*.observations.jsonl / frames/|実画面・色IDと記録アニメーション|
 |cognition/*.states.jsonl|DECIDE/RUNの入場・退出、状態の入力／出力、実行終了。新しい走行には全ジャーナル共通のsequenceも付く|
@@ -42,7 +42,7 @@ make benchmark EVAL_GAMES=ls20 EVAL_STEPS=40 EVAL_SECONDS=180 EVAL_HARD_SECONDS=
 
 `schema_valid_rate`は提出契約の受理率で、意味的な正答率ではない。`model_calls`と実際の`model_http_requests`を分ける。トークンはusageを取得した要求のみ。
 
-`attention`診断は判断数、実測結果数、無変化、修正数、判断あたりHTTP要求数を記録する。速度だけでなく、注意の切り替え、進展の誤認、レベル達成も確認する。
+`fast_slow`診断は計画数、復帰数、完了スキル数、無変化、修正数と、熟考・スキル選択・手順実行それぞれの呼出し数・時間・トークン数を記録する。速度だけでなく、注意の切り替え、進展の誤認、レベル達成も確認する。
 
 1レベルで止めてもSDKのスコア分母はゲーム全体。未取得のスコアはnull、全件揃わなければ全体平均もnull。ワーカー強制終了ではゲートウェイの受付済み操作から復元するが、実行中の結果不明が残り得る。
 

@@ -69,7 +69,7 @@ class EvaluationReports(unittest.TestCase):
             (root / 'run.jsonl').write_text('\n'.join(map(json.dumps, turns)))
             calls = [{'schema_valid': True, 'seconds': 2, 'usage': {'prompt_tokens': 8, 'completion_tokens': 2},
                       'http_requests': 2, 'exchanges': [{'response': {'tool_calls': [
-                          {'function': {'name': 'load_skill'}}]}}]},
+                          {'function': {'name': 'submit_plan'}}]}}]},
                      {'error': 'invalid JSON', 'seconds': 4}]
             (root / 'run.model.jsonl').write_text('\n'.join(map(json.dumps, calls)))
             (root / 'run.observations.jsonl').write_text('{}\n')
@@ -80,7 +80,7 @@ class EvaluationReports(unittest.TestCase):
             self.assertEqual(result['model_latency_p50'], 3)
             self.assertEqual(result['tokens']['prompt_tokens'], 8)
             self.assertEqual(result['model_http_requests'], 3)
-            self.assertEqual(result['skill_tool_calls'], {'load_skill': 1})
+            self.assertEqual(result['tool_calls'], {'submit_plan': 1})
             self.assertTrue(result['hints'])
 
     def test_hard_timeout_counts_acknowledged_actions_not_planned_actions(self):
@@ -99,12 +99,17 @@ class EvaluationReports(unittest.TestCase):
         self.assertEqual(percentile([4], .95), 4)
 
 
-    def test_attention_diagnostics_count_repairs_and_no_effect(self):
+    def test_fast_slow_diagnostics_separate_deliberation_and_execution(self):
         with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            (root/'r.model.jsonl').write_text(json.dumps({'work':'attend', 'call_index':1, 'http_requests':1})+'\n'+json.dumps({'work':'attend', 'call_index':2, 'http_requests':1})+'\n')
-            (root/'r.artifacts.jsonl').write_text(json.dumps({'event':'attention_selected'})+'\n'+json.dumps({'event':'attention_feedback', 'trial':{'frame_changed':False}})+'\n')
-            report = diagnostics(root)['attention']
-            self.assertEqual(report['repairs'], 1)
-            self.assertEqual(report['no_visible_effect'], 1)
-            self.assertEqual(report['http_requests_per_decision'], 2)
+            root=Path(d)
+            calls=[{'work':'deliberate','attempt':1,'seconds':4,'http_requests':1},
+                   {'work':'execute_step','seconds':.4,'http_requests':1}]
+            (root/'r.model.jsonl').write_text('\n'.join(map(json.dumps,calls)))
+            events=[{'event':'plan_created'},{'event':'action_feedback','trial':{'frame_changed':False}},
+                    {'event':'reconsider_requested'}]
+            (root/'r.artifacts.jsonl').write_text('\n'.join(map(json.dumps,events)))
+            report=diagnostics(root)['fast_slow']
+            self.assertEqual(report['repairs'],1)
+            self.assertEqual(report['no_visible_effect'],1)
+            self.assertEqual(report['reconsiderations'],1)
+            self.assertEqual(report['by_work']['execute_step']['latency_p50'],.4)

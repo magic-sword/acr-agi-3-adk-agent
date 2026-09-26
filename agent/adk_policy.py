@@ -9,6 +9,7 @@ def create_runtime(game_id: str) -> CognitiveRuntime:
     return CognitiveRuntime(
         game_id, os.getenv("ADK_MODEL") or None,
         repair_attempts=int(os.getenv("COGNITION_REPAIR_ATTEMPTS", "1")),
+        decision_seconds=float(os.getenv("COGNITION_DECISION_SECONDS", "45")),
         max_resets=int(os.getenv("COGNITION_MAX_RESETS", "2")),
         seconds=float(os.getenv("COGNITION_SECONDS", "600")),
         log_dir=os.getenv("COGNITION_LOG_DIR") or None,

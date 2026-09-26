@@ -72,9 +72,9 @@ class DriverTests(unittest.TestCase):
             if cell["cell_type"] == "code":
                 compile(cell["source"], f"cell_{i}", "exec")
         self.assertIn("agent/cognition/workflow.py", SOURCES)
-        self.assertIn("agent/cognition/library.py", SOURCES)
-        self.assertIn("agent/cognition/skills.py", SOURCES)
-        for module in ('attention',):
+        self.assertIn("agent/fast_choice.py", SOURCES)
+        self.assertNotIn("agent/cognition/attention.py", SOURCES)
+        for module in ('execution','tasks','state'):
             self.assertIn(f'agent/cognition/{module}.py', SOURCES)
         self.assertFalse(any(path.startswith('tests/') for path in SOURCES))
         self.assertTrue(all(w.is_file() for w in ADK_WHEELS))

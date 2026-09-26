@@ -8,9 +8,7 @@ from unittest.mock import patch
 from scripts.agent_monitor import read_journal, Timeline, Run, discover_evaluations, discover_runs, dashboard_html, safe_asset, screen_html
 from agent.cognition.workflow import CognitiveRuntime
 from agent.local_vlm import LocalVisionLlm
-from test_skill_learning import obs
-from test_decide_run import call, act, context
-from test_attention import answer_for
+from runtime_helpers import obs, answer
 
 
 class ReplayTests(unittest.TestCase):
@@ -50,7 +48,7 @@ class ReplayTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)
             (root/'r.states.jsonl').write_text(json.dumps({'event':'state_entered','state':'DECIDE',
-                'input':{'notebook':{'goal':{'text':'<script>bad()</script>'}}},'sequence':2})+'\n')
+                'input':{'goal':'<script>bad()</script>'},'sequence':2})+'\n')
             (root/'r.observations.jsonl').write_text(json.dumps({'event':'observation_received',
                 'grid':[[8,9]],'step':0,'sequence':1})+'\n')
             # A tool's execution label must not replace the actual graph state.
@@ -72,25 +70,25 @@ class ReplayTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             r=CognitiveRuntime('test','local/qwen3-vl-4b-instruct',log_dir=d)
             self.addCleanup(r.close)
-            def answer(model,payload):
+            def respond(model,payload):
                 timeline=Timeline(Run(Path(d),r.session_id));timeline.load()
                 s=timeline.snapshot(len(timeline.events)-1)
                 self.assertEqual(s['state'],'DECIDE');self.assertEqual(s['phase'],'処理中')
                 self.assertIsNone(s['output'])
-                return call(*answer_for(context(payload)))
-            with patch.object(LocalVisionLlm,'_complete',answer):r.decide(obs())
+                return answer(model,payload)
+            with patch.object(LocalVisionLlm,'_complete',respond):r.decide(obs())
             timeline=Timeline(Run(Path(d),r.session_id));timeline.load()
             rows=[e for e in timeline.events if e['_journal']=='states']
             self.assertEqual([(e['event'],e['state']) for e in rows],
-                             [('state_entered','DECIDE'),('state_exited','DECIDE'),
-                              ('state_entered','RUN'),('state_exited','RUN')])
+                             [('state_entered','DECIDE'),('state_exited','DECIDE')]*3+
+                             [('state_entered','RUN'),('state_exited','RUN')])
             self.assertEqual(r.memory.last_result['status'],'action')
             sequence=[e['sequence'] for e in timeline.events]
             self.assertEqual(sequence,sorted(set(sequence)))
 
     def fixture(self, root, evaluation='20260925T100000Z',game='ls20'):
         folder=root/evaluation;directory=folder/game/'cognition';directory.mkdir(parents=True)
-        (folder/'manifest.json').write_text('{"observatory_schema":1}')
+        (folder/'manifest.json').write_text('{"observatory_schema":2}')
         (directory.parent/'result.json').write_text('{}')
         for kind,rows in {
             'observations':[{'event':'observation_received','sequence':1,'step':0,'grid':[[8,9]],'observation_id':'o0'}],
@@ -139,50 +137,28 @@ class ReplayTests(unittest.TestCase):
             self.assertIsNone(s['output'])  # Later snapshots must not mutate the past.
             self.assertIs(s,w.timeline.snapshot(1))
 
-    def test_diagram_tracks_work_on_entry_and_driver_wait_without_future_leak(self):
+    def test_diagram_tracks_fast_work_and_driver_wait_without_future_leak(self):
         from scripts.state_diagram import state_diagram_html
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)
-            events=[
-                ('observations',{'event':'observation_received','step':0,'grid':[[0]]}),
-                ('states',{'event':'state_entered','state':'DECIDE','work':'experiment_design','input':{}}),
-                ('states',{'event':'state_exited','state':'DECIDE','work':'experiment_design','output':{}}),
-                ('states',{'event':'state_entered','state':'RUN','work':'experiment_design','input':{'job':{'kind':'learn'}}}),
-                ('states',{'event':'state_exited','state':'RUN','work':'skill_creation','output':{'result':None}}),
-                ('states',{'event':'state_entered','state':'DECIDE','work':'skill_creation','input':{}}),
-                ('tools',{'event':'tool_started','state':'RUN','work':'experiment_design','tool':'read_notebook'}),
-                ('states',{'event':'state_exited','state':'DECIDE','work':'skill_creation','output':{}}),
-                ('states',{'event':'state_entered','state':'RUN','work':'skill_creation','input':{'job':{'spec':{}}}}),
-                ('states',{'event':'state_exited','state':'RUN','work':'experiment_design','output':{'result':None}}),
-                ('states',{'event':'state_entered','state':'DECIDE','work':'experiment_design','input':{}}),
-                ('states',{'event':'state_entered','state':'RUN','work':'experiment_design','input':{'job':{'kind':'act'}}}),
-                ('states',{'event':'state_exited','state':'RUN','work':'experiment_design','output':{'result':{'status':'action'}}}),
-                ('execution',{'event':'action_dispatched','step':0,'action':{'action':'UP'}}),
-                ('execution',{'event':'action_acknowledged','step':0,'action':{'action':'UP'}}),
-                ('observations',{'event':'observation_received','step':1,'grid':[[1]]}),
-                ('states',{'event':'state_entered','state':'RUN','work':'experiment_design','input':{}}),
-                ('states',{'event':'state_exited','state':'RUN','work':'experiment_design','output':{'result':{'status':'stop','reason':'win'}}}),
-                ('states',{'event':'runtime_closed','stop_reason':'win'}),
-            ]
+            events=[('observations',{'event':'observation_received','step':0,'grid':[[0]]}),
+                    ('states',{'event':'state_entered','state':'DECIDE','work':'deliberate','input':{}}),
+                    ('states',{'event':'state_exited','state':'DECIDE','work':'deliberate','output':{}}),
+                    ('states',{'event':'state_entered','state':'DECIDE','work':'execute_step','input':{}}),
+                    ('artifacts',{'event':'machine_transition','target':'deliberate','condition':'R'}),
+                    ('states',{'event':'state_entered','state':'RUN','work':'execute_step','input':{}}),
+                    ('states',{'event':'state_exited','state':'RUN','output':{'result':{'status':'action'}}}),
+                    ('execution',{'event':'action_acknowledged','step':0,'action':{'action':'UP'}})]
             for i,(kind,row) in enumerate(events):
-                with (root/f'r.{kind}.jsonl').open('a') as f:
-                    f.write(json.dumps(dict(row,sequence=i+1))+'\n')
+                with (root/f'r.{kind}.jsonl').open('a') as f:f.write(json.dumps(dict(row,sequence=i+1))+'\n')
             t=Timeline(Run(root,'r')).load()
             self.assertEqual([s['machine']['node'] for s in t.snapshots],
-                ['observe','design','design','run','run','build','build','build','run',
-                 'run','design','run','wait','wait','wait','observe','run','end','end'])
-            self.assertEqual(t.snapshot(4)['machine']['work'],'experiment_design')
-            self.assertEqual(t.snapshot(9)['machine']['work'],'skill_creation')
-            self.assertEqual(t.snapshot(8)['machine']['job'],'propose_skill')
-            self.assertIn('未送信',t.snapshot(12)['machine']['phase'])
-            self.assertIn('受付待ち',t.snapshot(13)['machine']['phase'])
-            self.assertIn('次の観測待ち',t.snapshot(14)['machine']['phase'])
-            self.assertEqual(t.snapshot(17)['machine']['phase'],'win')
-            html=state_diagram_html(t.snapshot(5)['machine'])
-            self.assertEqual(html.count('data-active="true"'),1)
-            self.assertIn('data-state="build" data-active="true"',html)
-            self.assertIn('スキル作成 · 処理中',html)
-            self.assertNotIn('<script>',state_diagram_html({'node':'design','phase':'<script>x</script>'}))
+                             ['observe','deliberate','deliberate','execute_step','deliberate','wait','wait','wait'])
+            self.assertIn('未送信',t.snapshot(6)['machine']['phase'])
+            self.assertIn('次の観測待ち',t.snapshot(7)['machine']['phase'])
+            html=state_diagram_html(t.snapshot(3)['machine'])
+            self.assertIn('data-state="execute_step" data-active="true"',html)
+            self.assertNotIn('<script>',state_diagram_html({'node':'deliberate','phase':'<script>x</script>'}))
 
     def test_state_replay_skips_same_state_events_and_caches_the_diagram(self):
         from scripts.notebook_monitor import BenchmarkReplay
@@ -201,4 +177,4 @@ class ReplayTests(unittest.TestCase):
                 diagram.assert_not_called()
                 w.slider.value=3
                 diagram.assert_called_once()
-            self.assertIn('attend',w.diagram.value)
+            self.assertIn('execute_step',w.diagram.value)

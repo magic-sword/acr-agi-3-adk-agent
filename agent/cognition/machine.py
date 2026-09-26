@@ -1,28 +1,33 @@
-"""The active image-led policy, shared with the replay diagram."""
+"""Executable transitions shared by the runtime and replay diagram."""
 STATES = {
-    'observe': ('画面と受付結果を受け取る', 'host', 40, 50),
-    'measure': ('変化と短い履歴を更新', 'host', 350, 50),
-    'attend': ('解釈・注目・次の操作', 'llm', 660, 50),
-    'validate': ('合法性・同条件反復を検証', 'host', 1000, 210),
-    'wait': ('操作送信・観測待ち', 'host', 350, 380),
-    'stop': ('終了・停止', 'terminal', 1000, 560),
+    'observe': ('画面・操作受付・実測結果', 'host', 40, 50),
+    'deliberate': ('熟考：因果・逆算・手続き構築', 'llm', 380, 50),
+    'choose_skill': ('高速：スキル選択 / 8', 'llm', 740, 50),
+    'execute_step': ('高速：操作 / 次の手順 / 8', 'llm', 740, 290),
+    'wait': ('合法性確認・操作送信・観測待ち', 'host', 40, 290),
+    'stop': ('終了・時間／受付による停止', 'terminal', 380, 530),
 }
 TRANSITIONS = {
-    'received': ('observe', 'measure', '受付確認済みの操作結果', 'normal'),
-    'ready': ('measure', 'attend', '現在画面・変化・最近の試行', 'normal'),
-    'proposed': ('attend', 'validate', '1回で注目対象と操作を提出', 'normal'),
-    'accepted': ('validate', 'wait', '操作を選択・予想を記録', 'normal'),
-    'repair': ('validate', 'attend', '不正出力の修正は最大1回', 'recovery'),
-    'repair_exhausted': ('validate', 'stop', '修正回数または時間を消費', 'stop'),
-    'next_observation': ('wait', 'observe', '操作受付と新しい画面', 'normal'),
-    'restart': ('observe', 'wait', '未開始／ゲームオーバー → RESET', 'normal'),
+    'received': ('observe','deliberate','初期観測','normal'),
+    'need_plan': ('observe','deliberate','計画がない／熟考へ復帰','normal'),
+    'planned': ('deliberate','choose_skill','計画と実行手続きを採用','normal'),
+    'choose': ('observe','choose_skill','次のスキルを選ぶ','normal'),
+    'execute': ('choose_skill','execute_step','現在の手順を継続','normal'),
+    'accepted': ('execute_step','wait','合法な操作を選択','normal'),
+    'next_observation': ('wait','observe','受付と新しい画面','normal'),
+    'skill_reconsider': ('choose_skill','deliberate','8：適用できない／判断不能','recovery'),
+    'step_reconsider': ('execute_step','deliberate','8：予想外／判断不能','recovery'),
+    'step_done': ('execute_step','execute_step','7：次の手順へ','normal'),
+    'procedure_done': ('execute_step','choose_skill','7：手続き完了','normal'),
+    'repair': ('deliberate','deliberate','不正な計画の修正は最大1回','recovery'),
+    'repair_exhausted': ('deliberate','stop','有効な計画が得られない','stop'),
 }
 GLOBAL_GATES = [
-    '勝利・評価終了・時間／操作上限 → 終了。操作前にも時間を確認',
-    '通常は1 HTTP要求。無効な提出だけ最大1回修正',
-    '同じ状態で無変化だった同じ操作は、事前に宣言した試行回数を超えて繰り返さない',
-    '物体一覧・課題ID・意味的な対象分類は不要。注意の選択はLLMが行う',
-    '受付不明の操作を再送しない。画素変化だけで因果や目標達成を断定しない',
+    '高速判断は1トークン。8は操作せず熟考へ戻る。7は手順を進める',
+    '同じ手順の継続に計画の再生成は不要。反復操作は拒否しない',
+    'ゲーム全体と1観測内の実時間予算を守る。勝利・評価終了・操作上限で終了',
+    '古い観測ID・非合法操作・範囲外座標は拒否。受付不明の操作は再送しない',
+    '画素差分は実測、因果・手順完了はモデル判断として別々に記録',
 ]
 
 

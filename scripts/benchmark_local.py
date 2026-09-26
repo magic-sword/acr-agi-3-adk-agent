@@ -221,15 +221,15 @@ def main():
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
         hashes[rel] = sha256(target)
-    manifest = {'observatory_schema': 1, 'created_utc': stamp, 'games': [d['game_id'] for _, d in selected],
-                'policy': 'visual_attention',
+    manifest = {'observatory_schema': 2, 'created_utc': stamp, 'games': [d['game_id'] for _, d in selected],
+                'policy': 'fast_slow',
                 'limits': {'steps': args.steps, 'levels': args.levels, 'seconds': args.seconds, 'hard_seconds': args.hard_seconds},
                 'agent_model': model, 'server_info': server_info, 'source_sha256': hashes,
                 'git_revision': git('rev-parse', 'HEAD'), 'git_dirty': bool(git('status', '--porcelain')),
                 'framework_revision': git('-C', 'vendor/ARC-AGI-3-Agents', 'rev-parse', 'HEAD'),
                 'python': sys.version, 'packages': {n: importlib.metadata.version(n) for n in ('google-adk', 'google-genai', 'arc-agi', 'arcengine')},
                 'cognition_settings': {k: os.getenv(k, default) for k, default in [
-                    ('COGNITION_REPAIR_ATTEMPTS', '1'), ('COGNITION_MAX_RESETS', '2')]},
+                    ('COGNITION_REPAIR_ATTEMPTS', '1'), ('COGNITION_MAX_RESETS', '2'), ('COGNITION_DECISION_SECONDS', '45')]},
                 'scoring_source_sha256': sha256(Path(importlib.metadata.distribution('arc-agi').locate_file('arc_agi/scorecard.py'))),
                 'gateway': 'official arc-agi SDK, localhost HTTP, competition_mode=True, one game per scorecard',
                 'seed': 0, 'execution': 'sequential fresh worker/session for each game',
@@ -258,7 +258,7 @@ def main():
                 manifest['environment_sha256'][game_id + '/' + file.name] = sha256(file)
         write_json(out / 'manifest.json', manifest)
         spec = {'game_id': game_id, 'output': str(dest), 'package': str(package),
-                'policy': 'visual_attention',
+                'policy': 'fast_slow',
                 'environments': str(dest / 'environments'), 'model': model,
                 'steps': args.steps, 'levels': args.levels, 'seconds': args.seconds}
         write_json(dest / 'spec.json', spec)

@@ -35,7 +35,7 @@ def render(directory):
                 return '<dt>'+escape(label)+'</dt><dd><pre>'+escape(value)+'</pre></dd>'
             sections.append('<details open><summary>Step '+escape(str(row.get('step')))
                             +' · '+escape(' → '.join(row.get('trace',[])))+'</summary><dl>')
-            for label,key in [('観測ID','observation_id'),('目標ノートの版','goal_ref'),
+            for label,key in [('観測ID','observation_id'),
                               ('実操作と観測結果','outcome'),('次の操作／停止','action')]:
                 sections.append(field(label,row.get(key)))
             sections.append('</dl><details><summary>ツール実行・内部処理・エラー</summary><pre>'
@@ -48,7 +48,7 @@ def render(directory):
                         + escape(path.name) + '</summary><pre>'
                         + escape(json.dumps(read_records(path), ensure_ascii=False, indent=2))
                         + '</pre></details>')
-    for suffix, label in (('artifacts', '中間成果物（未実行を含む）'), ('execution', '実操作の送信と受付'), ('learning', '経験・スキル作成・試験・採用'), ('notebook', '攻略ノートの入力・参照・改訂'), ('experiments', '実験の予測・測定・判定')):
+    for suffix, label in (('artifacts', '中間成果物（未実行を含む）'), ('execution', '実操作の送信と受付'), ('model', '熟考・高速選択の結果と時間')):
         for path in sorted(directory.glob(f'*.{suffix}.jsonl')):
             sections.append('<details><summary>' + label + ': ' + escape(path.name) + '</summary><pre>'
                             + escape(json.dumps(read_records(path), ensure_ascii=False, indent=2))

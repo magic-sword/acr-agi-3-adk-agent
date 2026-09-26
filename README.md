@@ -1,14 +1,16 @@
-# ARC-AGI-3 visual-attention agent
+# ARC-AGI-3 fast/slow agent
 
-A local Google ADK 2.0 agent that looks at the game image and selects one action.
-One normal model request interprets the previous result, chooses a visual focus,
-and proposes the next action. It does not enumerate objects or select from a fixed
-question list. Qwen3-VL-4B-Instruct runs locally; without a model the driver uses
-deterministic smoke probes.
+A local Google ADK 2.0 agent with two decision speeds using Qwen3-VL-4B-Instruct.
+Deliberation interprets causal evidence, works backwards from a goal, and builds
+small grounded procedures. The fast path selects a skill or action with one
+output token. It can advance a step with `7` or return to deliberation with `8`,
+without sending a game action. Active procedures persist across observations.
+Without a model the driver uses deterministic smoke probes.
 
-See the [current design and limits](docs/visual-attention-runtime-ja.md) and
-[evaluation guide](docs/local-evaluation-ja.md). The earlier focused-task,
-object-memory, and skill-learning documents describe superseded policies.
+See the [current design and limits](docs/fast-slow-runtime-ja.md),
+[latency investigation](docs/fast-slow-runtime-research-ja.md), and
+[evaluation guide](docs/local-evaluation-ja.md). Earlier attention and
+skill-learning documents describe superseded policies.
 
 ## Setup
 
@@ -36,11 +38,11 @@ No API key or internet is needed during local model inference.
 
 Open [agent_observatory.ipynb](notebooks/agent_observatory.ipynb) in JupyterLab after a benchmark.
 Choose its evaluation ID and game from the dropdowns, click **読み込む**, then play the saved run.
-A state diagram highlights visual attention, action validation, execution and observation waits.
-The replay shows the actual model input, selected focus, prediction and measured changes.
-Playback defaults to state transitions; action and full-event modes are also available.
-Click **攻略ノートを読む** for readable goal paths, experiment notes, bookmarks, pages actually
-read in that invocation, and before/after edits. Displayed notes keep their recorded versions.
+A state diagram highlights deliberation, fast selection, execution and observation waits.
+The replay shows the plan, active procedure, predicted effect, measured changes,
+one-token choice and returns to deliberation. Playback defaults to state transitions;
+action and full-event modes are also available. Click **計画・スキルを読む** to inspect
+the recorded causal hypotheses and procedures at that point in time.
 Playback reads only the selected game, updates images only when needed, and opens detailed logs on demand.
 It does not launch evaluations or poll for updates. See the [replay guide](docs/agent-monitor-ja.md).
 
@@ -54,7 +56,7 @@ make visualize                 # outputs/agent-visualization/index.html
 ```
 
 `make benchmark` records a source snapshot, model/environment hashes, official SDK scores,
-actual actions, observations, model requests and attention decisions under `outputs/evaluations/`.
+actual actions, observations, model requests and fast/slow decisions under `outputs/evaluations/`.
 It never uploads or submits to Kaggle. Short public-game runs are not leaderboard estimates.
 
 Set benchmark parameters in `.env` (plain `NAME=value` assignments):
@@ -77,46 +79,43 @@ Use `make benchmark` for score measurement and comparison reports.
 
 ## Configuration and logs
 
-- `COGNITION_REPAIR_ATTEMPTS=1`: allow one extra request for an invalid output; `0` disables repair. Normal actions use one request.
-- `COGNITION_SECONDS=600`: total game runtime budget; benchmarks override it.
+- `COGNITION_REPAIR_ATTEMPTS=1`: one repair for a malformed deliberation output; `0` disables it.
+- `COGNITION_SECONDS=600`: total per-game reasoning deadline.
+- `COGNITION_DECISION_SECONDS=45`: time allowed to obtain the next action, including replanning.
 - `COGNITION_MAX_RESETS=2`: host-owned episode restarts.
 - `COGNITION_LOG_DIR=outputs/cognition`: logging location; empty disables persistence.
 - `VLM_API_BASE=http://vlm:8080/v1`: local model endpoint.
 
-The old `COGNITION_MAX_CALLS`, `COGNITION_MAX_HTTP_REQUESTS`, learning and
-skill-library settings are no longer used by the production policy. Skill
-construction and reuse are not part of this attention loop.
+The host checks legal controls, original-pixel click bounds and execution receipts.
+It supplies before/after images and measured changes, without enumerating objects
+or rejecting repeated actions. Procedures contain action options, expected effects,
+step completion criteria and reasons to reconsider. Their meaning remains a model
+hypothesis; pixel differences alone do not establish success.
 
-Game images contain the board and coordinate rulers. The model chooses any
-visible target or relationship directly; the host checks legal controls and
-original-pixel click bounds, without requiring an object mask. Before/after
-images are provided when the screen changes. Unchanged screens need one image.
-
-The host supplies global pixel differences and eight recent trials. Short model
-notes remain hypotheses. An action with no visible effect cannot be repeated in
-the same state beyond its predeclared limit (normally one, at most three).
-Changing the description does not renew the limit. Level/reset boundaries clear
-local trials and notes; changed states can be explored again. Receipt uncertainty
-never causes an automatic resend.
+Level/reset boundaries clear the grounded plan and active step. Causal notes and
+procedures remain available to deliberation for re-grounding. Fast calls receive
+only the current goal, step, options and last result. Selection probabilities are
+logged as model diagnostics, not calibrated success probabilities.
 
 ```bash
 python3 scripts/analyze_agent.py outputs/cognition
 ```
 
 `*.model.jsonl` records the exact judgment context, response, requests and timing.
-`*.artifacts.jsonl` records `attention_selected` (focus, interpretation, action,
-expectation and short notes) and `attention_feedback` (acknowledged measurements).
+`*.artifacts.jsonl` records plans, procedure state, fast choices, returns to
+deliberation and acknowledged measurements. Evaluation reports split latency
+and token counts by deliberation, skill selection and step execution.
 Requests, tool execution, observations and driver acknowledgements have separate
 journals. These are observable decision artifacts, not private model reasoning.
 
 ## Offline notebook
 
 ```bash
-make notebook                  # regenerate from agent source and skill resources
+make notebook                  # regenerate from agent source
 ```
 
-`notebooks/submission.ipynb` is generated; edit `agent/` instead. The notebook bundles source,
-method skills and pinned ADK wheels. Kaggle reruns use the competition's offline framework
+`notebooks/submission.ipynb` is generated; edit `agent/` instead. The notebook bundles
+agent code and pinned ADK wheels. Kaggle reruns use the competition's offline framework
 and model bundle. Local execution prepares the code; `make eval` plays locally.
 
 `make push` explicitly builds and uploads the notebook when requested. `make status` checks

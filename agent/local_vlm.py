@@ -187,7 +187,8 @@ class LocalVisionLlm(BaseLlm):
             result = await asyncio.to_thread(self._complete, payload)
             choice = result['choices'][0]
             message = choice['message']
-            record.update(response=message, usage=result.get('usage'), finish_reason=choice.get('finish_reason'))
+            record.update(response=message, usage=result.get('usage'), timings=result.get('timings'),
+                          finish_reason=choice.get('finish_reason'))
             allowed = {t['function']['name'] for t in payload.get('tools', [])}
             parts, protocol = QwenToolCallAdapter().decode(
                 message, allowed=allowed, tool_choice=payload.get('tool_choice', 'auto'),
@@ -203,7 +204,8 @@ class LocalVisionLlm(BaseLlm):
                 key: sum((r.get('usage') or {}).get(key, 0) for r in self._exchanges)
                 for key in ('prompt_tokens', 'completion_tokens', 'total_tokens')}
                 if any(r.get('usage') is not None for r in self._exchanges) else None,
-                'finish_reason': choice.get('finish_reason'), 'server_model': result.get('model')}
+                'finish_reason': choice.get('finish_reason'), 'server_model': result.get('model'),
+                'timings': result.get('timings')}
             yield LlmResponse(content=types.Content(role='model', parts=parts))
         except Exception as exc:
             record['error'] = f'{type(exc).__name__}: {exc}'
