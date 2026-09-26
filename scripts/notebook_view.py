@@ -6,8 +6,8 @@ Labels are translated; the agent's recorded text stays verbatim.
 from html import escape
 
 KINDS = {'goal': '大目標', 'subgoal': '小目標', 'hypothesis': '仮説', 'plan': '計画',
-         'interpretation': '解釈', 'experiment': '実験', 'result': '観測結果'}
-WORK = {'select_goal':'小目標選択', 'assess_goal':'小目標評価', 'design_experiment':'実験設計',
+         'interpretation': '解釈', 'experiment': '実験', 'result': '観測結果', 'world':'対象と疑問の記憶'}
+WORK = {'interpret_world':'対象・関係・疑問を更新', 'select_goal':'小目標選択', 'assess_goal':'小目標評価', 'design_experiment':'実験設計',
         'inspect_target':'対象確認', 'judge_effect':'効果判定', 'choose_method':'方法選択',
         'resolve_arguments':'引数決定', 'experiment_design': '実験設計', 'experiment_review': '結果判定', 'skill_creation': 'スキル作成'}
 STATUS = {'active': '進行中', 'open': '有効', 'completed': '完了', 'abandoned': '取り下げ',
@@ -90,10 +90,26 @@ def page_html(page, *, label=None, segment=None):
     if segment is not None and page.get('segment', segment) != segment:
         badge += ' · 前の区間の記録'
     body = ''
+    if kind == 'world':
+        body += _field('知識の扱い', '物体・役割・関係は暫定解釈。実験済みは普遍的な性質の確定ではありません。')
+        for obj in data.get('objects',[]):
+            body += _field(obj['id'], obj['description']+' / 役割候補: '+', '.join(obj['possible_roles']))
+        for rel in data.get('relations',[]):
+            body += _field('関係の仮説', rel['subject']+' → '+rel['other']+': '+rel['description'])
+        for q in data.get('questions',[]):
+            body += _field('未検証の疑問' if q['status']=='open' else '条件付きで実験済み',
+                           q['id']+': '+q['question']+' / 候補: '+' / '.join(q['alternatives']))
+        for fact in data.get('conditional_findings',[])[-8:]:
+            body += _field('実験 '+fact['experiment_id'], _action(fact['action'])+' / '+fact['finding']
+                           +' / 命中確認: '+fact['target_grounding']+' / 根拠: '+', '.join(fact['evidence_ids']))
+            body += _field('画面全体の変化画素数', fact.get('observed_change',{}).get('changed_cell_count'))
+        if data.get('omitted_components'):
+            body += _field('入力に含めなかった領域候補', data['omitted_components'])
     if kind in ('goal', 'subgoal', 'hypothesis', 'plan', 'interpretation') or not data:
         body += _field('内容', page.get('text'))
     if kind == 'subgoal':
         body += _field('完了の条件', data.get('done_when'))
+        body += _field('調べる疑問', data.get('question_id'))
         body += _field('親の目標', data.get('parent_id'))
         body += _field('直近の更新', data.get('update'))
         body += _field('小目標の扱いの理由', data.get('status_reason'))
@@ -211,7 +227,8 @@ def notebook_html(snapshot):
             parts.append('<li>' + page_html(page, label=label, segment=segment) + '</li>')
             displayed[(page.get('id'), page.get('revision'))] = '本文を提示' if shown else ('人間用の参照' if human_only else '処理の入力')
         parts.append('</ol>')
-        for key, label in [('active_experiment', '今、検証していること'),
+        for key, label in [('world', '対象・関係・未解決の疑問'),
+                           ('active_experiment', '今、検証していること'),
                            ('latest_review', '直前の実験から分かったこと'),
                            ('latest_result', '最新の実観測')]:
             page = opening.get(key)

@@ -4,14 +4,14 @@ import hashlib
 from html import escape
 from pathlib import Path
 
-LABELS = {'select_goal':'小目標選択', 'assess_goal':'小目標評価', 'design_experiment':'実験設計',
+LABELS = {'interpret_world':'対象・関係・疑問を更新', 'select_goal':'小目標選択', 'assess_goal':'小目標評価', 'design_experiment':'実験設計',
           'inspect_target':'対象認識', 'judge_effect':'効果判定', 'choose_method':'方法選択',
           'resolve_arguments':'引数決定', 'skill_creation':'スキル作成'}
 
 
 def read_structure(root):
     root = Path(root)
-    paths = [root/'agent/cognition'/name for name in ('workflow.py','tasks.py','focused.py','routing.py','state.py','machine.py')]
+    paths = [root/'agent/cognition'/name for name in ('workflow.py','tasks.py','focused.py','routing.py','state.py','machine.py','world.py')]
     sources = {str(p.relative_to(root)):p.read_text() for p in paths if p.is_file()}
     if 'agent/cognition/workflow.py' not in sources:
         raise ValueError('この場所には実装ソースが保存されていません')

@@ -194,7 +194,7 @@ class ExecutionRuntime:
                      for label, key in [('EXPERIMENT BEFORE', 'before_id'), ('EXPERIMENT AFTER', 'after_id')]]
         if hasattr(self, '_open_task') and self.model and self.work != 'judge_effect':
             views = [('CURRENT original game pixels', self.obs)] if self.work in (
-                'select_goal', 'design_experiment', 'inspect_target', 'resolve_arguments') else []
+                'interpret_world', 'select_goal', 'design_experiment', 'inspect_target', 'resolve_arguments') else []
         for label, obs in views:
             if not obs:
                 parts.append(types.Part(text=label + ': original observation no longer retained; use only recorded measurements.'))

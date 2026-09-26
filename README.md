@@ -9,7 +9,8 @@ Qwen3-VL-4B-Instruct runs locally. Without a model, the driver issues determinis
 See the [implementation and limits](docs/skill-learning-runtime-ja.md),
 [experiment-loop design and research](docs/goal-experiment-loop-design-ja.md), and
 [evaluation guide](docs/local-evaluation-ja.md).
-The proposed next refactor is documented in [focused task design](docs/focused-task-refactor-design-ja.md) (not yet implemented).
+The implemented task split is documented in [focused task design](docs/focused-task-refactor-design-ja.md).
+The [object and question memory design](docs/object-world-memory-design-ja.md) records the motivation, evidence boundaries, references, and evaluation plan for the latest refactor.
 Earlier design and validation records are clearly separated under [history](docs/history/README.md).
 
 ## Setup

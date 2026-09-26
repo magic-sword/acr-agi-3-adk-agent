@@ -191,7 +191,7 @@ class ExperimentRedesign(Contract):
     reason: str
 
 class Memory(Contract):
-    schema_version: int = 7
+    schema_version: int = 8
     revision: int = 0
     run_id: str
     game_id: str

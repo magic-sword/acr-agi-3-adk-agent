@@ -128,7 +128,7 @@ class Timeline:
                         job = (stage_input.get('job') or {}) if isinstance(stage_input, dict) else {}
                         job_kind = job.get('kind') or ('propose_skill' if 'spec' in job else 'submit_review' if 'verdict' in job else 'redesign' if 'blocked_action' in job else 'defer_skill' if 'reason' in job else None)
                         machine = {'node': ('build' if work == 'skill_creation' else
-                                            work if work in ('select_goal','assess_goal','design_experiment','inspect_target','judge_effect','choose_method','resolve_arguments') else
+                                            work if work in ('interpret_world','select_goal','assess_goal','design_experiment','inspect_target','judge_effect','choose_method','resolve_arguments') else
                                             'design' if work == 'experiment_design' else
                                             'review' if work == 'experiment_review' else 'decide')
                                    if state == 'DECIDE' else 'run',

@@ -19,11 +19,27 @@ class CompletionTool(BaseTool):
 
     def _get_declaration(self):
         schema = self.contract.model_json_schema()
+        if self.name == 'submit_goal':
+            old = getattr(self.runtime, 'closed_goal', None) or {}
+            choices = [q['id'] for q in self.runtime.world.questions.values()
+                       if q['current'] and q['status']=='open' and q['id']!=old.get('question_id')]
+            if choices:
+                schema['properties']['question_id']['enum'] = choices
+            schema['required'].append('question_id')
+        if self.name == 'submit_world':
+            candidates = list(self.runtime.world.candidates)
+            if candidates:
+                schema['$defs']['ObjectHypothesis']['properties']['component_ids']['items']['enum'] = candidates
+            if self.runtime.world.legal_actions:
+                schema['$defs']['WorldQuestion']['properties']['action']['enum'] = self.runtime.world.legal_actions
         if self.name == 'submit_method':
             schema['properties']['method']['enum'] = self.runtime._available_methods()
             if not any(m in self.runtime._available_methods() for m in ('invoke','trial')):
                 schema['properties'].pop('skill_id', None)
         if self.name == 'submit_experiment':
+            if hasattr(self.runtime, 'world'):
+                objects = [o['id'] for o in self.runtime.world.objects.values() if o['visible']]
+                schema['properties']['target_object_id']['enum'] = ['', *objects]
             from agent.controls import ACTION_TO_BUTTON
             allowed = [ACTION_TO_BUTTON[a] for a in self.runtime.obs.get('available_actions', [])
                        if a in ACTION_TO_BUTTON and a != 'RESET']
@@ -31,6 +47,11 @@ class CompletionTool(BaseTool):
             action['properties']['action']['enum'] = allowed
             if allowed == ['CLICK']:
                 action['required'] = ['action', 'x', 'y']
+                schema['required'].append('target_object_id')
+                goal = self.runtime._goal()
+                question = self.runtime.world.question(goal['data']['question_id'])
+                schema['properties']['target_object_id']['enum'] = (
+                    [question['subject']] if question['subject']!='scene' else objects)
             if 'CLICK' not in allowed:
                 action['properties'].pop('x', None)
                 action['properties'].pop('y', None)

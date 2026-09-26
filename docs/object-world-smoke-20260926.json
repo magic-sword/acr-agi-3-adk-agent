@@ -1,0 +1,179 @@
+{
+  "purpose": "Development smoke test; no comparative efficacy claim. Final change also retains whole-frame deltas; this run precedes that logging addition.",
+  "evaluation_id": "20260926T021330334749Z",
+  "manifest": {
+    "created_utc": "20260926T021330334749Z",
+    "limits": {
+      "steps": 2,
+      "levels": 1,
+      "seconds": 120.0,
+      "hard_seconds": 150.0
+    },
+    "agent_model": "local/qwen3-vl-4b-instruct",
+    "source_sha256": {
+      "agent/.ipynb_checkpoints/my_agent-checkpoint.py": "7b95c6c57e03fd8e4346018e4f24d0014457148e86386810f7cf84d2bdf10c39",
+      "agent/.ipynb_checkpoints/observation-checkpoint.py": "4122819e4433b2566cfd77a69dd5e665082a526da9e6044bace3bff937fdff7a",
+      "agent/__init__.py": "165f3a8e54e9bdabfb87d9bfd85245f1fb9aef0f26f4fd17c797440bd6396abc",
+      "agent/adk_policy.py": "14f9c97fe1c3cc2e03360eb42e08796e0cbfb68d46372dd8b52386a73771f4cd",
+      "agent/cognition/__init__.py": "1b54e4004691d9eff18773138ebf16cf80e4f60c49fc2460c2df9145e617c2d8",
+      "agent/cognition/audit.py": "e530d4300879b28ae09de0a815f40a30a70e6006bfc9c9aa17399351afb8ef74",
+      "agent/cognition/completion.py": "4edc4009bcdf96971f5234c44c123fb520c4aa75f2fe8fa5c4d70abb9703b71e",
+      "agent/cognition/evidence.py": "45626b8c21ebd66e1da69f3d835ea62aba3c52a412f1a8325cf8d81a2655c0f1",
+      "agent/cognition/experiments.py": "c015cc1e6c0f17cea9d2741089c773741f03c039e3dc38b04ee34d86c5035d22",
+      "agent/cognition/focused.py": "fecaba87a282981f937d81dd48a8c02236b43ff31c7a4aef9657764bd80ae35a",
+      "agent/cognition/instructions.py": "8a4b9850285897a00e45a848abe337bad85e81d7b9c2ccd075477e3c1c988cd3",
+      "agent/cognition/library.py": "525a8be021e17f2c66c6d93b9ed931d90291e5be6a4698344a7d7a55f67d0347",
+      "agent/cognition/machine.py": "2bb53b94608fa065253c05f70050f2eff4068c92dfb0d8009f7e9b44fe798b77",
+      "agent/cognition/notebook.py": "93c2012b5d22e5c29eaa0c4dde6c5581fc90b37069c8ffa8a2acb7176cf3cd21",
+      "agent/cognition/routing.py": "1b0fe368153b917fd53dbbd275a7adf12eb8b4559492fc1b303c950377b7fb67",
+      "agent/cognition/skills.py": "c17150e659c3622c66c73e90c91dd4a47f07a7596b18e4142ebddb55d76b2706",
+      "agent/cognition/state.py": "8f59a38e724f26d4026a86976065fa2c5fbdc18c31783c133d36f711b9f6a8f6",
+      "agent/cognition/tasks.py": "f2ce09a28bf748f6fbe68cce9a5ed4a70c0b1cc6f23a04833da61567995471e5",
+      "agent/cognition/validation.py": "4b14fc549e49bb967b781aa726969d0fd3ada88102b32a9a7e25d87cb6079879",
+      "agent/cognition/workflow.py": "bda97ad03896d38db2fcaba14c9ecf0f585d75a7fad7b324e7dd75ec8054e9b6",
+      "agent/cognition/world.py": "23cf850c54f1386d4f7373da5f4b585d99356c5a814482373b8e56b814c4c706",
+      "agent/controls.py": "bef96cf0a106000dcf3f4fc6c946880dfc73bf9c100cd371f00c104ec0b6c037",
+      "agent/local_vlm.py": "019a959b8b4bb4d6d2b6889406a229cfe05277fcecb9ec43019547ce8dbc2d9a",
+      "agent/model_runtime.py": "11fd5055fce0e5982d3f6cc31f68580d75c831820eed5f798cc6dc00edf8bc03",
+      "agent/my_agent.py": "3afd3f78ba22e48ceea07999d9c14bdc21b170669bd7377cf396a93267d7dce5",
+      "agent/observation.py": "36de5e5ee728e1ab78008f5e910d5b0753cad57454ad2f3659d208e8aa5588ce",
+      "agent/qwen_protocol.py": "9cc3b8b447c3c8afa809581ec323e313d350e278e9e5b34dcfd014b64a892f88",
+      "agent/rendering.py": "2d53bd3030f8d3b30c7d4826f280ef9f0eb8044de9669aeb9820e0949bb420b1",
+      "agent/skills/design-experiment/SKILL.md": "de6b71523062094be33dd04ca04bde5859b5ae3bdbc86282adca5082bdc81786",
+      "agent/skills/notebook/SKILL.md": "892e06650448d94a82fd082a923c91e2cc04b94ceaa2cb14d1fc87479063f090",
+      "agent/skills/review-experiment/SKILL.md": "26af7662fecb0014b3a726dcb8bf832b37683e7c32ae9a80f62d5d91670fdbeb",
+      "agent/skills/skill-creator/SKILL.md": "4e526da6d507d2d02c93dc7231a56d2ac911f73f89ab3ad38c9326009359e203",
+      "scripts/wait_model.py": "60af435fc1cdfc12ee3e89d9f7474c348daa090b3ce7088ee572582fb9626679",
+      "agents/templates/my_agent.py": "3afd3f78ba22e48ceea07999d9c14bdc21b170669bd7377cf396a93267d7dce5"
+    },
+    "models": {
+      "Qwen3VL-4B-Instruct-Q4_K_M.gguf": {
+        "size": 2497281664,
+        "sha256": "66358cb18bb6b3b1b6675aa412c7a88ef01d228f481184d13668e5201c730a0a"
+      },
+      "mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf": {
+        "size": 453974304,
+        "sha256": "30ba2c7dd3127a4561b6cba9d13d0f711c91bdb38742e2f56d73c8cb596bd06d"
+      }
+    },
+    "environment_sha256": {
+      "vc33-5430563c/metadata.json": "d6b437a6097157a9b35ec58679de36eaf5814f583099cada20a06afd9e74b94a",
+      "vc33-5430563c/vc33.py": "8afa9f55054b2a2460b6c44ec5c66e120f6d6f4c2289e24d50832a68d1e3fcfd"
+    },
+    "packages": {
+      "google-adk": "2.0.0",
+      "google-genai": "1.72.0",
+      "arc-agi": "0.9.9",
+      "arcengine": "0.9.3"
+    },
+    "cognition_settings": {
+      "COGNITION_MAX_CALLS": "12",
+      "COGNITION_MAX_HTTP_REQUESTS": "32",
+      "COGNITION_MAX_RESETS": "2"
+    },
+    "seed": 0,
+    "gpu": "NVIDIA RTX A2000 12GB, 12282 MiB, 560.35.03",
+    "differences_from_kaggle": [
+      "Public cached games only; limits shorten the game but scoring retains the full level denominator.",
+      "Local SDK gateway, not the private Kaggle gateway image; private scoring changes cannot be verified.",
+      "Local GPU and llama.cpp binary may differ from the attached Kaggle bundle.",
+      "Sequential workers instead of the framework Swarm concurrent game threads."
+    ]
+  },
+  "summary": {
+    "games": [
+      {
+        "game_id": "vc33-5430563c",
+        "sdk_score_full_game": 0.0,
+        "actions": 2,
+        "levels_completed": 0,
+        "loaded_agent_file": "/kaggle/working/outputs/evaluations/20260926T021330334749Z/package/agent/my_agent.py",
+        "win_levels": 7,
+        "game_state": "NOT_FINISHED",
+        "stop_reason": "budget_exhausted",
+        "lifecycle": "STOPPED",
+        "run_id": "41e98ccb262a4c28a2f2242a099bf045",
+        "resets": 0,
+        "score_warnings": [],
+        "wall_seconds": 52.419629361946136,
+        "model_calls": 9,
+        "schema_valid_calls": 9,
+        "model_http_requests": 9,
+        "schema_valid_rate": 1.0,
+        "model_seconds": 51.80478358082473,
+        "model_latency_p50": 4.350485655013472,
+        "model_latency_p95": 13.836389691755173,
+        "decision_latency_p50": 22.024340530158952,
+        "tokens": {
+          "prompt_tokens": 22139,
+          "completion_tokens": 2484,
+          "total_tokens": 24623
+        },
+        "usage_recorded_calls": 9,
+        "state_visits": {
+          "DECIDE": 12,
+          "RUN": 12
+        },
+        "reasoning_calls_by_state": {
+          "DECIDE": 9
+        },
+        "reasoning_calls_by_work": {
+          "interpret_world": 2,
+          "select_goal": 2,
+          "design_experiment": 2,
+          "inspect_target": 2,
+          "assess_goal": 1
+        },
+        "notebook_events": {
+          "note_changed": 17,
+          "bookmark_changed": 13,
+          "task_opened": 9
+        },
+        "notebook_tool_calls": {},
+        "host_loaded_skills": {},
+        "skill_tool_calls": {},
+        "loaded_skills": {},
+        "tool_execution_errors": 0,
+        "learning_events": {
+          "experience_recorded": 2
+        },
+        "skill_execution_outcomes": {},
+        "validation_errors": [],
+        "consecutive_action_repeats": 0,
+        "identical_frame_action_repeats": 0,
+        "experiment_events": {
+          "experiment_started": 2,
+          "experiment_observed": 2,
+          "experiment_reviewed": 2
+        },
+        "experiment_verdicts": {
+          "unsupported": 2
+        },
+        "experiment_reviewers": {
+          "host": 2
+        },
+        "world_memory": {
+          "versions": 4,
+          "conditional_trials": 2,
+          "questions_tested": 2,
+          "pixel_mask_checks": 2,
+          "pixel_mask_matches": 2,
+          "last_open_questions": 0,
+          "note": "Mask matches measure geometric consistency, not semantic object-recognition accuracy."
+        },
+        "bounded_experiment_retries": 0,
+        "committed_actions": 2,
+        "hints": [],
+        "limit_reached": "actions"
+      }
+    ],
+    "requested_games": 1,
+    "scored_games": 1,
+    "mean_sdk_score_full_game": 0.0,
+    "mean_available_score": 0.0,
+    "completed_levels": 0,
+    "submitted_actions": 2,
+    "total_worker_seconds": 52.419629361946136,
+    "note": "公開ゲームの制限付きローカル評価。SDKの全レベル分母を維持。Kaggleリーダーボードスコアではない。"
+  }
+}

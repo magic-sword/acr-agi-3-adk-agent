@@ -54,7 +54,7 @@ class Notebook:
         page = self.pages.get(page_id)
         if page is None:
             raise ValueError('unknown note ID')
-        if page['kind'] in ('result', 'subgoal', 'experiment'):
+        if page['kind'] in ('result', 'subgoal', 'experiment', 'world'):
             raise ValueError('observed results are host-owned; write an interpretation note')
         if page['segment'] != self.segment:
             raise ValueError('note belongs to a previous level/reset; create a new scoped note')
@@ -193,6 +193,7 @@ class Notebook:
                          'active_experiment': experiment_view('active_experiment'),
                          'latest_review': experiment_view('latest_review'),
                          'latest_result': result,
+                         'world': self.pages.get('world') if self.pages.get('world',{}).get('segment') == self.segment else None,
                          'bookmarks': [{'name': name, 'id': ref,
                                         'revision': self.pages[ref]['revision'],
                                         'title': self.pages[ref]['title']}

@@ -44,6 +44,12 @@ def diagnostics(directory: Path) -> dict:
     tools = [r for p in directory.glob('*.tools.jsonl') for r in read_jsonl(p) if r.get('event')=='tool_finished']
     learning = [r for p in directory.glob('*.learning.jsonl') for r in read_jsonl(p)]
     notebook = [r for p in directory.glob('*.notebook.jsonl') for r in read_jsonl(p)]
+    artifacts = [r for p in directory.glob('*.artifacts.jsonl') for r in read_jsonl(p)]
+    worlds = [r['after']['data'] for r in notebook
+              if r.get('event')=='note_changed' and r.get('after',{}).get('kind')=='world']
+    findings = {f['experiment_id']:f for w in worlds for f in w['conditional_findings']}
+    target_checks = [r for r in artifacts if r.get('event')=='target_checked'
+                     and r.get('source')=='host_region_and_pixel_mask']
     experiments = [r for p in directory.glob('*.experiments.jsonl') for r in read_jsonl(p)]
     reviews = list({(r.get('run_id'), r['experiment']['id']): r['experiment']['data']
                     for r in experiments if r['event'] == 'experiment_reviewed'}.values())
@@ -97,6 +103,12 @@ def diagnostics(directory: Path) -> dict:
         'experiment_events':dict(Counter(r['event'] for r in experiments)),
         'experiment_verdicts':dict(Counter(r['review']['verdict'] for r in reviews)),
         'experiment_reviewers':dict(Counter(r['reviewer'] for r in reviews)),
+        'world_memory': {'versions':len(worlds), 'conditional_trials':len(findings),
+            'questions_tested':len({f['question_id'] for f in findings.values() if f['resolved_test']}),
+            'pixel_mask_checks':len(target_checks),
+            'pixel_mask_matches':sum(r['verdict']=='matched' for r in target_checks),
+            'last_open_questions':sum(q['status']=='open' for q in worlds[-1]['questions']) if worlds else 0,
+            'note':'Mask matches measure geometric consistency, not semantic object-recognition accuracy.'},
         'bounded_experiment_retries':sum(r['event']=='experiment_started' and
             bool(r['experiment']['data']['plan']['retry_of']) for r in experiments),
         'committed_actions':len(actions), 'hints':hints}

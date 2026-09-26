@@ -83,7 +83,7 @@ class ReplayTests(unittest.TestCase):
             rows=[e for e in timeline.events if e['_journal']=='states']
             self.assertEqual([(e['event'],e['state']) for e in rows],
                              [('state_entered','DECIDE'),('state_exited','DECIDE'),
-                              ('state_entered','RUN'),('state_exited','RUN')]*3)
+                              ('state_entered','RUN'),('state_exited','RUN')]*4)
             self.assertEqual(r.memory.last_result['status'],'action')
             sequence=[e['sequence'] for e in timeline.events]
             self.assertEqual(sequence,sorted(set(sequence)))

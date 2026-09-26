@@ -7,18 +7,25 @@ from agent.controls import ACTION_TO_BUTTON, controller_context
 from .completion import CompletionTool
 from .tasks import (TASKS, COMMON, INSTRUCTIONS, Answer, GoalSelection, GoalAssessment,
                     ExperimentDesign, TargetInspection, EffectJudgment, MethodChoice,
-                    SkillArguments, SkillDraft, MissingEvidence, TaskFailure)
+                    SkillArguments, SkillDraft, MissingEvidence, TaskFailure, WorldInterpretation)
 from .state import ExperimentPlan, ExperimentReview, EffectFact, Draft, DesignRevision
 from .experiments import RepeatedExperiment, action_key, pixels
 from .validation import validate_action
 from .routing import after_goal, recovery_route
 from .machine import destination
+from .world import WorldMemory
 
 
 class FocusedTasks:
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.experiments.facts_only = bool(self.model)
+        self.world = WorldMemory(self.notebook)
+
+    def _experiment_event(self, event, **data):
+        super()._experiment_event(event, **data)
+        if self.model and event == 'experiment_reviewed':
+            self.world.record(data['experiment'])
 
     def _end_skill(self, outcome, reason):
         active = deepcopy(self.memory.active_skill)
@@ -43,6 +50,7 @@ class FocusedTasks:
                 'evidence_ids': d['review']['evidence_ids']}
 
     def _focused_work(self):
+        self.world.observe(self.obs)
         if self.work == 'experiment_design':
             self.work = destination('existing_goal' if self._goal() else 'initial_goal')
         elif self.work == 'experiment_review':
@@ -56,7 +64,8 @@ class FocusedTasks:
             self.controllers[self.work] = LlmAgent(
                 name=self.work, include_contents='none',
                 model=LocalVisionLlm(model='qwen3-vl-4b-instruct',
-                    api_base=os.getenv('VLM_API_BASE', 'http://vlm:8080/v1'), max_output_tokens=1800,
+                    api_base=os.getenv('VLM_API_BASE', 'http://vlm:8080/v1'),
+                    max_output_tokens=2200 if self.work == 'interpret_world' else 1800,
                     completion_tools=tuple(t.name for t in completion)),
                 instruction=COMMON + INSTRUCTIONS[self.work],
                 tools=[*completion, *([self.read_task_evidence] if self.work in (
@@ -73,22 +82,31 @@ class FocusedTasks:
         c = {'task_id': getattr(self, 'task_id', '') if getattr(self, 'task_work', None) == self.work else '', 'work': self.work,
              'observation_id': self.obs.get('observation_id')}
         goal_view = None if not goal else {'id': goal['id'], 'revision': goal['revision'],
-            'text': goal['text'], 'done_when': goal['data']['done_when']}
-        if self.work == 'select_goal':
+            'text': goal['text'], 'done_when': goal['data']['done_when'],
+            'question_id':goal['data'].get('question_id')}
+        qid = goal['data'].get('question_id') if goal else None
+        if self.work == 'interpret_world':
+            c.update(components=self.world.candidate_view(), previous_world=self.world.view(),
+                     latest_fact=self._fact(),legal_actions=self.world.legal_actions)
+        elif self.work == 'select_goal':
             c.update(parent_goal=self.notebook.pages['goal']['text'], latest_fact=self._fact(),
-                     previous_goal=getattr(self, 'closed_goal', None))
+                     previous_goal=getattr(self, 'closed_goal', None),
+                     rejection=getattr(self, 'rejection', None), world=self.world.view())
         elif self.work == 'assess_goal':
             c.update(goal=goal_view, fact=self._fact(), rejection=getattr(self, 'rejection', None),
                      last_execution={k:v for k,v in (self.outcome or {}).items() if k in (
-                         'action','acknowledged','experience_id','boundary','changed_cell_count')})
+                         'action','acknowledged','experience_id','boundary','changed_cell_count')},
+                     world=self.world.view(qid))
         elif self.work == 'design_experiment':
             c.update(goal=goal_view, question=getattr(self, 'remaining_question', ''),
                 fact=self._fact(), rejection=getattr(self, 'rejection', None),
-                target_assessment=getattr(self, 'target_assessment', None),
+                target_assessment=getattr(self, 'target_assessment', None), world=self.world.view(qid),
+                grounded_objects=[self.world.object(o['id']) for o in self.world.view(qid)['objects'] if o['visible']],
                 legal_actions=[ACTION_TO_BUTTON[a] for a in self.obs.get('available_actions', [])
                                if a in ACTION_TO_BUTTON and a != 'RESET'])
         elif self.work == 'inspect_target':
-            c.update(target=self.proposal.target, image_size={
+            c.update(target=self.proposal.target,
+                     grounded_object=self.world.object(self.proposal.target_object_id), image_size={
                 'width':self.obs.get('width',64), 'height':self.obs.get('height',64)})
         elif self.work == 'judge_effect':
             d = self.experiments.active['data']
@@ -176,14 +194,38 @@ class FocusedTasks:
             raise ValueError('task failures are host-only')
         if not isinstance(job, (TASKS[self.work][1], MissingEvidence, TaskFailure)):
             raise ValueError('answer belongs to another task')
+        if isinstance(job, WorldInterpretation):
+            self.world.validate(job)
+        if isinstance(job, GoalSelection):
+            question = self.world.question(job.question_id)
+            if question['status'] != 'open' or not question['current']:
+                raise ValueError('this question already has a scoped test; select an open question with a different subject, observed object, or property')
+            old = getattr(self, 'closed_goal', None)
+            if old and old.get('question_id') == job.question_id:
+                raise ValueError('replacing a goal must change the question_id; choose another unresolved question')
         if isinstance(job, GoalAssessment):
+            qid = goal['data'].get('question_id') if goal else None
+            if job.decision == 'continue' and qid and not self.world.question(qid)['current']:
+                raise ValueError('the old object/question grounding changed; replace the goal using the current interpretation')
             allowed = set((self._fact() or {}).get('evidence_ids', [])) | {self.obs['observation_id']}
             if self.outcome:
                 allowed.add(self.outcome['experience_id'])
             if not set(job.evidence_ids) <= allowed:
                 raise ValueError('assessment must cite supplied facts')
         if isinstance(job, ExperimentDesign):
-            validate_action(job.action, self.obs)
+            action = validate_action(job.action, self.obs)
+            question = self.world.question(goal['data']['question_id'])
+            if ACTION_TO_BUTTON[action.action] != question['action']:
+                raise ValueError('experiment must test the selected question action; replace the goal to test another control')
+            if action.action == 'ACTION6':
+                self.world.object(job.target_object_id)
+                if question['subject'] != 'scene' and question['subject'] != job.target_object_id:
+                    raise ValueError('click target must be the selected question subject; replace the goal to investigate another object')
+            region = job.expected.region
+            if region and question['observe']:
+                overlaps = any(self.world.overlaps(oid, region) for oid in question['observe'])
+                if not overlaps:
+                    raise ValueError('expected region must observe a supplied effect object, not unrelated pixels')
             self._plan(job)  # Validate structure; repeated tests route in RUN, not tool correction.
         if isinstance(job, TargetInspection) and job.region:
             r = job.region
@@ -224,7 +266,7 @@ class FocusedTasks:
             raise ValueError('a fixed active goal is required')
         plan = ExperimentPlan(subgoal={'id':goal['id'], 'parent_id':goal['data']['parent_id'],
                 'text':goal['text'], 'done_when':goal['data']['done_when']},
-            **job.model_dump(exclude={'task_id','action','target'}))
+            **job.model_dump(exclude={'task_id','action','target','target_object_id'}))
         if job.retry_of:
             prior = self.experiments._prior(job.retry_of)
             plan.revision = prior['data']['plan'].get('revision')
@@ -233,8 +275,11 @@ class FocusedTasks:
         return plan
 
     def _review(self, job):
+        # The task is already bound to this experiment. Its receipt ID is host
+        # metadata, not a citation the model should have to reproduce correctly.
+        experience_id = self.experiments.active['data']['outcome']['experience_id']
         return EffectFact(experiment_id=self.experiments.active['id'], verdict=job.verdict,
-                          finding=job.finding, evidence_ids=job.evidence_ids)
+                          finding=job.finding, evidence_ids=list(dict.fromkeys([experience_id,*job.evidence_ids])))
 
     def _recover(self, reason, details):
         event = {'skill_creation':'build_missing','resolve_arguments':'arguments_missing',
@@ -252,7 +297,7 @@ class FocusedTasks:
 
     def _target_key(self, job):
         action = validate_action(job.action, self.obs).model_dump(exclude_none=True)
-        return (self.obs['observation_id'], job.target, tuple(action_key(action).items()))
+        return (self.obs['observation_id'], job.target_object_id, job.target, tuple(action_key(action).items()))
 
     def _commit_proposal(self):
         job = self.proposal
@@ -283,6 +328,8 @@ class FocusedTasks:
         except RepeatedExperiment as e:
             self._recover('same_test_unchanged_conditions', {'experiment_id':e.page['id'], 'action':action})
             return
+        self.world.bind(experiment_id, self._goal()['data']['question_id'],
+                        job.target_object_id if action['action']=='ACTION6' else '', self.obs)
         self._machine_transition('test_accepted')
         self._select(action, plan.expected.description, experiment_id=experiment_id)
 
@@ -298,11 +345,14 @@ class FocusedTasks:
                 self._recover('target_mismatch', {'missing_skill_evidence':job.reason})
             else:
                 self._stop('missing_evidence: '+job.reason)
+        elif isinstance(job, WorldInterpretation):
+            self.world.apply(job)
+            self.work = destination('world_existing_goal' if self._goal() else 'world_initial_goal')
         elif isinstance(job, GoalSelection):
             key = f'focused-goal-{self.task_sequence}'
             self.notebook._commit(key,'subgoal',job.text[:80],job.text,[self.obs['observation_id']],
                 data={'parent_id':'goal','done_when':job.done_when,'status':'active',
-                      'goal_type':job.goal_type,'status_reason':job.reason})
+                      'goal_type':job.goal_type,'status_reason':job.reason,'question_id':job.question_id})
             self.notebook.system_bookmark('current_subgoal',key)
             self.remaining_question = job.text
             self.work = destination('goal_methods' if len(self._available_methods()) > 1 else 'goal_selected')
@@ -316,7 +366,8 @@ class FocusedTasks:
             if self.work == 'design_experiment' and not getattr(self, 'rejection', None) and len(self._available_methods()) > 1:
                 self.work = destination('goal_choose_method')
             if self.work == 'select_goal':
-                self.closed_goal = {'text':goal['text'],'done_when':goal['data']['done_when'],'reason':job.reason}
+                self.closed_goal = {'text':goal['text'],'done_when':goal['data']['done_when'],'reason':job.reason,
+                                    'question_id':goal['data'].get('question_id')}
             if self.work == 'stop':
                 self._stop('goal_evidence_insufficient')
         elif isinstance(job, ExperimentDesign):
@@ -331,9 +382,11 @@ class FocusedTasks:
             region = job.region
             verdict = ('uncertain' if region is None else 'matched' if
                 region.x <= action.x < region.x+region.width and region.y <= action.y < region.y+region.height
+                and self.world.contains(self.proposal.target_object_id, action.x, action.y)
                 else 'mismatched')
             self.target_assessment = {**job.model_dump(exclude={'task_id'}), 'verdict':verdict,
-                                      'source':'host_contains_model_region'}
+                                      'source':'host_region_and_pixel_mask',
+                                      'target_object_id':self.proposal.target_object_id}
             self._record('artifacts', 'target_checked', **self.target_assessment)
             if verdict == 'matched':
                 self.checked_target = self._target_key(self.proposal)

@@ -14,14 +14,25 @@ from test_skill_learning import obs, candidate, promote
 def answer_for(c, x=0):
     work = c['work']
     result = {'task_id':c['task_id']}
-    if work == 'select_goal':
-        name='submit_goal'; result.update(text='Find a reactive cell',goal_type='knowledge',
+    if work == 'interpret_world':
+        name='submit_world'
+        objects=[{'key':str(i),'component_ids':[v['id']], 'description':f"Region {i}",
+                  'possible_roles':['unknown']} for i,v in enumerate(c['components'])]
+        result.update(objects=objects,relations=[],questions=[{'subject':o['key'],'action':'CLICK','observe':[o['key']],
+            'property':prop,'question':f"Does {o['key']} change {prop}?",
+            'alternatives':['observed change','no observed change']}
+            for o in objects[:2] for prop in ['appearance','position']])
+    elif work == 'select_goal':
+        name='submit_goal'; result.update(question_id=next(q['id'] for q in c['world']['questions'] if q['status']=='open' and q['id']!=(c.get('previous_goal') or {}).get('question_id')),text='Find a reactive cell',goal_type='knowledge',
             done_when='A candidate cell has been tested',reason='Its response is unknown')
     elif work == 'assess_goal':
         name='submit_goal_assessment'; result.update(decision='continue',reason='Another cell remains untested',
             remaining_question='Does a different cell react?',evidence_ids=c['fact']['evidence_ids'] if c['fact'] else [c['observation_id']])
+        if not c['world']['questions'][0]['current']:
+            result.update(decision='replace',reason='Object grounding changed',remaining_question='')
     elif work == 'design_experiment':
-        name='submit_experiment'; result.update(action={'action':'CLICK','x':x,'y':0},target=f'Candidate cell {x}',
+        oid=next((o['id'] for o in c['grounded_objects'] if any(v['region']['x'] <= x < v['region']['x']+v['region']['width'] for v in o['components'])),c['grounded_objects'][0]['id'])
+        name='submit_experiment'; result.update(target_object_id=oid,action={'action':'CLICK','x':x,'y':0},target=f'Candidate cell {x}',
             question='Does this cell react?',hypothesis='This cell changes',conditions='Current state',
             expected={'kind':'region_changed','description':'Cell changes','region':{'x':x,'y':0,'width':1,'height':1}})
     elif work == 'inspect_target':
@@ -37,6 +48,7 @@ def answer_for(c, x=0):
 
 class FocusedTests(unittest.TestCase):
     def runtime(self, **kwargs):
+        kwargs.setdefault('max_calls',8); kwargs.setdefault('max_http_requests',16)
         r=CognitiveRuntime('test','local/qwen3-vl-4b-instruct',**kwargs)
         self.addCleanup(r.close)
         return r
@@ -48,7 +60,7 @@ class FocusedTests(unittest.TestCase):
         with patch.object(LocalVisionLlm,'_complete',answer):
             result=r.decide(obs())
         self.assertEqual(result['x'],0)
-        self.assertEqual([context(p)['work'] for p in requests],['select_goal','design_experiment','inspect_target'])
+        self.assertEqual([context(p)['work'] for p in requests],['interpret_world','select_goal','design_experiment','inspect_target'])
         for p in requests:
             c=context(p)
             self.assertNotIn('notebook',c)
@@ -56,7 +68,7 @@ class FocusedTests(unittest.TestCase):
             self.assertLessEqual(len(p['tools']),3)
             self.assertNotIn('write_note',str(p['tools']))
         target=context(requests[-1]);self.assertNotIn('goal',target)
-        self.assertEqual(len({context(p)['task_id'] for p in requests}),3)
+        self.assertEqual(len({context(p)['task_id'] for p in requests}),4)
 
     def test_same_failed_test_routes_to_goal_then_actual_new_action(self):
         r=self.runtime(max_calls=8,max_http_requests=12); requests=[]; repeated=False
@@ -209,7 +221,8 @@ class FocusedTests(unittest.TestCase):
             if c['work']=='resolve_arguments':
                 x=next(i for i,v in enumerate(r.obs['grid'][0]) if v==0)
                 return call('submit_arguments',{'task_id':c['task_id'],'arguments':{'x':x}})
-            name,data=answer_for(c,0)
+            x=next((i for i,v in enumerate(r.obs['grid'][0]) if v==0),0)
+            name,data=answer_for(c,x)
             return call(name,data)
         with patch.object(LocalVisionLlm,'_complete',answer):
             self.assertEqual(r.decide(obs())['x'],0);ack(r)
@@ -246,7 +259,7 @@ class FocusedTests(unittest.TestCase):
                 r.decide(obs())
             timeline=Timeline(Run(Path(directory),r.session_id)).load()
             snapshots=[s for s in timeline.snapshots if s['event']['event']=='task_opened']
-            self.assertEqual([s['context']['work'] for s in snapshots],['select_goal','design_experiment','inspect_target'])
+            self.assertEqual([s['context']['work'] for s in snapshots],['interpret_world','select_goal','design_experiment','inspect_target'])
             self.assertNotIn('goal',snapshots[-1]['context'])
             self.assertIsNone(snapshots[0]['action'])
             self.assertIn('この判断に渡した入力',dashboard_html(snapshots[-1],Path(directory)))
