@@ -1,16 +1,15 @@
 """Deterministic routing; no prose classification or LLM orchestration."""
 
+from .machine import destination
 
 def after_goal(decision):
-    return {'continue': 'design_experiment', 'completed': 'select_goal',
-            'replace': 'select_goal', 'deferred': 'stop'}[decision]
+    return destination({'continue':'goal_continue','completed':'goal_replace',
+                        'replace':'goal_replace','deferred':'goal_deferred'}[decision])
 
 
-def recovery_route(reason, target_checked, attempts, limit=2):
+def recovery_route(reason, attempts, limit=2):
     if attempts > limit:
-        return 'stop'
-    if reason == 'same_test_unchanged_conditions' and not target_checked:
-        return 'inspect_target'
+        return destination('recover_exhausted')
     if reason == 'target_mismatch':
-        return 'design_experiment'
-    return 'assess_goal'
+        return destination('recover_target')
+    return destination('recover_goal')

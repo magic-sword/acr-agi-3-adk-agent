@@ -235,7 +235,7 @@ def main():
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
         hashes[rel] = sha256(target)
-    manifest = {'created_utc': stamp, 'games': [d['game_id'] for _, d in selected],
+    manifest = {'observatory_schema': 1, 'created_utc': stamp, 'games': [d['game_id'] for _, d in selected],
                 'learning': not args.no_learning,
                 'skill_library': str(frozen_library) if frozen_library else None,
                 'limits': {'steps': args.steps, 'levels': args.levels, 'seconds': args.seconds, 'hard_seconds': args.hard_seconds},

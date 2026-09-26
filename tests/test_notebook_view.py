@@ -135,7 +135,7 @@ class ReadableNotebookTests(unittest.TestCase):
         from scripts.notebook_monitor import BenchmarkReplay
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);evaluation=root/'sample';folder=evaluation/'game/cognition';folder.mkdir(parents=True)
-            (evaluation/'manifest.json').write_text('{}')
+            (evaluation/'manifest.json').write_text('{"observatory_schema":1}')
             (folder.parent/'result.json').write_text('{}')
             view=opening()
             (folder/'r.states.jsonl').write_text(json.dumps({'sequence':1,'event':'state_entered',

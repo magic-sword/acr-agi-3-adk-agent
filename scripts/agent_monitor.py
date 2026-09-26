@@ -31,6 +31,8 @@ def discover_evaluations(root):
     if not root.is_dir():
         return []
     candidates = [root] if (root/'manifest.json').is_file() else [p for p in root.iterdir() if p.is_dir()]
+    if (root/'evaluations').is_dir():
+        candidates += [p for p in (root/'evaluations').iterdir() if p.is_dir()]
     return sorted((p for p in candidates if (p/'manifest.json').is_file() and discover_runs(p)),
                   key=lambda p: p.name, reverse=True)
 
@@ -175,6 +177,8 @@ class Timeline:
                     notebook_changes += (event,)
             if kind == 'artifacts' and name in ('target_checked','task_rejected','plan_delta'):
                 host_judgments.append(event)
+            if name == 'machine_transition':
+                machine = dict(machine,node=event['target'],phase=event.get('condition',''))
             if kind == 'requests':
                 request = event
             if kind == 'model':

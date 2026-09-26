@@ -33,6 +33,7 @@ from .skills import skill_toolset, skill_instructions
 from .state import Decision, Draft, Memory, ExperimentPlan, ExperimentReview, EffectFact, SkillDeferral, ExperimentRedesign, DesignRevision
 from .validation import validate_action
 from .tasks import TaskFailure
+from .machine import destination, TRANSITIONS
 
 APP_NAME = 'arc_skill_learning'
 
@@ -233,6 +234,12 @@ class ExecutionRuntime:
             self.http_requests += record['http_requests']
             self._record('model', 'model_decision', **record)
 
+    def _machine_transition(self, event):
+        if self.model:
+            source, target, condition, kind = TRANSITIONS[event]
+            self._record('artifacts','machine_transition',transition=event,source=source,
+                         target=target,condition=condition,category=kind)
+
     def _stop(self, reason):
         self.experiments.interrupt(reason)
         self.evidence.pin([])
@@ -395,10 +402,10 @@ class ExecutionRuntime:
         self.job_result = None  # The verdict has one opening-view source: latest_review.
         if self.outcome is not None and self.outcome.get('experiment_id') == review.experiment_id:
             self.outcome['review'] = review.model_dump()
-        self.work, self.learning_request = ('assess_goal' if self.model and hasattr(self, '_goal') else 'experiment_design'), None
+        self.work, self.learning_request = (destination('effect_judged' if source == 'agent' else 'measured') if self.model and hasattr(self, '_goal') else 'experiment_design'), None
         self._apply_boundary()
         if self.model and hasattr(self, '_goal') and not self._goal():
-            self.work = 'select_goal'
+            self.work = destination('initial_goal')
 
     def _offline_job(self):
         allowed = [a for a in self.obs['available_actions'] if a.startswith('ACTION')]
@@ -435,7 +442,8 @@ class ExecutionRuntime:
     def _build_graph(self):
         @node(rerun_on_resume=True)
         async def decide(ctx: Context):
-            self._record('states', 'state_entered', state='DECIDE', work=self.work, input=self._context())
+            context = self._context()
+            self._record('states', 'state_entered', state='DECIDE', work=self.work, input=context)
             try:
                 self.trace.append('DECIDE')
                 if self.result is not None:
@@ -530,7 +538,7 @@ class ExecutionRuntime:
             self.recoveries = 0
             self.rejection = self.target_assessment = None
             if self.work not in ('experiment_review', 'judge_effect'):
-                self.work = 'assess_goal' if self._goal() else 'select_goal'
+                self.work = destination('existing_goal' if self._goal() else 'initial_goal')
         if not self.initialized:
             await self.service.create_session(app_name=APP_NAME, user_id='player', session_id=self.session_id)
             self.initialized = True

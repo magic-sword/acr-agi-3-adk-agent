@@ -90,7 +90,7 @@ class ReplayTests(unittest.TestCase):
 
     def fixture(self, root, evaluation='20260925T100000Z',game='ls20'):
         folder=root/evaluation;directory=folder/game/'cognition';directory.mkdir(parents=True)
-        (folder/'manifest.json').write_text('{}')
+        (folder/'manifest.json').write_text('{"observatory_schema":1}')
         (directory.parent/'result.json').write_text('{}')
         for kind,rows in {
             'observations':[{'event':'observation_received','sequence':1,'step':0,'grid':[[8,9]],'observation_id':'o0'}],
@@ -186,7 +186,7 @@ class ReplayTests(unittest.TestCase):
 
     def test_state_replay_skips_same_state_events_and_caches_the_diagram(self):
         from scripts.notebook_monitor import BenchmarkReplay
-        from scripts.state_diagram import state_diagram_html
+        from scripts.runtime_structure import structure_html
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);self.fixture(root)
             w=BenchmarkReplay(root);self.addCleanup(w.close)
@@ -196,7 +196,7 @@ class ReplayTests(unittest.TestCase):
             self.assertEqual(w._positions,[0,1,3])
             w.mode.value='イベント'
             w.slider.value=1
-            with patch('scripts.notebook_monitor.state_diagram_html',wraps=state_diagram_html) as diagram:
+            with patch('scripts.notebook_monitor.structure_html',wraps=structure_html) as diagram:
                 w.slider.value=2
                 diagram.assert_not_called()
                 w.slider.value=3

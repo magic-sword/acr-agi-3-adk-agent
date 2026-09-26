@@ -12,6 +12,7 @@ from .state import ExperimentPlan, ExperimentReview, EffectFact, Draft, DesignRe
 from .experiments import RepeatedExperiment, action_key, pixels
 from .validation import validate_action
 from .routing import after_goal, recovery_route
+from .machine import destination
 
 
 class FocusedTasks:
@@ -43,9 +44,9 @@ class FocusedTasks:
 
     def _focused_work(self):
         if self.work == 'experiment_design':
-            self.work = 'assess_goal' if self._goal() else 'select_goal'
+            self.work = destination('existing_goal' if self._goal() else 'initial_goal')
         elif self.work == 'experiment_review':
-            self.work = 'judge_effect'
+            self.work = destination('semantic')
 
     def _agent(self):
         if self.work not in self.controllers:
@@ -236,10 +237,14 @@ class FocusedTasks:
                           finding=job.finding, evidence_ids=job.evidence_ids)
 
     def _recover(self, reason, details):
+        event = {'skill_creation':'build_missing','resolve_arguments':'arguments_missing',
+                 'choose_method':'method_missing'}.get(self.work,
+                 'test_rejected' if reason=='same_test_unchanged_conditions' else 'target_rejected')
+        self._machine_transition(event)
         self.recoveries = getattr(self, 'recoveries', 0) + 1
         self.rejection = {'reason':reason, 'details':details}
         self._record('artifacts', 'task_rejected', work=self.work, recovery=self.recoveries, **self.rejection)
-        route = recovery_route(reason, target_checked=True, attempts=self.recoveries)
+        route = recovery_route(reason, attempts=self.recoveries)
         if route == 'stop':
             self._stop('recovery_budget_exhausted')
         else:
@@ -278,6 +283,7 @@ class FocusedTasks:
         except RepeatedExperiment as e:
             self._recover('same_test_unchanged_conditions', {'experiment_id':e.page['id'], 'action':action})
             return
+        self._machine_transition('test_accepted')
         self._select(action, plan.expected.description, experiment_id=experiment_id)
 
     def _apply_focused(self, job):
@@ -299,7 +305,7 @@ class FocusedTasks:
                       'goal_type':job.goal_type,'status_reason':job.reason})
             self.notebook.system_bookmark('current_subgoal',key)
             self.remaining_question = job.text
-            self.work = 'choose_method' if len(self._available_methods()) > 1 else 'design_experiment'
+            self.work = destination('goal_methods' if len(self._available_methods()) > 1 else 'goal_selected')
         elif isinstance(job, GoalAssessment):
             goal = self._goal()
             status = {'continue':'active','completed':'completed','replace':'abandoned','deferred':'active'}[job.decision]
@@ -308,16 +314,17 @@ class FocusedTasks:
             self.remaining_question = job.remaining_question
             self.work = after_goal(job.decision)
             if self.work == 'design_experiment' and not getattr(self, 'rejection', None) and len(self._available_methods()) > 1:
-                self.work = 'choose_method'
+                self.work = destination('goal_choose_method')
             if self.work == 'select_goal':
                 self.closed_goal = {'text':goal['text'],'done_when':goal['data']['done_when'],'reason':job.reason}
             if self.work == 'stop':
                 self._stop('goal_evidence_insufficient')
         elif isinstance(job, ExperimentDesign):
             self.proposal = job
-            self.work = 'inspect_target'
+            self.work = destination('inspect_click')
             if (validate_action(job.action,self.obs).action != 'ACTION6' or
                     getattr(self, 'checked_target', None) == self._target_key(job)):
+                self._machine_transition('direct_test')
                 self._commit_proposal()
         elif isinstance(job, TargetInspection):
             action = validate_action(self.proposal.action, self.obs)
@@ -330,6 +337,7 @@ class FocusedTasks:
             self._record('artifacts', 'target_checked', **self.target_assessment)
             if verdict == 'matched':
                 self.checked_target = self._target_key(self.proposal)
+                self._machine_transition('target_found')
                 self._commit_proposal()
             else:
                 self._recover('target_mismatch', self.target_assessment)
@@ -339,16 +347,17 @@ class FocusedTasks:
             self.method = job
             if job.method == 'learn':
                 self.learning_request = {'evidence_ids':job.evidence_ids,'purpose':job.reason}
-                self.work = 'skill_creation'
+                self.work = destination('method_learn')
             else:
-                self.work = 'design_experiment' if job.method == 'explore' else 'resolve_arguments'
+                self.work = destination('method_explore' if job.method == 'explore' else 'method_skill')
         elif isinstance(job, SkillArguments):
             self.memory.active_skill = {'id':self.method.skill_id,'arguments':job.arguments,
                 'trial':self.method.method=='trial','index':0,'trace':[]}
             self._record('learning','skill_execution_started',skill_id=self.method.skill_id,
                 trial=self.method.method=='trial',arguments=job.arguments)
+            self._machine_transition('arguments_ready')
             self._advance_skill()
         elif isinstance(job, SkillDraft):
             self.job_result = self.library.draft(Draft.model_validate(job.model_dump(exclude={'task_id'})))
-            self.work = 'design_experiment'
+            self.work = destination('skill_built')
         return True

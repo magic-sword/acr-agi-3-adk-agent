@@ -13,8 +13,8 @@ from PIL import Image, ImageDraw
 
 from scripts.agent_monitor import (Timeline, discover_evaluations, discover_runs, dashboard_html,
                                   json_html, safe_asset, PALETTE)
-from scripts.state_diagram import state_diagram_html
 from scripts.notebook_view import notebook_html
+from scripts.runtime_structure import read_structure, structure_html, failure_points, trace_html
 
 
 def picture(observation, directory, action=None):
@@ -55,9 +55,16 @@ def picture(observation, directory, action=None):
 
 
 class BenchmarkReplay:
-    def __init__(self, root):
+    def __init__(self, root, source_root=None):
         self.root = Path(root).expanduser().resolve()
         self.timeline, self.runs = None, {}
+        self.source_root = Path(source_root) if source_root else Path(__file__).resolve().parents[1]
+        self.structure = None
+        self.run_settings = ''
+        self.structure_refresh = W.Button(description='最新の構造を再読込', icon='refresh')
+        self.structure_status = W.HTML()
+        self.problem = W.Dropdown(description='問題箇所', options=[('全記録の問題イベントを選択',None)], layout=W.Layout(width='100%'))
+        self.trace = W.HTML()
         self._updating, self._closed = False, False
         self._positions, self._image_keys = [], [None,None]
         self._frames, self._animation_key = [], None
@@ -72,7 +79,7 @@ class BenchmarkReplay:
         self.previous,self.next = W.Button(description='前へ'),W.Button(description='次へ')
         self.notes_button = W.Button(description='攻略ノートを読む', icon='book', disabled=True)
         self.status,self.board = W.HTML(),W.HTML()
-        self.diagram = W.HTML(value=state_diagram_html())
+        self.diagram = W.HTML()
         self._machine_key = None
         self.images = [W.Image(format='png',layout=W.Layout(width='100%',height='340px',object_fit='contain')) for _ in range(2)]
         self.captions = [W.HTML(),W.HTML()]
@@ -90,7 +97,8 @@ class BenchmarkReplay:
         self.widget = W.VBox([W.HTML('<h3>ベンチマーク再生</h3><style>.arc-replay-image img{image-rendering:pixelated}</style>'),
                               self.evaluation,self.game,W.HBox([self.load_button,self.refresh_button]),
                               W.HBox([self.mode,self.speed,self.previous,self.next,self.notes_button]),W.HBox([self.play,self.slider]),
-                              self.status,self.diagram,screens,self.board,self.details])
+                              self.structure_refresh,self.structure_status,self.diagram,
+                              self.problem,self.status,self.trace,screens,self.board,self.details])
         self._link = W.jslink((self.play,'value'),(self.slider,'value'))
         self.evaluation.observe(self._select_evaluation,names='value')
         self.game.observe(lambda _: self._clear(),names='value')
@@ -105,6 +113,8 @@ class BenchmarkReplay:
         self.play.observe(self._playing,names='playing')
         self.details.observe(self._open_detail,names='selected_index')
         self.animation_slider.observe(lambda _: self._render_animation() if not self._updating else None,names='value')
+        self.structure_refresh.on_click(lambda _: self._read_structure())
+        self.problem.observe(self._jump_problem, names='value')
         self.refresh_evaluations()
 
     def refresh_evaluations(self):
@@ -117,6 +127,7 @@ class BenchmarkReplay:
         finally:
             self._updating=False
         self._select_evaluation(None)
+        self._read_structure()
 
     def _select_evaluation(self, _):
         if self._updating:
@@ -130,6 +141,7 @@ class BenchmarkReplay:
         finally:
             self._updating=False
         self._clear()
+        self._read_structure()
 
     def _clear(self):
         if self._updating:
@@ -145,7 +157,9 @@ class BenchmarkReplay:
         self._positions=[]
         self._image_keys=[None,None]
         self._machine_key=None
-        self.diagram.value=state_diagram_html()
+        self.diagram.value=structure_html(self.structure) if self.structure else ''
+        self.trace.value=''
+        self.problem.options=[('全記録の問題イベントを選択',None)]
         self._frames,self._animation_key=[],None
         self.details.selected_index=None
         for panel in self.panels:
@@ -166,11 +180,36 @@ class BenchmarkReplay:
         self._clear()
         self.status.value='<p>選択したゲームの記録を読み込んでいます。</p>'
         try:
+            manifest=json.loads((Path(self.evaluation.value)/'manifest.json').read_text())
+            if manifest.get('observatory_schema') != 1:
+                raise ValueError('旧形式の実行ログです。最新実装で記録を作成してください')
+            settings=manifest.get('cognition_settings') or {}
+            self.run_settings='実行時のモデル: '+str(manifest.get('agent_model','記録なし'))+' · 一観測あたりの上限: '+str(settings.get('COGNITION_MAX_CALLS','不明'))+'判断 / '+str(settings.get('COGNITION_MAX_HTTP_REQUESTS','不明'))+'HTTP'
             self.timeline=Timeline(run).load()
+            self.problem.options=[('全記録の問題イベントを選択',None), *failure_points(self.timeline.events)]
+            self._read_structure()
             self._set_positions()
         except (OSError,ValueError) as exc:
             self.timeline=None
             self.status.value='<p>読込エラー: '+escape(str(exc))+'</p>'
+
+    def _read_structure(self):
+        try:
+            self.structure=read_structure(self.source_root)
+            self._machine_key=None
+            self.structure_status.value='<p>最新実装の全体図 · '+str(len(self.structure['states']))+'ステート / '+str(len(self.structure['transitions']))+'遷移。ログ未選択でも表示します。</p>'
+            self.diagram.value=structure_html(self.structure,(self.snapshot() or {}).get('machine'))
+        except (OSError,ValueError,SyntaxError) as exc:
+            self.structure=None
+            self.structure_status.value='<p>構造読込エラー: '+escape(str(exc))+'</p>'
+            self.diagram.value=''
+
+    def _jump_problem(self, change):
+        if self._updating or change['new'] is None or not self.timeline:
+            return
+        self.play.playing=False
+        self.mode.value='イベント'
+        self.slider.value=change['new']
 
     def _set_positions(self):
         if self._updating or not self.timeline:
@@ -221,14 +260,18 @@ class BenchmarkReplay:
         if s is None:
             self.status.value='<p>再生できるイベントがありません。</p>'
             return
+        current=read_structure(self.source_root)
+        if not self.structure or current['hash']!=self.structure['hash']:
+            self._read_structure()
         directory=self.timeline.run.directory
         self.notes_button.disabled=False
         self.status.value=f'<p><b>記録の再生</b> · {escape(directory.parent.parent.name)} · {escape(directory.parent.name)} · {self.slider.value+1}/{len(self._positions)}<br>再生はゲームやモデルを実行しません。詳細を開くと一時停止します。</p>'
+        self.status.value += '<p>'+escape(self.run_settings)+'</p>'
         if self.timeline.invalid_lines:
             self.status.value+=f'<p>不正な完了行を{self.timeline.invalid_lines}件除外しました。</p>'
         machine_key=tuple(s['machine'].items())
         if machine_key!=self._machine_key:
-            self.diagram.value=state_diagram_html(s['machine'])
+            self.diagram.value=structure_html(self.structure,s['machine']) if self.structure else ''
             self._machine_key=machine_key
         for i,(label,obs) in enumerate([('直前の観測',s['before']),('この時点の最新観測',s['current'])]):
             action=s['incoming_action'] if i==0 else s['action'] if obs and obs.get('step')==s['action_step'] else None
@@ -237,6 +280,7 @@ class BenchmarkReplay:
                 self.images[i].value=picture(obs,directory,action)
                 self._image_keys[i]=key
             self.captions[i].value=f'<b>{label}</b> · step {obs.get("step","—") if obs else "—"}'
+        self.trace.value=trace_html(self.timeline.events,s['index'])
         self.board.value=dashboard_html(s,directory,include_images=False)
         if self.details.selected_index is not None:
             self._render_detail()
