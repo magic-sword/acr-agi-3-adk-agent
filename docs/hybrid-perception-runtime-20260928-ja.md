@@ -144,6 +144,28 @@ Kaggle Notebookは`agent/`コードを同梱し、SAM重み・外部ライブラ
 
 **遠隔資材の確認：** 2026-09-29のQwen Dataset読取APIはHTTP 403だったが、認証確認と自分のDataset一覧取得には成功し、設定先のQwen Datasetは一覧に存在しなかった。そのためQwen側も初回作成用の資材・コマンドを整備した。アップロード後の接続確認とKaggle実機のバイナリ／CUDA互換性、実行時間、並行ゲーム負荷は未確認。準備コマンドは[README](../README.md#offline-notebook)にまとめた。
 
+## 9月30日マイルストーン賞の公開準備
+
+2026-09-29確認。[Kaggle公式Overview](https://www.kaggle.com/competitions/arc-prize-2026-arc-agi-3/overview)は、マイルストーン期限までにNotebookをオープンソースライセンスで公開することを明記している。第2回は**2026-09-30 23:59 UTC＝2026-10-01 08:59 JST**。期限時点の順位による賞であり、公開しただけで受賞対象の順位が得られるわけではない。提出・実行・公開確認には余裕を持たせる。
+
+[主催者の2026年共通規則](https://arcprize.org/competitions/2026)は、提出者自身が作ったコード・手法についてCC0やMIT-0などを例示し、第三者コード・手法は公開共有を許すオープンソースライセンスであることを求めている。自作部分のライセンスと、Qwen・SAM・ADK等の第三者ライセンスを区別する。KaggleのRulesタブ全文は今回の取得方法では読めなかったため、これは公式Overviewと主催者共通規則に基づく準備案で、全条項の適合確認ではない。
+
+現状と必要な変更：
+
+| 対象 | 現状 | 公開前に行うこと |
+| --- | --- | --- |
+| リポジトリの自作部分 | ルートの`LICENSE`なし | CC0またはMIT-0等を選び、全文を`LICENSE`に追加。READMEで適用範囲と第三者資材の除外を明示 |
+| 生成Notebook | 冒頭は生成元説明のみ | `scripts/build_notebook.py`でライセンス・第三者帰属表示を生成Notebookへ含める。GitHub上のLICENSEだけに依存しない |
+| Kaggleでの公開範囲 | `notebooks/kernel-metadata.json`は`is_private: true` | 公開する段階で`false`に変更し、Kaggle側の公開状態と選択ライセンスを確認。公開範囲の指定だけではライセンス設定の代わりにならない |
+| Qwen・SAMの資材 | 作成コマンドはPrivateが既定 | 他の参加者が再実行できるよう、配布条件を保持して資材を公開するか、同じ資材を再構築する公開手順を用意する |
+| 提出版の対応 | `make push`はNotebookのアップロード | 公開版と大会への提出版を対応させ、Kaggle上で提出成功・スコア・公開状態・ライセンスを確認する |
+
+Kaggleでは公開NotebookとPrivate Datasetを組み合わせること自体は可能だが、他の利用者はそのPrivate Datasetにアクセスできない。[Kaggle公式Dataset説明](https://www.kaggle.com/docs/datasets)。したがって、資材の公開は再現性のための推奨であり、「全DatasetをPublicにする」という一律の大会条項を確認したものではない。前節のPrivate作成手順は開発用で、賞への応募準備ではこの公開経路も整える。
+
+確認した規定はKaggle Notebookの公開を明記しており、GitHubリポジトリの公開だけで代用できるとは扱わない。GitHubの公開も再現性のために推奨するが、リポジトリ全体の公開が独立した必須条件だと断定する根拠は今回確認していない。
+
+この追記ではライセンス付与・公開設定の変更・アップロードは実行していない。[MIT-0の公式ライセンス識別情報](https://spdx.org/licenses/MIT-0.html)を含め、ライセンス選択後に自作部分へ適用する。
+
 ## 保存資料と再検証
 
 - 実装：[初回SAM](../agent/cognition/sam_proposals.py)、[画素追跡](../agent/cognition/proposal_tracking.py)、[測定スキーマへの接続](../agent/cognition/hybrid_perception.py)、[既存の意味質問](../agent/cognition/perception.py)

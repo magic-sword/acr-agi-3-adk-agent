@@ -187,3 +187,9 @@ The generated Notebook has also passed all seven code cells in a network-disable
 GPU container using the two staged datasets. Those Save & Run results are in
 `outputs/kaggle-ready/notebook/`; the competition gateway and actual Kaggle hardware
 remain to be checked after you upload.
+
+For the September 30 milestone prize, see the
+[publication and licensing preparation](docs/hybrid-perception-runtime-20260928-ja.md#9月30日マイルストーン賞の公開準備).
+The current private-upload defaults are for development. Prize preparation also
+requires a public, appropriately licensed Notebook and a reproducible solution;
+the repository's own code does not yet have a root LICENSE file.
