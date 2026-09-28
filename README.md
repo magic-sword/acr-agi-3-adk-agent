@@ -14,13 +14,15 @@ See the [current design and limits](docs/fast-slow-runtime-ja.md),
 skill-learning documents describe superseded policies.
 
 Start with [物体認識の採用構成・検証結果・参考資料](docs/visual-recognition-adopted-ja.md)
-for the adopted design, successful measurements, references, and validation logs.
+for the current design, measurement summary, open decisions, and validation logs.
 The default uses SAM once per episode to supplement proposals, then tracks pixels
 with the program; Qwen interprets small measured changes with one-token questions.
 See the [runtime specification](docs/hybrid-perception-runtime-20260928-ja.md) for
 configuration, the [handoff](docs/visual-recognition-handoff-ja.md) for outstanding work,
 and the [research history](docs/history/visual-recognition/README.md) for brief lessons
 and archived experiments. `COGNITION_PROPOSALS=program` retains the previous sensor.
+Preprocessing choices remain subject to their effect on downstream planning and
+causal reasoning; recognition scores alone do not establish the best input or amount of detail.
 
 ## Setup
 
