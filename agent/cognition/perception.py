@@ -71,8 +71,20 @@ def context_record(record, *, inventory=False):
         r[key]=deepcopy(record[key][:12]);r[key+'_omitted']=max(0,len(record[key])-12)
     r['unchanged_count']=len(record['unchanged'])
     if inventory:
-        r['candidates']=deepcopy(record['candidates'][:24])
-        r['candidates_omitted']=max(0,len(record['candidates'])-24)
+        if record.get('proposal_mode') == 'sam_initial':
+            # All region IDs remain visible, including lower-ranked SAM masks.
+            # Pixel patterns stay in the evidence log instead of flooding the LLM.
+            r['candidate_index_columns']=['id','bbox_inclusive','color_ids','sources','track_id']
+            r['candidate_index']=[[c['id'],c['bbox'],c['color_ids'],c['sources'],c['track_id']]
+                                  for c in record['candidates']]
+            r['color_names']=COLORS
+            r['candidates_omitted']=0
+            r['candidate_note']='Regions may overlap or include background; track IDs are correspondence hypotheses.'
+        else:
+            r['candidates']=deepcopy(record['candidates'][:24])
+            r['candidates_omitted']=max(0,len(record['candidates'])-24)
+    for key in ['proposal_mode','sam','proposal_coverage_incomplete','target_correspondence']:
+        if key in record:r[key]=deepcopy(record[key])
     if 'relations' in record:r['same_pattern_pairs']=record['relations'][:24]
     return r
 
@@ -98,6 +110,7 @@ def questions(record, outcome, understanding, *, limit=4):
         invocation_id=(outcome.get('skill') or {}).get('invocation_id'),
         action=record['action'],expected_effect=outcome['prediction'],
         targets=targets,change=deepcopy(change),
+        target_correspondence=deepcopy(record.get('target_correspondence',[])),
         question='How does this measured change relate to the expected effect?',choices=deepcopy(QUESTION_OPTIONS))
         for i,change in enumerate(record['changes'])]
     return all_questions[:limit],max(0,len(all_questions)-limit)
@@ -105,9 +118,12 @@ def questions(record, outcome, understanding, *, limit=4):
 
 class PerceptionRuntime:
     def _measure_observation(self, boundary):
-        self.perception=measure(self.previous.get('grid'),self.obs.get('grid'),
+        engine=getattr(self,'proposal_perception',None)
+        measure_frame=engine.measure if engine is not None else measure
+        self.perception=measure_frame(self.previous.get('grid'),self.obs.get('grid'),
             before_id=self.previous.get('observation_id'),after_id=self.obs['observation_id'],
-            action=(self.outcome or {}).get('action'),boundary=bool(boundary))
+            action=(self.outcome or {}).get('action'),boundary=bool(boundary),
+            **({'seconds_left':self.time_left()} if engine is not None else {}))
         self.semantic_answers=[];self.question_queue=[];self.question_deferred=0
         if self.outcome:self.outcome['measured_objects']=context_record(self.perception)
         self._record('artifacts','objects_measured',measurement=self.perception)

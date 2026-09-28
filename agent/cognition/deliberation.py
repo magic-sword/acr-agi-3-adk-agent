@@ -107,7 +107,9 @@ class DeliberationStages:
             names = {c.name for c in value.concepts}
             if any(t.concept not in names for t in value.targets):
                 raise ValueError('target concept must be described in concepts')
-            ids={o['id'] for o in self.perception['candidates'][:24]}
+            candidates=self.perception['candidates']
+            if self.perception.get('proposal_mode')!='sam_initial':candidates=candidates[:24]
+            ids={o['id'] for o in candidates}
             if any(ref not in ids for t in value.targets for ref in t.candidate_refs):
                 raise ValueError('target references unknown current measured candidate')
         elif work=='backchain':
@@ -164,6 +166,8 @@ class DeliberationStages:
         data=value.model_dump()
         if work=='understand':
             m.understanding=data
+            if self.proposal_perception is not None:
+                self.proposal_perception.bind_targets(data)
             m.handoff_question=value.question or value.goal_hypothesis
             m.active_skill=None
             m.phase=value.next
@@ -238,8 +242,10 @@ class DeliberationStages:
                     max_output_tokens=OUTPUT_TOKENS[work],max_requests=1,completion_tools=(tool_name,)),
                 instruction=INSTRUCTIONS[work]+('\nMeasured changes are host observations. Do not replace them with '
                     'a no-change guess. Roles and causation remain hypotheses. When understanding targets, '
-                    'fill candidate_refs from supplied current candidates where they match the image; use [] '
-                    'when unresolved. Candidate references expire with that observation.'),tools=[StageTool(self,work)],
+                    'fill candidate_refs from supplied current candidates or candidate_index rows where they match the image; use [] '
+                    'when unresolved. Candidate references expire with that observation; target_correspondence '
+                    'supplies conservative links to later observations, not proof of identity. A region may include '
+                    'background or several objects.'),tools=[StageTool(self,work)],
                 before_tool_callback=self._before_tool,after_tool_callback=self._after_tool,
                 on_tool_error_callback=self._tool_error)
         return self.planners[work]

@@ -40,7 +40,10 @@ class FastSlowTests(unittest.TestCase):
         self.assertEqual(r.memory.active_skill['action_count'],5)
 
     def test_eight_reconciles_before_regrounding_and_keeps_goal_and_evidence(self):
-        r=self.runtime();executions=0;works=[]
+        # This fixture uses the legacy sensor's same-shape recolor association.
+        # Exact-pixel tracking deliberately routes recolors to perception review;
+        # that separate path is exercised by test_hybrid_perception.
+        r=self.runtime(proposal_mode='program');executions=0;works=[]
         def respond(m,p):
             nonlocal executions
             c=context(p);works.extend([c['work']] if c['work']!='read_memory' else [])

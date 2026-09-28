@@ -28,6 +28,16 @@ def write_json(path, value):
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n')
 
 
+def cognition_settings():
+    from agent.cognition.sam_proposals import default_proposer
+    sam = default_proposer()
+    return {**{k: os.getenv(k, default) for k, default in [
+        ('COGNITION_REPAIR_ATTEMPTS', '1'), ('COGNITION_MAX_RESETS', '2'),
+        ('COGNITION_DECISION_SECONDS', '45'), ('COGNITION_PROPOSALS', 'sam_initial')]},
+        'COGNITION_SAM_CHECKPOINT': str(sam.checkpoint.resolve()),
+        'COGNITION_SAM_SOURCE': str(sam.source.resolve()), 'COGNITION_SAM_DEVICE': sam.device}
+
+
 def sha256(path):
     h = hashlib.sha256()
     with path.open('rb') as f:
@@ -91,6 +101,8 @@ def run_worker(spec_path):
     out = Path(spec['output'])
     # Load exactly the source snapshot used by the notebook packager.
     sys.path[:0] = [spec['package'], str(ROOT / 'vendor/ARC-AGI-3-Agents')]
+    # Asset locations must survive moving the agent into the source snapshot.
+    os.environ.update(spec.get('cognition_settings', {}))
     os.environ.update(ADK_MODEL=spec['model'], COGNITION_LOG_DIR=str(out / 'cognition'),
                       COGNITION_SECONDS=str(spec['seconds']), OPERATION_MODE='offline',
                       AGENTOPS_API_KEY='', WANDB_MODE='disabled')
@@ -228,8 +240,7 @@ def main():
                 'git_revision': git('rev-parse', 'HEAD'), 'git_dirty': bool(git('status', '--porcelain')),
                 'framework_revision': git('-C', 'vendor/ARC-AGI-3-Agents', 'rev-parse', 'HEAD'),
                 'python': sys.version, 'packages': {n: importlib.metadata.version(n) for n in ('google-adk', 'google-genai', 'arc-agi', 'arcengine')},
-                'cognition_settings': {k: os.getenv(k, default) for k, default in [
-                    ('COGNITION_REPAIR_ATTEMPTS', '1'), ('COGNITION_MAX_RESETS', '2'), ('COGNITION_DECISION_SECONDS', '45')]},
+                'cognition_settings': cognition_settings(),
                 'scoring_source_sha256': sha256(Path(importlib.metadata.distribution('arc-agi').locate_file('arc_agi/scorecard.py'))),
                 'gateway': 'official arc-agi SDK, localhost HTTP, competition_mode=True, one game per scorecard',
                 'seed': 0, 'execution': 'sequential fresh worker/session for each game',
@@ -243,6 +254,12 @@ def main():
     for name in ('Qwen3VL-4B-Instruct-Q4_K_M.gguf', 'mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf'):
         path = bundle / name
         manifest['models'][name] = {'size': path.stat().st_size, 'sha256': sha256(path)} if path.exists() else {'unavailable': True}
+    if manifest['cognition_settings']['COGNITION_PROPOSALS']=='sam_initial':
+        checkpoint=Path(manifest['cognition_settings']['COGNITION_SAM_CHECKPOINT'])
+        source=Path(manifest['cognition_settings']['COGNITION_SAM_SOURCE'])/'segment_anything'
+        manifest['models']['sam_vit_b'] = dict(path=str(checkpoint),
+            **({'size':checkpoint.stat().st_size,'sha256':sha256(checkpoint)} if checkpoint.is_file() else {'unavailable':True}),
+            source_sha256={str(p.relative_to(source)):sha256(p) for p in source.rglob('*.py')})
     gpu = subprocess.run(['nvidia-smi', '--query-gpu=name,memory.total,driver_version', '--format=csv,noheader'], text=True, capture_output=True)
     manifest['gpu'] = gpu.stdout.strip()
     write_json(out / 'manifest.json', manifest)
@@ -259,6 +276,7 @@ def main():
         write_json(out / 'manifest.json', manifest)
         spec = {'game_id': game_id, 'output': str(dest), 'package': str(package),
                 'policy': 'fast_slow',
+                'cognition_settings': manifest['cognition_settings'],
                 'environments': str(dest / 'environments'), 'model': model,
                 'steps': args.steps, 'levels': args.levels, 'seconds': args.seconds}
         write_json(dest / 'spec.json', spec)

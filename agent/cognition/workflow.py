@@ -21,7 +21,13 @@ from .perception import PerceptionRuntime, context_record
 
 class CognitiveRuntime(PerceptionRuntime, NotebookRuntime, DeliberationStages, ExecutionRuntime):
     def __init__(self, game_id, model=None, *, repair_attempts=1, max_resets=2,
-                 seconds=600, decision_seconds=45, log_dir=None):
+                 seconds=600, decision_seconds=45, log_dir=None,
+                 proposal_mode=None, sam_proposer=None):
+        proposal_mode=proposal_mode or os.getenv('COGNITION_PROPOSALS','sam_initial')
+        if proposal_mode not in ('program','sam_initial'):
+            raise ValueError('COGNITION_PROPOSALS must be program or sam_initial')
+        from .hybrid_perception import HybridPerception
+        self.proposal_perception=HybridPerception(sam_proposer) if proposal_mode=='sam_initial' else None
         self.perception=None
         self.semantic_answers=[]
         self.question_queue=[]

@@ -1,6 +1,8 @@
 # 設計・評価の履歴
 
-現在の仕様は[自律スキル学習の実装](../skill-learning-runtime-ja.md)。このディレクトリは過去の評価・研究判断を残すためのもので、現行APIの仕様ではありません。再現用ソースは各評価出力のpackage/に保存されています。
+現在のエージェント仕様は[fast/slowランタイム](../fast-slow-runtime-ja.md)、物体認識の採用方針は[統合資料](../visual-recognition-adopted-ja.md)。このディレクトリは過去の評価・研究判断を残すためのもので、現行APIの仕様ではありません。再現用ソースは各評価出力のpackage/に保存されています。
+
+- [物体認識の調査履歴：要点と個別資料の索引](visual-recognition/README.md)
 
 - [adaptive-cognitive-loop-review-ja.md](adaptive-cognitive-loop-review-ja.md)
 - [adk-design-review-20260924-ja.md](adk-design-review-20260924-ja.md)

@@ -1,60 +1,33 @@
-# 次セッションへの引継ぎ：測定した変化を行動計画へつなぐ
+# 物体認識から行動計画への引継ぎ
 
-更新：2026-09-28。次の目的は、改善した変化認識を、根拠のある結果照合・行動計画へ接続すること。認識の比較は実施済みで、以下の改善案は未実装。
+更新：2026-09-28。採用理由・成功した検証・文献・主要ログは[統合資料](visual-recognition-adopted-ja.md)が正本。このページは次の作業に必要な状態だけを残す。
 
-## 採用した構成
+## 実装済み
 
-- **プログラムが画素・位置・色・形の変化を測定し、Qwenは意味・役割・操作との関係を推論する。** 測定値と、物体のまとまり・同一性・因果関係の仮説を分ける。
-- `observe`で測定し、必要な場合だけ`answer_question`で期待効果との関係を1トークン回答する。選択肢は支持／反する／無関係／不明、最大4問。不明・対応保留は`reconcile`へ返す。
-- 初回理解・照準・曖昧な観測では画像を残す。測定だけで答えられる質問には画像を渡さない。レトロUIは未追加。
-- **測定方式に統一済み。モード指定は不要で、旧方式の分岐・設定・比較実行専用スクリプトは削除した。** 未知の物体の分割や同一性を完全に解決した実装ではない。
+既定は**初回SAM＋通常の画素更新**（`COGNITION_PROPOSALS=sam_initial`）。初回・RESET・レベル切替でSAMを使い、通常は一意の画素対応を追跡する。無変化なら抽出も再利用。全候補索引、観測内IDと追跡ID、受理した対象参照の継続／欠落を既存の意味質問へ接続済み。
 
-## 確認できた成果と限界
+89フレームの統合検証で候補回収は合成242/264・実ログ133/133、移動は104/127・6/6。実ログの初回後の観測処理は平均6.70ms（Qwenを除く）。全206テスト、実Qwenの1トークン接続3問、実SDKの2操作を確認した。数値の条件・限界は[統合資料](visual-recognition-adopted-ja.md)、実行設定は[ランタイム仕様](hybrid-perception-runtime-20260928-ja.md)を参照。
 
-Qwen3-VL-4B-Instruct（Q4_K_M、projector Q8_0）、既知の合成29問、各条件2反復。同一問題で画像のみと実装が生成した測定入力を比較した。
+## 次に検証すること
 
-| 指標 | 画像のみ | 測定入力 |
-|---|---:|---:|
-| 全問 | 10/29 | 25/29 |
-| 移動対象（無変化4問を含む） | 4/16 | **16/16** |
-| 実際に動いた問題のみ | 0/12 | **12/12** |
-| 操作記録との対応 | 1/4 | **1/4** |
-| 応答時間中央値 | 501.1ms | **253.7ms** |
+1. **再確認の過剰発火を減らす。** 現状は画面が変わった64遷移すべてで対応保留が残る。全体候補が追えているときの部品の曖昧さや背景枠の変化を調べる。真の色変化・出現・対応不明を隠さず、`requires_review`とQwen呼出し数を減らせるか測る。単純な必要時SAMへの切替は再実行が多くなるため、そのまま採用しない。
+2. **測定と結果説明・計画の整合を確認する。** 候補参照の存在確認・追跡は実装済みだが、意味の一致や自由文の根拠は未保証。`reconcile`が測定事実を逸脱していないかを、候補・観測IDに結び付けて検証する。
+3. **対応切れへの処理を個別に測る。** 色変化、同形物体、新しい多色物体を対象に、再検出・再同定が必要な場面を切り分ける。回収率とID継続率を混ぜない。
 
-測定前処理は別計測で中央値6.49ms。全116回答が有効な1トークンで反復差なし。これはプログラムを含めた構成の改善であり、Qwen単独の画像認識や未見ゲームへの汎化の証明ではない。
+以前の実ログには、黄色いバー端の2画素だけが変わり、意味質問も「不明」なのに、後続の`reconcile`が「プレイヤーが下へ動いた」と説明した例がある。SAM統合で解消したとは未確認なので回帰ケースとして残す。[比較HTML](../outputs/measured-runtime-20260928/gallery.html)のls20／measured／step 2、[生ログ](../outputs/measured-runtime-20260928/live-ls20-measured/ls20-9607627b/cognition/f93c11628b954bf2a4d4eb071d8dd71c.artifacts.jsonl)、[当時の原因分析](history/visual-recognition/cognition-handoff-analysis-20260928-ja.md)を参照。
 
-公開ゲームls20・vc33・ft09の各1回、最大4操作・120秒の比較では、**両方式ともクリア0、攻略改善は未確認**。新方式の操作数は順に2・0・0回。意味質問はls20で1問のみ（不明）。理解・具体化・記憶参照の繰り返しも残っている。
+## コード・ログの入口
 
-## 次に直す具体例
+| 作業 | 入口 |
+|---|---|
+| 候補生成・保持・移動測定 | [sam_proposals.py](../agent/cognition/sam_proposals.py)、[proposal_tracking.py](../agent/cognition/proposal_tracking.py)、[hybrid_perception.py](../agent/cognition/hybrid_perception.py) |
+| 意味質問と再確認への分岐 | [perception.py](../agent/cognition/perception.py)、[workflow.py](../agent/cognition/workflow.py) |
+| 対象参照の受理と計画 | [deliberation.py](../agent/cognition/deliberation.py) |
+| 再生・回帰確認 | [verify_hybrid_runtime.py](../scripts/verify_hybrid_runtime.py)、[結合テスト](../tests/test_hybrid_perception.py)、[主要ログ一覧](visual-recognition-adopted-ja.md) |
+| 人がログを読む | [可視化ノート](../notebooks/agent_observatory.ipynb)の「測定・計画を読む」 |
 
-新方式のls20では、step 0→1、1→2とも変化は下部の黄色いバー端の2画素だけだった。プレイヤー候補の移動は測定されず、意味質問も「不明」だったが、後続の`reconcile`は「プレイヤーが下へ動いた」と説明し、`ground`がその前提を引き継いだ。
+## 再開時の注意
 
-**測定台帳は保全できているが、結果説明・計画と測定の整合は保証できていない。** 現在の候補ID検査は存在確認までで、意味的な対応や自由文の正しさは検査しない。また、モデルへ渡す不変対象の情報は件数が中心で、期待した対象が動かなかったことを照合しにくい。
+未コミット変更があるため最初に`git status`を確認する。既存の実験データを上書きせず、新しい出力先で測定する。現在の認識精度、意味質問の正答、Qwenの呼出し数、ゲームの進展を別々に記録する。
 
-確認場所：[比較HTML](../outputs/measured-runtime-20260928/gallery.html)のls20／measured／step 2。[生ログ](../outputs/measured-runtime-20260928/live-ls20-measured/ls20-9607627b/cognition/f93c11628b954bf2a4d4eb071d8dd71c.artifacts.jsonl)では`objects_measured`、`semantic_question_answered`、`stage_accepted`を順に参照する。モデルが付けた「プレイヤー」等の役割名自体も仮説である。
-
-## 次の作業案（優先順）
-
-1. 上記のバーだけが変わる観測を回帰ケースにし、根拠のない移動説明が計画へ入る経路を再現する。
-2. `reconcile`の観測事実に測定・候補・観測IDの根拠を持たせ、整合を検査する。不変の操作対象も照合に渡し、期待効果と実測を分ける。役割・同一性・因果性は仮説として残す。ゲーム固有の移動規則や単語の禁止で修正しない。
-3. 「不明」を具体的な追加観測・試行へつなぎ、裏付けのない効果を`ground`の前提にしない。理解・記憶参照の反復による時間消費も別指標で測る。
-
-評価は、固定問題の移動16/16を維持できるか、同一観測の再生で誤った事実説明・誤完了が減るか、同一予算の実ゲームで操作までの時間・進展が改善するかを分ける。まず照合の整合性を確認し、認識正答率だけで攻略改善を判定しない。
-
-## 実装・再開の入口
-
-- [perception.py](../agent/cognition/perception.py)：測定、`context_record()`、`questions()`、意味質問と状態分岐。[geometry.py](../agent/cognition/geometry.py)：候補抽出・対応。
-- [deliberation.py](../agent/cognition/deliberation.py)：`validate_stage()`と結果の受理、照合・具体化。[workflow.py](../agent/cognition/workflow.py)：観測処理、モデル文脈、画像の出し分け。
-- [回帰テスト](../tests/test_measured_perception.py)、[固定問題の比較スクリプト](../scripts/benchmark_measured_perception.py)。既存確認はADKコンテナ154件＋ホスト描画8件成功（コンテナに既存テスト指定のフォントなし）。
-- [採用方針・詳細結果・参考文献](visual-recognition-adopted-ja.md)が正本。[集計JSON](../outputs/measured-runtime-20260928/combined-summary.json)・[状態図](../outputs/measured-runtime-20260928/workflow/index.html)も参照。
-- [可視化ノート](../notebooks/agent_observatory.ipynb)は1つのコードセルで起動・再生成する。評価ID `measured-runtime-20260928/live-ls20-measured` →「読み込む」→「測定・計画を読む」で測定・意味回答・照合を確認できる。保存済みウィジェットの`model not found`はセルを再実行して表示を作り直す。
-
-同じ短時間条件で新しい実行を作る例。今後は改善前後のコードを同条件で比較する。上記の旧方式との数値比較は削除前に取得した履歴である。
-
-```bash
-make benchmark \
-  EVAL_GAMES=ls20,vc33,ft09 EVAL_STEPS=4 EVAL_SECONDS=120 \
-  EVAL_HARD_SECONDS=145 COGNITION_DECISION_SECONDS=60
-```
-
-引継ぎ時点では実装・資料に未コミット変更がある。最初に`git status`を確認して引き継ぐ。`outputs/measured-runtime-20260928/`の比較結果・ソーススナップショットは保存し、新実験は別の出力先へ作る。今回の作業ではKaggleへのアップロード・提出はしていない。
+過去の個別試験は[履歴フォルダ](history/visual-recognition/README.md)へ整理済み。「未実装」「次に試す」といった記述は当時の状態であり、現在の採用方針を上書きしない。

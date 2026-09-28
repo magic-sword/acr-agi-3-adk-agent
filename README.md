@@ -13,13 +13,14 @@ See the [current design and limits](docs/fast-slow-runtime-ja.md),
 [evaluation guide](docs/local-evaluation-ja.md). Earlier attention and
 skill-learning documents describe superseded policies.
 
-For the adopted visual-recognition approach, measured results, and references, see
-[画面認識の採用方針・検証結果・参考文献](docs/visual-recognition-adopted-ja.md).
-It separates program-measured changes from Qwen's semantic interpretation.
-Program-measured perception is the sole runtime path; no mode setting is needed.
-The document separates recognition results from live-game planning performance.
-For the next development session, start with the concise
-[認識から行動計画への引継ぎ](docs/visual-recognition-handoff-ja.md).
+Start with [物体認識の採用構成・検証結果・参考資料](docs/visual-recognition-adopted-ja.md)
+for the adopted design, successful measurements, references, and validation logs.
+The default uses SAM once per episode to supplement proposals, then tracks pixels
+with the program; Qwen interprets small measured changes with one-token questions.
+See the [runtime specification](docs/hybrid-perception-runtime-20260928-ja.md) for
+configuration, the [handoff](docs/visual-recognition-handoff-ja.md) for outstanding work,
+and the [research history](docs/history/visual-recognition/README.md) for brief lessons
+and archived experiments. `COGNITION_PROPOSALS=program` retains the previous sensor.
 
 ## Setup
 
