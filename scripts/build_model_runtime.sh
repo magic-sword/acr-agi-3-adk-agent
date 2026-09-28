@@ -11,7 +11,7 @@ if [ ! -d "$src_dir/.git" ]; then
 fi
 git -C "$src_dir" fetch --depth 1 origin "$llama_commit"
 git -C "$src_dir" checkout --detach "$llama_commit"
-docker build -f "$root_dir/scripts/Dockerfile.model-runtime" -t arc-agi3-llama-runtime "$src_dir"
+docker build --network "${MODEL_BUILD_NETWORK:-host}" -f "$root_dir/scripts/Dockerfile.model-runtime" -t arc-agi3-llama-runtime "$src_dir"
 container_id="$(docker create arc-agi3-llama-runtime)"
 trap 'docker rm -f "$container_id" >/dev/null' EXIT
 docker cp "$container_id:/src/build/bin/." "$bundle_dir/"

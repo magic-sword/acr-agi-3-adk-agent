@@ -44,6 +44,13 @@ def main() -> None:
         "Qwen3-VL-4B-Instruct GGUF model license: Apache-2.0\n"
         "Inference executable: llama.cpp (MIT; see llama-LICENSE)\n"
     )
+    # The official GGUF model card declares Apache-2.0 but has no LICENSE file.
+    license_url = 'https://www.apache.org/licenses/LICENSE-2.0.txt'
+    with urlopen(license_url, timeout=60) as response:
+        license_text = response.read()
+    if b'Apache License' not in license_text:
+        raise RuntimeError('Unexpected Qwen model license')
+    (OUT / 'Qwen-LICENSE').write_bytes(license_text)
     print("Bundle ready; build its runtime with: make model-runtime")
 
 

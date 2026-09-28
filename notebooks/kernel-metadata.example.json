@@ -10,6 +10,9 @@
   "competition_sources": [
     "arc-prize-2026-arc-agi-3"
   ],
-  "dataset_sources": [],
+  "dataset_sources": [
+    "magicsword001/arc-agi-3-qwen3-vl-4b",
+    "REPLACE_WITH_YOUR_USERNAME/arc-agi-3-sam-vit-b"
+  ],
   "model_sources": []
 }

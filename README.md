@@ -133,13 +133,57 @@ journals. These are observable decision artifacts, not private model reasoning.
 ## Offline notebook
 
 ```bash
-make notebook                  # regenerate from agent source
+make submission-ready          # notebook + Qwen/SAM datasets; no upload
+make submission-smoke          # GPU check; requires running Qwen (make model-up)
 ```
 
 `notebooks/submission.ipynb` is generated; edit `agent/` instead. The notebook bundles
-agent code and pinned ADK wheels. Kaggle reruns use the competition's offline framework
-and model bundle. Local execution prepares the code; `make eval` plays locally.
+agent code and pinned ADK wheels. `config/sam-bundle.json` pins the measured SAM ViT-B
+checkpoint and official source. `make submission-ready` uses the existing assets in
+`outputs/sam-deps/` to stage `.cache/kaggle-sam-bundle/` (about 375 MB), including the
+license. Override source locations with `scripts/build_sam_bundle.py --source PATH
+--checkpoint PATH` when building manually. No downloads happen during packaging or
+Notebook execution.
 
-`make push` explicitly builds and uploads the notebook when requested. `make status` checks
-an existing kernel run. Authentication uses the local ignored `.kaggle/access_token`.
-The present refactor does not run either publishing command.
+Qwen is staged separately at `.cache/kaggle-qwen-bundle/`, including both GGUFs,
+the portable CUDA `llama-server`, shared libraries, licenses and a hash manifest.
+The current Qwen staging folder is about 3.19 GB.
+For a fresh checkout, run `make model-download` and `make model-runtime` first;
+the latter builds the pinned llama.cpp commit for T4 (CUDA architecture 75) with
+CPU-native optimizations disabled. Its Docker build uses host networking to avoid
+the local bridge DNS failure; override with `MODEL_BUILD_NETWORK=default` if needed.
+
+The current metadata expects your private Datasets
+`magicsword001/arc-agi-3-qwen3-vl-4b` and `magicsword001/arc-agi-3-sam-vit-b`.
+Upload the **contents** of the corresponding staging folders without an extra
+parent directory. The commands below use each folder's `dataset-metadata.json`.
+
+```bash
+make auth                      # credentials in ignored .kaggle/access_token
+make qwen-upload               # first time only: create the private Qwen Dataset
+make sam-upload                # first time only: create the private SAM Dataset
+# Wait until Kaggle finishes processing both Datasets.
+make push                      # verify attached assets, then upload the private Notebook
+make status                    # inspect Save & Run status
+```
+
+After changing SAM assets, use `make sam-upload-version` instead of `make sam-upload`.
+Use `make qwen-upload-version` after changing Qwen weights or its runtime.
+Agent-only changes need only `make push`. `make submission-remote-check` checks both
+remote manifests and required SAM/Qwen files without uploading. A failed check
+stops `make push`; it does not upload a Notebook with missing assets. The
+Qwen Dataset must include both GGUFs, `llama-server`, and its runtime libraries.
+
+Both Save & Run and hidden reruns verify SAM hashes and exercise actual SAM/Qwen
+image inference. A failure stops startup instead of silently submitting program-only
+perception. Hidden reruns warm SAM inside the game worker, which retains one shared
+provider across Swarm threads; the Notebook parent does not load another copy.
+Kaggle writes `submission-preflight.json`; local smoke results go to
+`outputs/kaggle-ready/submission-preflight.json`. Normal per-episode SAM detection
+and subsequent pixel tracking are unchanged. See the
+[deployment verification and limitations](docs/hybrid-perception-runtime-20260928-ja.md#kaggle提出準備).
+
+The generated Notebook has also passed all seven code cells in a network-disabled
+GPU container using the two staged datasets. Those Save & Run results are in
+`outputs/kaggle-ready/notebook/`; the competition gateway and actual Kaggle hardware
+remain to be checked after you upload.

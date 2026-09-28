@@ -17,7 +17,7 @@ PYTHON ?= python3
 FRAMEWORK_REPO := https://github.com/arcprize/ARC-AGI-3-Agents.git
 FRAMEWORK_DIR := vendor/ARC-AGI-3-Agents
 
-.PHONY: help build cache-dir repair-perms setup lab down logs shell gpu check auth eval verify notebook push status clean model-download model-up model-check eval-model model-runtime test benchmark benchmark-prepare
+.PHONY: help build cache-dir repair-perms setup lab down logs shell gpu check auth eval verify notebook push status clean model-download model-up model-check eval-model model-runtime test benchmark benchmark-prepare sam-bundle submission-ready submission-smoke sam-upload sam-upload-version submission-remote-check
 
 help:
 	@printf '%s\n' \
@@ -38,6 +38,11 @@ help:
 	  'make model-runtime          Build portable llama-server for Kaggle bundle' \
 	  'make verify                Short two-game smoke test' \
 	  'make notebook              Build Kaggle submission.ipynb locally' \
+	  'make submission-ready      Build and check notebook + offline SAM dataset (no upload)' \
+	  'make submission-smoke      Test staged SAM + running Qwen on GPU (no upload)' \
+	  'make sam-upload            Create the private SAM dataset (first upload)' \
+	  'make qwen-upload           Create the private Qwen dataset (first upload)' \
+	  'make sam-upload-version    Upload a new SAM dataset version when assets change' \
 	  'make push                  Build and push a Kaggle Notebook version' \
 	  'make status                Check latest Kaggle kernel run' \
 	  'make down                  Stop JupyterLab'
@@ -101,9 +106,28 @@ verify: cache-dir
 	$(RUN) python scripts/play_local.py --game ls20,vc33 --max-steps 50
 
 notebook: cache-dir
-	$(RUN) python scripts/build_notebook.py
+	$(PYTHON) scripts/build_notebook.py
 
-push: notebook
+sam-bundle:
+	$(PYTHON) scripts/build_sam_bundle.py
+
+submission-ready: sam-bundle qwen-bundle notebook
+	$(PYTHON) scripts/check_submission.py
+
+submission-smoke: submission-ready model-check
+	$(RUN) python scripts/check_submission.py --gpu
+
+# These targets publish only when explicitly invoked. Kaggle datasets are private by default.
+sam-upload: sam-bundle
+	$(RUN) bash -ec 'IFS= read -r KAGGLE_API_TOKEN < .kaggle/access_token || true; test -n "$$KAGGLE_API_TOKEN"; export KAGGLE_API_TOKEN; kaggle datasets create -p .cache/kaggle-sam-bundle --keep-tabular'
+
+sam-upload-version: sam-bundle
+	$(RUN) bash -ec 'IFS= read -r KAGGLE_API_TOKEN < .kaggle/access_token || true; test -n "$$KAGGLE_API_TOKEN"; export KAGGLE_API_TOKEN; kaggle datasets version -p .cache/kaggle-sam-bundle --keep-tabular -m "Pinned SAM ViT-B offline runtime"'
+
+submission-remote-check: submission-ready
+	$(RUN) python scripts/check_submission.py --remote
+
+push: submission-remote-check
 	$(RUN) bash -ec 'test -s .kaggle/access_token || { echo ".kaggle/access_token missing"; exit 2; }; IFS= read -r KAGGLE_API_TOKEN < .kaggle/access_token || true; test -n "$$KAGGLE_API_TOKEN"; export KAGGLE_API_TOKEN; kaggle kernels push -p notebooks/'
 
 status: cache-dir
@@ -122,3 +146,13 @@ benchmark: cache-dir
 .PHONY: visualize
 visualize:
 	$(PYTHON) scripts/visualize_agent.py
+
+.PHONY: qwen-bundle qwen-upload qwen-upload-version
+qwen-bundle:
+	$(PYTHON) scripts/build_qwen_bundle.py
+
+qwen-upload: qwen-bundle
+	$(RUN) bash -ec 'IFS= read -r KAGGLE_API_TOKEN < .kaggle/access_token || true; test -n "$$KAGGLE_API_TOKEN"; export KAGGLE_API_TOKEN; kaggle datasets create -p .cache/kaggle-qwen-bundle --keep-tabular'
+
+qwen-upload-version: qwen-bundle
+	$(RUN) bash -ec 'IFS= read -r KAGGLE_API_TOKEN < .kaggle/access_token || true; test -n "$$KAGGLE_API_TOKEN"; export KAGGLE_API_TOKEN; kaggle datasets version -p .cache/kaggle-qwen-bundle --keep-tabular -m "Qwen GGUF and portable CUDA runtime"'

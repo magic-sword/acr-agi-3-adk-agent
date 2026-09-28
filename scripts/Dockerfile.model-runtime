@@ -5,7 +5,12 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     build-essential cmake git ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY . .
-RUN cmake -S . -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=75 \
+ARG BUILD_JOBS=8
+# Docker builds have no GPU driver. Resolve the driver's SONAME against CUDA's
+# link-only stub; never copy this stub into the runtime dataset.
+RUN ln -s libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1 && \
+    cmake -S . -B build -DGGML_CUDA=ON -DGGML_NATIVE=OFF -DCMAKE_CUDA_ARCHITECTURES=75 \
+    -DCMAKE_EXE_LINKER_FLAGS=-Wl,-rpath-link,/usr/local/cuda/lib64/stubs \
     -DCMAKE_BUILD_TYPE=Release \
     -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF && \
-    cmake --build build --target llama-server -j 4
+    cmake --build build --target llama-server -j ${BUILD_JOBS}

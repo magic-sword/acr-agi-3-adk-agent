@@ -82,6 +82,30 @@ flowchart LR
 - 意味質問は最大4問で、それ以外は保留件数として保持する。全候補を毎手Qwenで個別分類する構成ではない。
 - ゲーム攻略への効果、未知ゲームでの回収率、モデルが候補索引を使う対象選択精度は未評価。
 
+## GPUへの同時保持とロード回数
+
+2026-09-28に追加確認。**Qwen3-VL-4B Q4_K_M（projector Q8_0、コンテキスト16,384、1スロット）とSAM ViT-B float32を同じRTX A2000 12GBへ保持し、両方の画像推論を交互に3回ずつ実行できた。** モデルを入れ替えてメモリを空ける処理はしていない。
+
+| 測定 | 結果 |
+|---|---:|
+| Qwen常駐時のGPU全体使用量 | 5,735MiB（約5.60GiB） |
+| SAM追加後・推論中のGPU全体使用量の観測最大 | 8,972MiB（約8.76GiB） |
+| 同期間の空きメモリの観測最小 | 2,964MiB（約2.89GiB） |
+| SAMのPyTorch割当ピーク／予約ピーク | 約2.71GiB／3.03GiB |
+| 3つの認識エンジンに対するSAMロード回数 | **1回**：GPU上の重みアドレスも同一 |
+| SAM初回／2回目／3回目の観測処理 | 6.305秒／3.766秒／4.093秒 |
+| 初回中の`_load()`処理 | 2.351秒：初回import・モデル構築・重み読込み・GPU転送を含む |
+
+Qwenは測定前後でコンテナの起動時刻・PID・起動引数が一致し、途中の画像要求も成功した。SAMの重みロードは最初だけで、約4秒の再検出時間とは区別する。GPU全体使用量は約100ms間隔のサンプリングであり、瞬間的なピークを完全に捕捉するものではない。PyTorchの割当値はSAMプロセス内の値で、QwenやCUDA全体の使用量とは異なる。
+
+現行の起動構成ではQwenサーバーは独立プロセスで常駐し、SAMは同一プロセス内の共有プロバイダーで常駐する。ローカルにある公式`Swarm`は各ゲームを同じプロセスのスレッドで起動するため、同じ設定ならゲームごとにSAMの重みを複製しない。SAMの推論はプロバイダーのロックで直列化する。RESET・レベル切替は再検出だけで、重みを再ロードしない。一方、比較用`benchmark_local.py`はゲームごとに新規ワーカープロセスを起動するため、SAMの初回費用が各ゲームに発生する。この測定用構成と本番のスレッド構成は区別する。
+
+**Kaggle上での同時保持は未実測。** 現在のNotebook生成設定はT4で、[公式スターター](https://github.com/arcprize/ARC-AGI-3-Kaggle-Starter#choosing-an-accelerator)にもT4×2の構成が記載されている。[NVIDIAの仕様](https://www.nvidia.com/en-us/data-center/tesla-t4/)ではT4は1枚16GB。今回の1枚12GBでの結果から、同じモデル・設定を16GBのGPUへ保持するメモリ容量は足りる見込み。ただし推論速度、CUDA／バイナリ互換性、複数ゲームの同時負荷、最大コンテキストでの余裕まで検証したものではない。2枚のメモリを自動で一つに合算する前提でもない。
+
+2026-09-29にSAM専用Datasetの生成・接続設定と起動検証を追加した。ローカルで提出資材を生成済み。DatasetのアップロードとKaggle実機での確認は未実施。[提出手順と検証](#kaggle提出準備)を参照。
+
+記録：[同時保持の実測結果](../outputs/model-residency-20260928/measured/summary.json)、[GPU使用量の時系列](../outputs/model-residency-20260928/measured/gpu-samples.jsonl)、[測定スクリプト](../scripts/check_model_residency.py)。SAM／Qwenの計算は交互で、同時カーネル実行の負荷試験ではない。
+
 ## 実行設定とオフライン資材
 
 既定は`COGNITION_PROPOSALS=sam_initial`。`program`で従来の色領域測定へ戻せる。SAMが利用できない場合の画素追跡継続と、従来の`program`モードは別の処理である。
@@ -99,7 +123,26 @@ Composeへ設定を追加した。既存のコンテナは自動再作成して�
 
 評価用にソースを複製する`benchmark_local.py`では、SAM資材の絶対パスと設定をワーカーへ明示的に渡し、重み・外部SAMコードのハッシュをマニフェストへ記録する。ソース複製先を基準に資材を探して見失うことを防ぐ。
 
-Kaggle Notebookのパッケージャーは新しい`agent/`コードを含むが、**SAM重み・外部SAMライブラリは自動同梱しない**。Kaggleで利用する際はオフライン資材をデータセット等に配置して上記パスを指定する必要がある。今回、アップロード・提出は行っていない。
+Kaggle Notebookは`agent/`コードを同梱し、SAM重み・外部ライブラリは専用のオフラインDatasetへ分離する。起動時に検証してパスを自動設定するため、ローカルの`outputs/sam-deps/`配置には依存しない。
+
+## Kaggle提出準備
+
+2026-09-29に追加。`make submission-ready`でNotebookと約375MBのSAM Datasetをローカル生成し、全コードセルの構文・生成物の鮮度・SAM資材のSHA-256を確認する。固定情報は[config/sam-bundle.json](../config/sam-bundle.json)。公式SAMコードとApache 2.0ライセンスを含み、重みは従来のViT-Bと同一。ソースは`sam-source.json`として格納し、Kaggleのアーカイブ展開やディレクトリ省略に依存させない。
+
+- Qwenは`.cache/kaggle-qwen-bundle/`へ重み・projector・CUDA版`llama-server`・共有ライブラリ・ライセンス・ハッシュをまとめる。固定コミットをCUDA architecture 75（T4）向けにビルドし、ビルド元CPU固有の命令への依存を避ける。新規環境では`make model-download`と`make model-runtime`で元資材を準備する。
+- 初回アップロード：`make auth` → `make qwen-upload` → `make sam-upload` → 両Datasetの処理完了後に`make push`。Datasetは非公開で作成する。アップロード自体は今回実行していない。
+- エージェントだけの変更：`make push`。資材を変えた場合は先に`make sam-upload-version`または`make qwen-upload-version`。Notebookのプッシュ前には、接続先Datasetの必要ファイルと両マニフェストの一致を読み取り検査する。
+- Save & Run：SAMの全ハッシュを照合し、常駐Qwenと同時にGPUへロードして画像推論を確認する。成功時に限り従来の提出用仮ファイルを生成する。失敗時は停止する。
+- 本番再実行：ゲーム実行ワーカー内で同じ起動確認を行い、そのまま公式Swarmを実行する。SAMのロード済み共有プロバイダーを再利用し、Notebook親プロセスにはSAMをロードしない。初回・RESET・レベル切替での検出方針は従来どおり。
+- 記録：Kaggleでは`/kaggle/working/submission-preflight.json`、ローカルでは[GPU起動確認結果](../outputs/kaggle-ready/submission-preflight.json)。起動確認には小さな合成画像を使い、SAM候補生成とQwenの画像付き1トークン応答を確認する。
+
+ローカルのKaggleベースGPUコンテナで、生成済みDatasetからSAMを復元し、Qwenとの画像推論に成功。RTX A2000 12GBでSAM初回約6.36秒、両モデルの確認全体約6.54秒、SAMの予約メモリ3,106MiB。資材欠落・破損・古いマニフェスト・Notebookの接続設定不足・GPU確認失敗時の停止を含め、[217件のテストが成功](../outputs/kaggle-ready-tests.log)。これは提出準備と接続の検証で、Kaggleの実機時間や攻略成績ではない。
+
+さらに、アップロード用のQwen資材（約3.19GB）とSAM資材（約375MB）を`/kaggle/input/datasets/…`へ読み取り専用マウントし、**生成Notebookの全7コードセルを`--network none`のGPUコンテナで実行した。** 新しくビルドしたQwenサーバーの起動・画像推論、SAMとの同時保持、Save & Run用`submission.parquet`の生成、サーバー終了まで成功した。Qwenの起動＋初回画像確認は約35.84秒、SAM＋Qwenの追加起動確認は約6.69秒。これらは起動時の費用で、毎手・毎ゲームの重みロードではない。
+
+この検証は競技ディレクトリの存在をローカルで再現し、ARC依存ライブラリには開発イメージ内のものを使用した。実競技の配布物やgatewayを使う本番再実行の検証ではない。[セル実行記録](../outputs/kaggle-ready/notebook/notebook-smoke.json)・[両モデル確認結果](../outputs/kaggle-ready/notebook/submission-preflight.json)・[Notebook実行ログ](../outputs/kaggle-ready/notebook-run.log)・[再実行スクリプト](../scripts/run_notebook_smoke.py)・[ビルドログ](../outputs/kaggle-model-runtime-build.log)。
+
+**遠隔資材の確認：** 2026-09-29のQwen Dataset読取APIはHTTP 403だったが、認証確認と自分のDataset一覧取得には成功し、設定先のQwen Datasetは一覧に存在しなかった。そのためQwen側も初回作成用の資材・コマンドを整備した。アップロード後の接続確認とKaggle実機のバイナリ／CUDA互換性、実行時間、並行ゲーム負荷は未確認。準備コマンドは[README](../README.md#offline-notebook)にまとめた。
 
 ## 保存資料と再検証
 

@@ -36,6 +36,10 @@ def build() -> dict:
         raise ValueError("Local Qwen3-VL inference requires enable_gpu=true")
     if "magicsword001/arc-agi-3-qwen3-vl-4b" not in metadata.get("dataset_sources", []):
         raise ValueError("Attach the Qwen3-VL offline bundle via dataset_sources")
+    sam_id = metadata['id'].split('/')[0] + '/arc-agi-3-sam-vit-b'
+    if sam_id not in metadata.get('dataset_sources', []):
+        raise ValueError(f'Attach {sam_id} via dataset_sources')
+    sam_manifest = json.loads((ROOT / 'config/sam-bundle.json').read_text())
     write_files = "from pathlib import Path\n"
     for rel, src in SOURCES.items():
         if not src.is_file():
@@ -73,12 +77,16 @@ def build() -> dict:
 
     start_model = dedent(f'''\
         import sys
+        import os
         from pathlib import Path
         sys.path.insert(0, "/tmp/arc_adk")
         from agent.model_runtime import find_bundle, start
 
         model_process = None
         if Path("{COMP}").is_dir():
+            from agent.submission_runtime import configure_sam
+            configure_sam({sam_manifest!r})
+            os.environ['VLM_API_BASE'] = 'http://127.0.0.1:8080/v1'
             bundle = find_bundle()
             model_process = start(bundle)
             try:
@@ -137,7 +145,8 @@ def build() -> dict:
             run_env["VLM_API_BASE"] = "http://127.0.0.1:8080/v1"
             run_env["MPLBACKEND"] = "agg"
             try:
-                subprocess.run(["python", "main.py", "--agent", "myagent"], cwd=root, env=run_env, check=True)
+                # Warm up inside the same process as Swarm so SAM is loaded only once.
+                subprocess.run([sys.executable, "-m", "agent.submission_runtime"], cwd=root, env=run_env, check=True)
             finally:
                 if model_process is not None:
                     model_process.terminate()
@@ -148,6 +157,16 @@ def build() -> dict:
         import os
         from pathlib import Path
         if Path("{COMP}").is_dir() and not os.environ.get("KAGGLE_IS_COMPETITION_RERUN"):
+            import subprocess
+            # Save & Run validates both models on GPU before producing the placeholder.
+            # Its worker exits here; hidden reruns have a separate, persistent worker.
+            try:
+                subprocess.run([sys.executable, '-m', 'agent.submission_runtime', '--check-only'],
+                               cwd='/tmp/arc_adk', check=True)
+            finally:
+                if model_process is not None:
+                    model_process.terminate()
+                    model_process.wait(timeout=30)
             import pandas as pd
             # During Save & Run the gateway is absent. The real output is
             # produced by the gateway during the competition rerun.
