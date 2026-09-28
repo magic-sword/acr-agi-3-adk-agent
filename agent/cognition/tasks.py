@@ -10,10 +10,12 @@ TASKS = {
     'execute_step': ('single_token_choice', FastSelection),
     'aim': ('single_token_choice', FastSelection),
     'read_memory': ('single_token_choice', FastSelection),
+    'answer_question': ('single_token_choice', FastSelection),
 }
 SLOW_TASKS = ('understand', 'backchain', 'ground', 'reconcile')
 OUTPUT_TOKENS = {'understand':1000, 'backchain':1200, 'ground':1800, 'reconcile':1000}
 INSTRUCTIONS = {
+    'answer_question': 'Relate one program-measured change to the expected effect. Select support, contradiction, unrelated, or uncertainty. Do not redetect changes or infer goal completion.',
     'understand': '''Answer the supplied question using the current board, last_result, last_review
 and the selected memory_brief. Reinterpret only what that question needs, including
 another instance or a contrasting group when the previous attempt leaves uncertainty.

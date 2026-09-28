@@ -15,8 +15,11 @@ skill-learning documents describe superseded policies.
 
 For the adopted visual-recognition approach, measured results, and references, see
 [画面認識の採用方針・検証結果・参考文献](docs/visual-recognition-adopted-ja.md).
-It separates program-measured changes from Qwen's semantic interpretation;
-the document distinguishes validated prototypes from pending runtime integration.
+It separates program-measured changes from Qwen's semantic interpretation.
+Program-measured perception is the sole runtime path; no mode setting is needed.
+The document separates recognition results from live-game planning performance.
+For the next development session, start with the concise
+[認識から行動計画への引継ぎ](docs/visual-recognition-handoff-ja.md).
 
 ## Setup
 

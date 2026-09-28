@@ -107,6 +107,9 @@ class DeliberationStages:
             names = {c.name for c in value.concepts}
             if any(t.concept not in names for t in value.targets):
                 raise ValueError('target concept must be described in concepts')
+            ids={o['id'] for o in self.perception['candidates'][:24]}
+            if any(ref not in ids for t in value.targets for ref in t.candidate_refs):
+                raise ValueError('target references unknown current measured candidate')
         elif work=='backchain':
             unique([g.id for g in value.goals],'goal IDs')
             merged = {**m.goals, **{g.id:g.model_dump() for g in value.goals}}
@@ -233,7 +236,10 @@ class DeliberationStages:
                 model=LocalVisionLlm(model='qwen3-vl-4b-instruct',
                     api_base=os.getenv('VLM_API_BASE','http://vlm:8080/v1'),
                     max_output_tokens=OUTPUT_TOKENS[work],max_requests=1,completion_tools=(tool_name,)),
-                instruction=INSTRUCTIONS[work],tools=[StageTool(self,work)],
+                instruction=INSTRUCTIONS[work]+('\nMeasured changes are host observations. Do not replace them with '
+                    'a no-change guess. Roles and causation remain hypotheses. When understanding targets, '
+                    'fill candidate_refs from supplied current candidates where they match the image; use [] '
+                    'when unresolved. Candidate references expire with that observation.'),tools=[StageTool(self,work)],
                 before_tool_callback=self._before_tool,after_tool_callback=self._after_tool,
                 on_tool_error_callback=self._tool_error)
         return self.planners[work]

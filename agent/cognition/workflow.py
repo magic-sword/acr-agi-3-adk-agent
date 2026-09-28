@@ -16,11 +16,16 @@ from .tasks import INSTRUCTIONS, SLOW_TASKS
 from .validation import validate_intent
 from .cursor import start_cursor, cursor_options, adjust_cursor, cursor_parts
 from .notebook import NotebookRuntime, reader_context
+from .perception import PerceptionRuntime, context_record
 
 
-class CognitiveRuntime(NotebookRuntime, DeliberationStages, ExecutionRuntime):
+class CognitiveRuntime(PerceptionRuntime, NotebookRuntime, DeliberationStages, ExecutionRuntime):
     def __init__(self, game_id, model=None, *, repair_attempts=1, max_resets=2,
                  seconds=600, decision_seconds=45, log_dir=None):
+        self.perception=None
+        self.semantic_answers=[]
+        self.question_queue=[]
+        self.question_deferred=0
         if type(repair_attempts) is not int or repair_attempts not in (0,1):
             raise ValueError('repair_attempts must be 0 or 1')
         self.repair_attempts=repair_attempts
@@ -41,12 +46,16 @@ class CognitiveRuntime(NotebookRuntime, DeliberationStages, ExecutionRuntime):
               'reader','memory_brief','handoff_question','episode')
         self._record('artifacts','cognition_updated',cognition={
             **{k:getattr(self.memory,k) for k in keys},'note_count':len(self.memory.notes),'recent_trials':self.recent_trials,
-            'replan_reason':self.replan_reason})
+            'replan_reason':self.replan_reason,
+            'measured_objects':context_record(self.perception,inventory=True) if self.perception else None,
+            'semantic_answers':self.semantic_answers,'pending_semantic_questions':len(self.question_queue),
+            'deferred_semantic_questions':self.question_deferred})
 
     def _on_observation(self, boundary):
         m=self.memory
         # Bindings last for one observation only, even if the new pixels match.
         m.cursor=None
+        self._measure_observation(boundary)
         if self.outcome:
             trial={'observation_id':self.obs['observation_id'],'step':self.obs['step'],**self.outcome}
             self._record('artifacts','action_feedback',trial=trial)
@@ -77,6 +86,7 @@ class CognitiveRuntime(NotebookRuntime, DeliberationStages, ExecutionRuntime):
                                'probe_observed')
         elif m.phase=='execute_step':
             self._machine_transition('continue_execution')
+        self._route_perception()
         self._snapshot()
 
     def _current_result(self):
@@ -122,6 +132,11 @@ class CognitiveRuntime(NotebookRuntime, DeliberationStages, ExecutionRuntime):
         goal=m.goals.get(m.selected_goal_id)
         common={'work':work,'observation_id':self.obs['observation_id'],
                 'remaining_actions':self.obs['remaining_actions'],'seconds_left':round(self.time_left(),2)}
+        if self.perception:
+            common.update(measured_objects=context_record(self.perception,inventory=work=='understand'),
+                          semantic_answers=self.semantic_answers,deferred_semantic_questions=self.question_deferred,
+                          measurement_policy='Measured changes persist; model interpretations cannot erase them. '
+                          'Roles, correspondence and causation remain hypotheses.')
         if work=='read_memory':
             common.update(reader_context(m.reader,m.notes),last_result=self.outcome,
                           current_goal=goal,last_review=m.reconciliations[-1:] )
@@ -174,6 +189,9 @@ class CognitiveRuntime(NotebookRuntime, DeliberationStages, ExecutionRuntime):
         return views
 
     def _visual_parts(self, slow=False):
+        if (self.work not in ('understand','aim') and self.perception
+                and self.perception['status']=='measured' and not self.perception['requires_review']):
+            return []
         parts = []
         views=[('CURRENT board',self.obs)] if self.work=='aim' else self._views(slow)
         for label, obs in views:
@@ -229,6 +247,9 @@ class CognitiveRuntime(NotebookRuntime, DeliberationStages, ExecutionRuntime):
     async def _think(self, ctx):
         m=self.memory
         while self.result is None and self.job is None and self.time_left()>0:
+            if m.phase=='answer_question':
+                await self._answer_semantic_question()
+                continue
             if m.phase in SLOW_TASKS:
                 work=m.phase
                 await self._read_memory(work)

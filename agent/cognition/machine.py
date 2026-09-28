@@ -11,8 +11,15 @@ STATES = {
     'aim': ('高速：照準 / 7 / 8', 'llm', 1030, 530),
     'wait': ('操作送信・観測待ち', 'host', 40, 300),
     'stop': ('終了・期限・受付による停止', 'terminal', 40, 530),
+    'answer_question': ('高速：測定変化の意味を質問', 'llm', 370, 530),
 }
 TRANSITIONS = {
+    'objects_uncertain': ('execute_step','reconcile','測定・対応に保留あり','recovery'),
+    'questions_for_execution': ('execute_step','answer_question','測定変化と期待効果を照合','normal'),
+    'questions_for_review': ('reconcile','answer_question','照合前の短い意味質問','normal'),
+    'next_semantic_question': ('answer_question','answer_question','次の変更候補','normal'),
+    'questions_to_review': ('answer_question','reconcile','試行・保留・矛盾を照合','recovery'),
+    'questions_to_execution': ('answer_question','execute_step','質問完了・既存手順を継続','normal'),
     'received': ('observe','understand','初期観測／境界','normal'),
     'understood': ('understand','backchain','対象と疑問から逆算','normal'),
     'direct_ground': ('understand','ground','一操作の試行／既知手順','normal'),

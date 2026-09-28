@@ -24,6 +24,8 @@ class Target(Contract):
     appearance: str = Field(min_length=1, max_length=160)
     role_hypothesis: str = Field(max_length=180)
     relations: str = Field(max_length=240)
+    candidate_refs: list[str] = Field(default_factory=list, max_length=12,
+        description='Current measured candidate IDs supporting this target/group, if provided. Empty if unresolved.')
 
 
 class ActionIntent(Contract):

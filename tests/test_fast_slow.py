@@ -57,8 +57,9 @@ class FastSlowTests(unittest.TestCase):
                 return call('submit_grounding',grounding(c,x=2))
             return answer(m,p)
         with patch.object(LocalVisionLlm,'_complete',respond):
-            r.decide(obs());ack(r);result=r.decide(obs(1,[[0,0,0,0,0,1]]))
+            r.decide(obs(grid=[[0,0,0,0,0,1]]));ack(r);result=r.decide(obs(1,[[0,0,0,0,0,2]]))
         self.assertEqual(result['x'],2)
+        self.assertEqual(works.count('answer_question'),1)
         self.assertEqual(works.count('understand'),1);self.assertEqual(works.count('backchain'),1)
         self.assertEqual(works[-7:],['reconcile','ground','choose_skill','execute_step','aim','aim','aim'])
 
@@ -331,7 +332,13 @@ class FastSlowTests(unittest.TestCase):
             with patch.object(LocalVisionLlm,'_complete',respond):r.decide(a);ack(r);r.decide(b)
             parts=requests[-1]['messages'][-1]['content']
             self.assertEqual(sum(p['type']=='image_url' for p in parts),2)
-            self.assertEqual(context(requests[-1])['last_result']['changed_cell_count'],1)
+            review=next(context(p) for p in requests if context(p)['work']=='reconcile')
+            self.assertEqual(review['review']['trigger'],'perception_uncertain')
+            self.assertEqual(review['last_result']['changed_cell_count'],1)
+            self.assertTrue(review['measured_objects']['requires_review'])
+            # A newly grounded invocation must not inherit the previous action result.
+            self.assertIsNone(context(requests[-1])['last_result'])
+            self.assertEqual(context(requests[-1])['measured_objects']['changed_pixels'],1)
             self.assertNotIn('available_actions',context(requests[-1]))
             calls=[json.loads(s) for s in (Path(d)/(r.session_id+'.model.jsonl')).read_text().splitlines()]
             self.assertEqual([c['work'] for c in calls[:3]],['understand','backchain','ground'])

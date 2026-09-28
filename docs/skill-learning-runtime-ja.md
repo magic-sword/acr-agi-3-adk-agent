@@ -78,6 +78,6 @@ ADK Workflowの制御骨格は `DECIDE → RUN → 必要時DECIDE`。モデル�
 
 [評価ガイド](local-evaluation-ja.md)のログから、モデルへの実入力、判断更新、実操作、候補の根拠、試行、評価、登録を追跡できる。`task_opened`は実際に渡した限定入力、`plan_delta`はホスト比較、`task_rejected`は差し戻し理由と回復回数を保存する。状態図と表示は新タスクに対応し、旧ログも再生できる。
 
-本番の`CognitiveRuntime`は新方式のみ。旧コントローラの入出力を使う既存テストは`tests/legacy_runtime_fixture.py`に隔離し、共有の実行・実験保存・過去ログ契約の回帰用に残す。テスト用コントローラは提出用ノートブックに含めない。新しい分岐自体は`tests/test_focused_tasks.py`で実ADKディスパッチを通して検証する。
+この節は当時の検証記録。旧コントローラとその互換テストは現在削除済み。現行の構成・検証は[画面認識の統合資料](visual-recognition-adopted-ja.md)を参照。
 
 実モデルでの成功率やステージクリアは自動テストとは別に扱う。比較実走の結果・残る制約は[設計書の実装記録](focused-task-refactor-design-ja.md)を参照する。
