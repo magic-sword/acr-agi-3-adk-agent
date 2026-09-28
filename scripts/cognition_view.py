@@ -12,12 +12,17 @@ def cognition_html(snapshot):
     memory=snapshot.get('cognition') or {}
     context=snapshot.get('context') or {}
     response=snapshot.get('response') or {}
+    measured=memory.get('measured_objects') or {}
+    measurement_label=('SAM＋画素追跡による物体別の測定'
+                       if measured.get('proposal_mode')=='sam_initial' else 'プログラムによる物体別の測定')
     goal_id=memory.get('selected_goal_id')
     rows=[('熟考・実行の工程',memory.get('phase')),
           ('現在の小目標',memory.get('goals',{}).get(goal_id) or context.get('current_goal') or context.get('goal') or '未設定'),
           ('小目標の確認状態',memory.get('goal_status',{}).get(goal_id)),
           ('状況理解・注目対象・疑問',memory.get('understanding')),
-          ('プログラムによる物体別の測定',memory.get('measured_objects')),
+          ('SAMの稼働状態・このフレームでの呼出し',measured.get('sam')),
+          ('候補回収に不足があるか',measured.get('proposal_coverage_incomplete')),
+          (measurement_label,memory.get('measured_objects')),
           ('変更と期待効果についての意味回答',memory.get('semantic_answers')),
           ('未処理の意味質問',memory.get('pending_semantic_questions')),
           ('予算上保留した意味質問',memory.get('deferred_semantic_questions')),

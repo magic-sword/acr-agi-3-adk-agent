@@ -5,13 +5,34 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from scripts.agent_monitor import read_journal, Timeline, Run, discover_evaluations, discover_runs, dashboard_html, safe_asset, screen_html
+from scripts.agent_monitor import read_journal, Timeline, Run, discover_evaluations, discover_runs, dashboard_html, safe_asset, screen_html, implementation_status
 from agent.cognition.workflow import CognitiveRuntime
 from agent.local_vlm import LocalVisionLlm
 from runtime_helpers import obs, answer
 
 
 class ReplayTests(unittest.TestCase):
+    def test_same_model_name_does_not_hide_changed_agent_implementation(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); (root/'agent').mkdir()
+            source=root/'agent/worker.py'; source.write_text('version = 1\n')
+            manifest={'agent_model':'local/qwen3-vl-4b-instruct',
+                      'source_sha256':{'agent/worker.py':hashlib.sha256(source.read_bytes()).hexdigest()}}
+            self.assertEqual(implementation_status(manifest,root),'現在の実装と一致')
+            source.write_text('version = 2\n')
+            self.assertIn('不一致',implementation_status(manifest,root))
+            self.assertIn('未確認',implementation_status({},root))
+
+    def test_evaluations_sort_by_recorded_time_instead_of_experiment_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            older=self.fixture(root,'z-old-experiment')
+            newer=self.fixture(root,'a-new-experiment')
+            for folder,stamp in [(older,'20260926T000000Z'),(newer,'20260929T000000Z')]:
+                (folder/'manifest.json').write_text(json.dumps({'observatory_schema':3,'created_utc':stamp}))
+            self.assertEqual(discover_evaluations(root),[newer,older])
+
     def test_partial_final_line_is_not_a_completed_event(self):
         with tempfile.TemporaryDirectory() as d:
             path=Path(d)/'r.states.jsonl'

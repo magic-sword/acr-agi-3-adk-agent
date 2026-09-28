@@ -10,7 +10,7 @@
 - モデル：Qwen3-VL-4B-Instruct Q4_K_M＋Q8_0の画像プロジェクタ。
 - llama.cpp：b11118-e6ab7c1a4。同じモデル重みを共有し、要求の処理枠を1→2へ変更。
 - 枠あたりの文脈長：16384。総文脈長は1枠で16384、2枠で32768。
-- 入力：outputs/evaluations/20260926T172310706477Zの実HTTP要求と画像。
+- 入力：outputs/history/evaluations/20260926T172310706477Zの実HTTP要求と画像。
 - 前景：3ゲームのunderstandと、ls20のexecute_step。背景：各ゲームのread_memoryの8要求を順に再生。
 - temperature=0、seed=123、キャッシュ再利用あり。各条件のウォームアップを除外し、3反復の中央値を比較。
 - 2枠の直列／並列は順序を反転して実行。1枠と2枠の比較はサーバの切替を挟んでいる。
@@ -80,7 +80,7 @@ KaggleのT4×2やRTX PRO 6000上の速度、複数GPUへのモデル分離も未
 set -e
 experiment_dir=outputs/parallel-prefetch-new
 python3 scripts/benchmark_parallel.py prepare \
-  --source outputs/evaluations/20260926T172310706477Z \
+  --source outputs/history/evaluations/20260926T172310706477Z \
   --output "$experiment_dir" --reads 8
 docker compose exec -T dev python scripts/benchmark_parallel.py run \
   --output "$experiment_dir" --slots 1 --repeats 3 --modes serial

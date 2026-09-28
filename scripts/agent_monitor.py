@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 from dataclasses import dataclass
 from functools import lru_cache
 from html import escape
@@ -12,6 +13,27 @@ import struct
 JOURNALS = ('observations', 'states', 'requests', 'tools', 'model', 'artifacts', 'execution')
 PALETTE = ('#FFFFFF', '#CCCCCC', '#999999', '#666666', '#333333', '#000000', '#E53AA3', '#FF7BCC',
            '#F93C31', '#1E93FF', '#88D8F1', '#FFDC00', '#FF851B', '#921231', '#4FCC30', '#A356D6')
+
+
+def implementation_status(manifest, source_root):
+    """Compare captured agent sources, without importing or running the agent."""
+    recorded = {name: digest for name, digest in manifest.get('source_sha256', {}).items()
+                if name.startswith('agent/')}
+    if not recorded:
+        return '未確認（実装ハッシュなし）'
+    root = Path(source_root)
+    current = {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+               for p in (root / 'agent').rglob('*.py')}
+    if not current:
+        return '未確認（現在のソースなし）'
+    return '現在の実装と一致' if recorded == current else '旧実装／現在の実装と不一致'
+
+
+def evaluation_created(directory):
+    try:
+        return json.loads((directory / 'manifest.json').read_text()).get('created_utc') or directory.name
+    except (OSError, ValueError):
+        return directory.name
 
 
 @dataclass(frozen=True)
@@ -42,7 +64,7 @@ def discover_evaluations(root):
                     visit(child, depth-1)
     visit(root, 2)
     return sorted((p for p in candidates if (p/'manifest.json').is_file() and discover_runs(p)),
-                  key=lambda p: p.name, reverse=True)
+                  key=evaluation_created, reverse=True)
 
 
 def discover_runs(evaluation):

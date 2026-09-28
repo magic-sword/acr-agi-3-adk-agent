@@ -35,6 +35,8 @@ services:
       COGNITION_SAM_CHECKPOINT: ${COGNITION_SAM_CHECKPOINT:-/kaggle/working/outputs/sam-deps/sam_vit_b_01ec64.pth}
       COGNITION_SAM_SOURCE: ${COGNITION_SAM_SOURCE:-/kaggle/working/outputs/sam-deps/segment-anything}
       COGNITION_SAM_DEVICE: ${COGNITION_SAM_DEVICE:-cuda}
+      TORCHINDUCTOR_CACHE_DIR: /tmp/arc_torch_cache
+      MPLCONFIGDIR: /tmp/arc_matplotlib
       VLM_API_BASE: ${VLM_API_BASE:-http://vlm:8080/v1}
       OPENAI_API_BASE: ${OPENAI_API_BASE:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}

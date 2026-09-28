@@ -28,8 +28,8 @@
   詳細の取得を必要な領域に絞る設計と比較する。
 
 根拠：
-[vc33モデルログ](../../../outputs/evaluations/20260926T172310706477Z/vc33-5430563c/cognition/2cd65e0a6038484cbfd48c9e5e206b96.model.jsonl)、
-[ls20モデルログ](../../../outputs/evaluations/20260926T172310706477Z/ls20-9607627b/cognition/2f758a978bed43208b5c93490e3cab88.model.jsonl)、
+[vc33モデルログ](../../../outputs/history/evaluations/20260926T172310706477Z/vc33-5430563c/cognition/2cd65e0a6038484cbfd48c9e5e206b96.model.jsonl)、
+[ls20モデルログ](../../../outputs/history/evaluations/20260926T172310706477Z/ls20-9607627b/cognition/2f758a978bed43208b5c93490e3cab88.model.jsonl)、
 [現行入力](../../../agent/cognition/workflow.py)、[現行契約](../../../agent/cognition/state.py)。
 
 ## 先行研究から採れるもの

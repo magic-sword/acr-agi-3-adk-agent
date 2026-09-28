@@ -7,6 +7,17 @@ from scripts.cognition_view import cognition_html
 
 
 class CognitionViewTests(unittest.TestCase):
+    def test_hybrid_measurement_shows_actual_sam_failure_instead_of_claiming_ready(self):
+        snapshot={'cognition':{'measured_objects':{'proposal_mode':'sam_initial',
+                  'sam':{'status':'unavailable','called_this_frame':True,'error':'CUDA missing'},
+                  'proposal_coverage_incomplete':True}}}
+        html=cognition_html(snapshot)
+        self.assertIn('SAM＋画素追跡',html)
+        self.assertIn('unavailable',html)
+        self.assertIn('CUDA missing',html)
+        self.assertIn('候補回収に不足があるか',html)
+        self.assertNotIn('ready',html)
+
     def test_cognitive_memory_does_not_leak_future_plan_or_skill_changes(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)

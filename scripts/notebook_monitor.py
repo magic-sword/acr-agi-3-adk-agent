@@ -12,7 +12,7 @@ from IPython.display import display
 from PIL import Image, ImageDraw
 
 from scripts.agent_monitor import (Timeline, discover_evaluations, discover_runs, dashboard_html,
-                                  json_html, safe_asset, PALETTE)
+                                  json_html, safe_asset, PALETTE, implementation_status)
 from scripts.cognition_view import cognition_html
 from scripts.runtime_structure import read_structure, structure_html, failure_points, trace_html
 
@@ -210,7 +210,11 @@ class BenchmarkReplay:
             if manifest.get('observatory_schema') != 3:
                 raise ValueError('旧形式の実行ログです。最新実装で記録を作成してください')
             settings=manifest.get('cognition_settings') or {}
-            self.run_settings=('実行時のモデル: '+str(manifest.get('agent_model','記録なし'))
+            proposals={'sam_initial':'初回SAM＋画素追跡','program':'色領域のプログラム測定'}.get(
+                settings.get('COGNITION_PROPOSALS'),'旧構成／記録なし')
+            self.run_settings=('実行時のモデル: '+str(manifest.get('agent_model') or 'モデルなし／記録なし')
+                +' · 認識方式: '+proposals
+                +' · 実装: '+implementation_status(manifest,self.source_root)
                 +' · 一観測の判断時間: '+str(settings.get('COGNITION_DECISION_SECONDS','45'))+'秒'
                 +' · 計画の出力修正: '+str(settings.get('COGNITION_REPAIR_ATTEMPTS','1'))+'回'
                 +' · 高速選択: 1トークン')

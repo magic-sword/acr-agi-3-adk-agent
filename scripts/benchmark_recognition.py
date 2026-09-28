@@ -240,7 +240,7 @@ def report(output):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command',choices=['prepare','run','report'])
-    parser.add_argument('--source',type=Path,default=Path('outputs/evaluations/20260926T172310706477Z'))
+    parser.add_argument('--source',type=Path,default=Path('outputs/history/evaluations/20260926T172310706477Z'))
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--base',default='http://127.0.0.1:8080/v1')
     args=parser.parse_args()
