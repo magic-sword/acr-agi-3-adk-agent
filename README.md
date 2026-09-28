@@ -51,7 +51,7 @@ A state diagram highlights the four deliberation stages, fast selection, executi
 The replay shows semantic targets, concept and role hypotheses, the exact cursor preview, goal dependencies and assessments, the active
 procedure and invocation ID, predicted effects, measured changes,
 one-token choice and returns to deliberation. Playback defaults to state transitions;
-action and full-event modes are also available. Click **計画・スキルを読む** to inspect
+action and full-event modes are also available. Click **測定・計画を読む** to inspect
 the recorded causal hypotheses, procedures, memory navigation and selected working set at that point in time.
 Deliberation appends evidence and interpretations; one-token memory navigation selects the records
 for the next question. See the [memory retrieval design](docs/memory-retrieval-runtime-ja.md).

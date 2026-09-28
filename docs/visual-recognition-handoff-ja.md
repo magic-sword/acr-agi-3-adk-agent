@@ -47,6 +47,7 @@ Qwen3-VL-4B-Instruct（Q4_K_M、projector Q8_0）、既知の合成29問、各�
 - [deliberation.py](../agent/cognition/deliberation.py)：`validate_stage()`と結果の受理、照合・具体化。[workflow.py](../agent/cognition/workflow.py)：観測処理、モデル文脈、画像の出し分け。
 - [回帰テスト](../tests/test_measured_perception.py)、[固定問題の比較スクリプト](../scripts/benchmark_measured_perception.py)。既存確認はADKコンテナ154件＋ホスト描画8件成功（コンテナに既存テスト指定のフォントなし）。
 - [採用方針・詳細結果・参考文献](visual-recognition-adopted-ja.md)が正本。[集計JSON](../outputs/measured-runtime-20260928/combined-summary.json)・[状態図](../outputs/measured-runtime-20260928/workflow/index.html)も参照。
+- [可視化ノート](../notebooks/agent_observatory.ipynb)は1つのコードセルで起動・再生成する。評価ID `measured-runtime-20260928/live-ls20-measured` →「読み込む」→「測定・計画を読む」で測定・意味回答・照合を確認できる。保存済みウィジェットの`model not found`はセルを再実行して表示を作り直す。
 
 同じ短時間条件で新しい実行を作る例。今後は改善前後のコードを同条件で比較する。上記の旧方式との数値比較は削除前に取得した履歴である。
 

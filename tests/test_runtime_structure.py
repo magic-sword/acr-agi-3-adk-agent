@@ -67,6 +67,24 @@ class StructureTests(unittest.TestCase):
             self.assertFalse(hasattr(viewer,'structure_choice'))
             self.assertEqual(viewer.structure['root'],str(ROOT))
 
+    def test_experiment_runs_are_discovered_without_scanning_their_packages(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            evaluation=root/'experiment'/'measured-run'
+            game=evaluation/'ls20'
+            (game/'cognition').mkdir(parents=True)
+            (evaluation/'manifest.json').write_text('{"observatory_schema":3}')
+            (game/'result.json').write_text('{}')
+            (game/'cognition/r.states.jsonl').write_text('')
+            # A nested package is not another evaluation.
+            nested=evaluation/'package'/'copy'
+            (nested/'ls20'/'cognition').mkdir(parents=True)
+            (nested/'manifest.json').write_text('{}')
+            (nested/'ls20'/'result.json').write_text('{}')
+            (nested/'ls20'/'cognition/r.states.jsonl').write_text('')
+            self.assertEqual(discover_evaluations(root),[evaluation])
+            self.assertEqual(discover_evaluations(evaluation),[evaluation])
+
     def test_widget_rejects_old_log_but_keeps_latest_graph(self):
         from scripts.notebook_monitor import BenchmarkReplay
         with tempfile.TemporaryDirectory() as directory:

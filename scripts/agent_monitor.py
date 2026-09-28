@@ -30,9 +30,17 @@ def discover_evaluations(root):
     root = Path(root).expanduser().resolve()
     if not root.is_dir():
         return []
-    candidates = [root] if (root/'manifest.json').is_file() else [p for p in root.iterdir() if p.is_dir()]
-    if (root/'evaluations').is_dir():
-        candidates += [p for p in (root/'evaluations').iterdir() if p.is_dir()]
+    # Evaluations may be under evaluations/<ID> or an experiment/<run>.
+    # Stop at manifests so frame trees and frozen source packages are not scanned.
+    candidates = []
+    def visit(directory, depth):
+        if (directory/'manifest.json').is_file():
+            candidates.append(directory)
+        elif depth:
+            for child in directory.iterdir():
+                if child.is_dir() and not child.is_symlink():
+                    visit(child, depth-1)
+    visit(root, 2)
     return sorted((p for p in candidates if (p/'manifest.json').is_file() and discover_runs(p)),
                   key=lambda p: p.name, reverse=True)
 

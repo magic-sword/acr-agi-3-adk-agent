@@ -92,7 +92,7 @@ Jevの学習済み並列予測機構ではない。モデルの確率は成功�
 `artifacts.jsonl` の主なイベントは `stage_accepted`, `plan_created`, `fast_selected`,
 `completion_candidate`, `reconciliation_requested`, `action_feedback`, `cognition_updated`、
 `cursor_started`, `cursor_located`, `cursor_adjusted`, `cursor_confirmed`。照準画像は実際のHTTP入力から保存・再表示する。
-リプレイの「計画・スキルを読む」で、その時点の対象・依存関係・確認状態・起動ID・照合履歴を表示する。
+リプレイの「測定・計画を読む」で、その時点の対象・依存関係・確認状態・起動ID・照合履歴を表示する。
 `memory_written`, `memory_navigation`, `memory_prepared`に記録本文と選択過程を保存する。
 `objects_measured`, `semantic_question_answered`に測定記録と意味質問の回答を保存する。
 新形式は `observatory_schema: 3`、永続記憶のschema_versionは12。旧形式の変換は行わない。

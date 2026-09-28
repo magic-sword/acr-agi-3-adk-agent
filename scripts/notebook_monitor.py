@@ -96,7 +96,7 @@ class BenchmarkReplay:
         self.slider = W.IntSlider(min=0,max=0,value=0,description='位置',continuous_update=False,layout=W.Layout(width='75%'))
         self.speed = W.Dropdown(description='間隔',options=[('2秒',2000),('1秒',1000),('0.5秒',500)],value=1000,layout=W.Layout(width='180px'))
         self.previous,self.next = W.Button(description='前へ'),W.Button(description='次へ')
-        self.notes_button = W.Button(description='計画・スキルを読む', icon='book', disabled=True)
+        self.notes_button = W.Button(description='測定・計画を読む', icon='book', disabled=True)
         self.status,self.board = W.HTML(),W.HTML()
         self.diagram = W.HTML()
         self._machine_key = None
@@ -114,7 +114,7 @@ class BenchmarkReplay:
         self.animation_caption = W.HTML()
         self.animation_slider = W.IntSlider(min=0,max=0,description='フレーム',continuous_update=False)
         self.details = W.Accordion(children=[*self.panels,W.VBox([self.animation_slider,self.animation_caption,self.animation])])
-        for i,name in enumerate(('状態の入力','状態の出力','選択イベント','HTTP入力','モデル応答','計画ツール','計画・スキル・熟考への復帰','記録済みアニメーション')):
+        for i,name in enumerate(('状態の入力','状態の出力','選択イベント','HTTP入力','モデル応答','計画ツール','測定・意味回答・計画・熟考への復帰','記録済みアニメーション')):
             self.details.set_title(i,name)
         self.details.selected_index = None
         self.widget = W.VBox([W.HTML('<h3>ベンチマーク再生</h3><style>.arc-replay-image img{image-rendering:pixelated}</style>'),
@@ -145,7 +145,7 @@ class BenchmarkReplay:
         evaluations=discover_evaluations(self.root)
         self._updating=True
         try:
-            self.evaluation.options=[(p.name,str(p)) for p in evaluations]
+            self.evaluation.options=[(str(p.relative_to(self.root)) if p!=self.root else p.name,str(p)) for p in evaluations]
             self.evaluation.value=previous if previous in [str(p) for p in evaluations] else str(evaluations[0]) if evaluations else None
         finally:
             self._updating=False

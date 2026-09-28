@@ -20,3 +20,24 @@ class CognitionViewTests(unittest.TestCase):
             self.assertIn('new effect',html);self.assertIn('unexpected',html)
             self.assertNotIn('<script>',html);self.assertIn('&lt;script&gt;',html)
             self.assertEqual(timeline.snapshot(0)['cognition']['plan']['goal'],'first')
+
+    def test_measurements_and_semantic_answers_follow_the_replay_position(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            measured={'measured_objects':{'changed_pixels':2},
+                      'pending_semantic_questions':1,'semantic_answers':[]}
+            answered={**measured,'pending_semantic_questions':0,
+                      'deferred_semantic_questions':0,
+                      'semantic_answers':[{'interpretation':'unknown'}]}
+            rows=[{'event':'cognition_updated','sequence':i+1,'cognition':memory}
+                  for i,memory in enumerate([measured,answered])]
+            (root/'r.artifacts.jsonl').write_text('\n'.join(map(json.dumps,rows))+'\n')
+            timeline=Timeline(Run(root,'r')).load()
+            before=cognition_html(timeline.snapshot(0))
+            after=cognition_html(timeline.snapshot(1))
+            self.assertIn('プログラムによる物体別の測定',before)
+            self.assertIn('changed_pixels',before)
+            self.assertNotIn('unknown',before)
+            self.assertIn('変更と期待効果についての意味回答',after)
+            self.assertIn('unknown',after)
+            self.assertIn('予算上保留した意味質問',after)
