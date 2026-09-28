@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>前後を重ねる差分表示の比較</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#101722;color:#edf2f7;font:15px/1.65 system-ui,sans-serif}main{max-width:1700px;margin:auto;padding:28px}h1{font-size:28px;line-height:1.4;margin:0 0 12px}h2{font-size:18px;margin:0 0 8px}p{margin:8px 0 16px}.muted{color:#b7c4d5}.controls{display:flex;flex-wrap:wrap;gap:20px;background:#1d2939;padding:18px;border-radius:12px;margin:20px 0}label{display:flex;flex-direction:column;gap:6px}input,select,button{font:inherit}select,button{background:#283a50;color:#fff;border:1px solid #6b809b;border-radius:6px;padding:7px}input[type=range]{width:210px}button{cursor:pointer}output{font-variant-numeric:tabular-nums}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;align-items:start}.card{background:#1d2939;border:1px solid #35465c;padding:15px;border-radius:12px;min-width:0}.card p{min-height:78px;color:#c3cddb}.surface{overflow:auto;background:#080d14;border-radius:4px}canvas{display:block;width:100%;height:auto;image-rendering:pixelated}.legend{margin:8px 0 12px;font-size:14px;min-height:28px}.old{color:#ff64c5}.new{color:#4aeaff}.raws{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;max-width:800px;margin:16px 0}.raws p{margin:0 0 6px}details{margin:24px 0}summary{cursor:pointer;font-weight:600}.tools{display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap}.chip{display:inline-block;padding:3px 10px;background:#283a50;border-radius:20px;font-size:13px}.note{padding:14px;border-left:3px solid #80bddb;background:#182432}dialog{border:1px solid #7188a3;background:#101722;color:white;width:min(94vw,900px);max-height:95vh}dialog::backdrop{background:#000b}dialog canvas{width:min(100%,768px);margin:auto}dialog button{float:right}@media(max-width:1000px){.grid{grid-template-columns:1fr}.card{max-width:600px}.card p{min-height:0}main{padding:16px}}
+</style>
+<main>
+<span class="chip">表示の試作 · モデル認識精度は未測定</span>
+<h1>BEFOREとAFTERを、一枚の同じ場所に重ねる</h1>
+<p class="muted">元の64×64画素を拡大して描画。変化の量にかかわらず差分を拾い、位置や移動量は変えません。各表示を拡大するか、PNGとして保存できます。</p>
+<div class="controls">
+<label>比較する例<select id="case"></select></label>
+<label>変化のない場所の明るさ <output id="dimValue"></output><input id="dim" type="range" min="0.2" max="1" value="0.7" step="0.05"></label>
+<label>混合表示のAFTER比率 <output id="mixValue"></output><input id="mix" type="range" min="0" max="1" value="0.5" step="0.05"></label>
+<label>差分の周りに残す明るい文脈<select id="radius"><option value="0">差分の画素のみ</option><option value="1" selected>周囲1画素まで</option><option value="2">周囲2画素まで</option></select></label>
+</div>
+<p id="caseNote"></p><p><span class="chip" id="stats"></span></p>
+<div class="grid" id="comparison">
+<section class="card"><h2>1. 半透明で重ねる</h2><p>同じ位置の前後の色を混ぜます。ずれた部分は二重像になりますが、時間の向きは色だけでは分からず、元にない色も生じます。</p><div class="legend">BEFORE <span id="beforeWeight">50</span>% ＋ AFTER <span id="afterWeight">50</span>%</div><div class="surface"><canvas id="blend" width="512" height="512" aria-label="半透明重ね合わせ"></canvas></div><div class="tools"><button data-open="blend">拡大</button><button data-save="blend">PNGを保存</button></div></section>
+<section class="card"><h2>2. 重ね合わせ＋前後の境界線</h2><p>二重像に、変化した色境界の線を追加します。色に加えて破線と実線で前後を区別。線は補助記号で、物体の対応や役割を推定したものではありません。</p><div class="legend"><span class="old">┄ BEFOREのみにある境界</span>　<span class="new">━ AFTERのみにある境界</span></div><div class="surface"><canvas id="outline" width="512" height="512" aria-label="前後の境界を示した重ね合わせ"></canvas></div><div class="tools"><button data-open="outline">拡大</button><button data-save="outline">PNGを保存</button></div></section>
+<section class="card"><h2>3. 変化画素に前後の原色を並べる</h2><p>変わった各画素を左右に二分し、左にBEFORE、右にAFTERの色を置きます。色を混ぜずに残せますが、細かな縞を読み取る必要があります。</p><div class="legend">変化した1画素の内側：［左 BEFORE｜右 AFTER］</div><div class="surface"><canvas id="split" width="512" height="512" aria-label="変化画素を左右に分けた前後表示"></canvas></div><div class="tools"><button data-open="split">拡大</button><button data-save="split">PNGを保存</button></div></section>
+</div>
+<details open><summary>元の画像を確認する</summary><div class="raws"><div><p>BEFORE</p><canvas id="before" width="512" height="512"></canvas></div><div><p>AFTER</p><canvas id="after" width="512" height="512"></canvas></div></div></details>
+<p class="note">周囲の明るさを落とす処理は白との混合を使いません。ただし暗い対象のコントラストは下がり得るため、明るさ100%とも比較できます。周囲1・2画素の設定は文脈を見せる範囲だけを広げ、実際の差分や移動量を膨らませません。色だけの変化、出現・消失、変形も表示されるので、「強調された＝移動した」とは限りません。</p>
+<p class="muted">操作方向によるグループ化、物体の切り抜き・追跡、移動矢印の推定は行っていません。表示2の境界は単色の境界であり、物体全体の輪郭とは限りません。保存画像の下端にも凡例と補助表示である旨が入ります。</p>
+</main>
+<dialog id="zoom"><button id="closeZoom">閉じる</button><h2 id="zoomTitle"></h2><p id="zoomLegend"></p><canvas id="large" width="1024" height="1024"></canvas></dialog>
+<script>
+'use strict';
+const cases=__CASES_JSON__;
+const el=id=>document.getElementById(id), modes=['blend','outline','split'];
+const title={blend:'半透明で重ねる',outline:'重ね合わせ＋前後の境界線',split:'変化画素に前後の原色を並べる'};
+const legends={blend:'BEFORE / AFTER alpha blend; original positions',outline:'Magenta dashed: BEFORE-only boundary | Cyan solid: AFTER-only boundary',split:'Changed cell: LEFT = BEFORE | RIGHT = AFTER; original colors'};
+function rgb(h){return h.slice(1).match(/../g).map(x=>parseInt(x,16));}
+function mask(c,r){const out=new Set();for(const [x,y] of c.changed)for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++)if(x+dx>=0&&x+dx<64&&y+dy>=0&&y+dy<64)out.add(`${x+dx},${y+dy}`);return out;}
+// Unique grid-boundary segments. Comparing coordinates does not match objects.
+function edges(grid){const out=new Set();for(let y=0;y<64;y++)for(let x=0;x<64;x++){
+ if(x<63&&grid[y][x]!==grid[y][x+1])out.add(`${x+1},${y},${x+1},${y+1}`);
+ if(y<63&&grid[y][x]!==grid[y+1][x])out.add(`${x},${y+1},${x+1},${y+1}`);
+}return out;}
+function paint(canvas,mode,c,scale=8){canvas.width=64*scale;canvas.height=64*scale;
+ const ctx=canvas.getContext('2d');ctx.imageSmoothingEnabled=false;
+ const keep=Number(el('dim').value),a=Number(el('mix').value),context=mask(c,Number(el('radius').value));
+ for(let y=0;y<64;y++)for(let x=0;x<64;x++){
+  const b=rgb(c.palette[c.before[y][x]]),f=rgb(c.palette[c.after[y][x]]),different=c.before[y][x]!==c.after[y][x];
+  const fill=(v,ox=0,w=scale)=>{ctx.fillStyle=`rgb(${v.map(Math.round).join(',')})`;ctx.fillRect(x*scale+ox,y*scale,w,scale);};
+  if(mode==='before'||mode==='after'){fill(mode==='before'?b:f);continue;}
+  if(mode==='split'&&different){fill(b,0,scale/2);fill(f,scale/2,scale/2);continue;}
+  const v=b.map((n,i)=>n*(1-a)+f[i]*a);
+  fill(context.has(`${x},${y}`)?v:v.map(n=>n*keep));
+ }
+ if(mode==='outline'){
+  const old=edges(c.before),now=edges(c.after);
+  function stroke(set,other,color,dashes){ctx.lineCap='butt';for(const edge of set){if(other.has(edge))continue;
+   const p=edge.split(',').map(Number);ctx.beginPath();ctx.moveTo(p[0]*scale,p[1]*scale);ctx.lineTo(p[2]*scale,p[3]*scale);
+   ctx.setLineDash([]);ctx.strokeStyle='#0c1118';ctx.lineWidth=scale*.4;ctx.stroke();
+   ctx.setLineDash(dashes.map(n=>n*scale));ctx.strokeStyle=color;ctx.lineWidth=scale*.2;ctx.stroke();
+  }ctx.setLineDash([]);}
+  stroke(old,now,'#ff64c5',[.35,.25]);stroke(now,old,'#4aeaff',[]);
+ }
+}
+function selected(){return cases[Number(el('case').value)];}
+function draw(){const c=selected();el('dimValue').value=Math.round(Number(el('dim').value)*100)+'%';
+ const a=Math.round(Number(el('mix').value)*100);el('mixValue').value=a+'%';el('beforeWeight').textContent=100-a;el('afterWeight').textContent=a;
+ el('caseNote').textContent=c.note;el('stats').textContent=`変化 ${c.changed.length} / 4096画素 · 元の1画素 = 保存画像の8×8画素`;
+ for(const m of [...modes,'before','after'])paint(el(m),m,c);
+}
+function exportCanvas(mode){const c=selected(),v=document.createElement('canvas');v.width=512;v.height=592;const ctx=v.getContext('2d');ctx.fillStyle='#101722';ctx.fillRect(0,0,v.width,v.height);ctx.drawImage(el(mode),0,0);
+ ctx.fillStyle='#ffffff';ctx.font='12px sans-serif';ctx.fillText(legends[mode],8,533,496);
+ ctx.fillText(`DERIVED VIEW | ${c.name} | ${c.changed.length} changed source pixels`,8,553,496);
+ ctx.fillText(`AFTER alpha ${el('mix').value} | unchanged brightness ${el('dim').value} | context radius ${el('radius').value}`,8,573,496);
+ return v;
+}
+for(let i=0;i<cases.length;i++){const op=document.createElement('option');op.value=i;op.textContent=cases[i].title;el('case').append(op);}
+for(const id of ['case','dim','mix','radius'])el(id).addEventListener('input',draw);
+for(const b of document.querySelectorAll('[data-save]'))b.onclick=()=>{const a=document.createElement('a');a.download=`${selected().name}-${b.dataset.save}.png`;a.href=exportCanvas(b.dataset.save).toDataURL('image/png');a.click();};
+for(const b of document.querySelectorAll('[data-open]'))b.onclick=()=>{el('zoomTitle').textContent=title[b.dataset.open];el('zoomLegend').textContent=b.closest('.card').querySelector('.legend').textContent;paint(el('large'),b.dataset.open,selected(),16);el('zoom').showModal();};
+el('closeZoom').onclick=()=>el('zoom').close();
+window.overlayPreview={cases,paint,edges,mask,exportCanvas,draw};draw();
+</script></html>

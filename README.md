@@ -13,6 +13,11 @@ See the [current design and limits](docs/fast-slow-runtime-ja.md),
 [evaluation guide](docs/local-evaluation-ja.md). Earlier attention and
 skill-learning documents describe superseded policies.
 
+For the adopted visual-recognition approach, measured results, and references, see
+[画面認識の採用方針・検証結果・参考文献](docs/visual-recognition-adopted-ja.md).
+It separates program-measured changes from Qwen's semantic interpretation;
+the document distinguishes validated prototypes from pending runtime integration.
+
 ## Setup
 
 Requires Docker Compose, NVIDIA Container Toolkit, and SSH forwarding for JupyterLab.
