@@ -152,15 +152,20 @@ class MemoryReaderTests(unittest.TestCase):
         r._accept_stage('ground',Grounding.model_validate(value))
         self.assertEqual(r.memory.skills['move'],s)
 
-    def test_rerouting_preserves_the_question_and_never_executes_an_ignored_plan(self):
+    def test_rerouting_requires_no_plan_and_preserves_the_question(self):
         r=self.runtime();v=grounding(r._context('ground'))
         v.update(next='understand',next_question='Which repeated group differs visually?')
+        before=r.memory.model_dump()
+        with self.assertRaisesRegex(ValueError,'plan requires next=execute'):
+            r._accept_stage('ground',Grounding.model_validate(v))
+        self.assertEqual(r.memory.model_dump(),before)
+        v['plan']=None
         r._accept_stage('ground',Grounding.model_validate(v))
         self.assertEqual(r.memory.handoff_question,v['next_question'])
         self.assertIsNone(r.memory.plan)
         self.assertEqual(r.memory.phase,'understand')
         self.assertEqual(list(r.memory.notes.values())[-1]['body']['question'],v['next_question'])
-        v['next_question']='';v['plan']['question']='Does the second group respond?'
+        v['next_question']='';v['reason']='Does the second group respond?'
         r._accept_stage('ground',Grounding.model_validate(v))
         self.assertEqual(r.memory.handoff_question,'Does the second group respond?')
 

@@ -1,6 +1,6 @@
 # 物体認識から行動計画への引継ぎ
 
-更新：2026-09-29。採用理由・成功した検証・文献・主要ログは[統合資料](visual-recognition-adopted-ja.md)が正本。このページは次の作業に必要な状態だけを残す。
+更新：2026-09-29。認識は[認識の統合資料](visual-recognition-adopted-ja.md)、行動計画は[計画の統合資料](planning-adopted-ja.md)を正本とする。このページは現在の引継ぎ事項だけを残す。
 
 ## 実装済み
 
@@ -16,26 +16,29 @@
 
 [直近の検証と判断](visual-recognition-adopted-ja.md#現時点の判断と直近の検証)に結果を集約した。差分を渡したモデルの39/51と、プログラムによる連動集計の8/8は別の評価範囲で、優劣は未確認。連動集計の本番統合、追跡器の削除、画像の一律省略、全連動の常時提示は採用していない。
 
-## 再開時に確認すること
+## 行動計画の引継ぎ
 
-1. **後段の問いと必要情報を整理する。** 計画・因果推論が何を判断し、どの候補・変化・連動・不明点を必要とするかを先に定める。必要な情報を落とさず、不要な提示を減らす前処理を比較する。
-2. **前処理から行動まで通して評価する。** 必要対象の考慮漏れ、誤った因果の断定、仮説更新・検証行動、入力情報量・呼出し数・総時間を確認する。認識だけの正答率や「全連動を計算できた」ことを最終成果にしない。
-3. **既存の未解決例を残す。** 変化した64遷移すべてで対応保留が残った再確認の過剰発火、色変化・同形物体での対応切れ、測定と自由文の説明の矛盾を回帰対象にする。追跡器は候補参照の継続も担うため、質問の精度だけで削除を決めない。
+**入力・逆算計画の追加検証はここで一区切りとする。** 採用方針と根拠、不採用案の短いまとめは[行動計画の統合資料](planning-adopted-ja.md)に集約した。
 
-以前の実ログでは、黄色いバー端の2画素だけが変わり、意味質問も「不明」なのに、後続の`reconcile`が「プレイヤーが下へ動いた」と説明した。SAM統合での解消は未確認。[比較HTML](../outputs/measured-runtime-20260928/gallery.html)のls20／measured／step 2、[生ログ](../outputs/measured-runtime-20260928/live-ls20-measured/ls20-9607627b/cognition/f93c11628b954bf2a4d4eb071d8dd71c.artifacts.jsonl)、[当時の原因分析](history/visual-recognition/cognition-handoff-analysis-20260928-ja.md)を参照。
+- 行動計画の必須入力は、目的、少数の対象と抽象操作候補、判断に必要な現在状態・試行結果の3要素。
+- コンパクトな逆算計画で、最終ゴールに向けて達成・検証する小目標を生成する。
+- 行動計画は動詞と対象を組み合わせ、高速モードが連続操作・位置合わせ・終了確認を担う。
+- 現在値の併記や長い計画の最適化は採用・追加追求しない。以前の資料にある「次の検証」を自動的に再開しない。
 
-## コード・ログの入口
+これは採用する設計方針であり、新しい通常ランタイムを実装した記録ではない。計画と遷移の矛盾を受理する問題は[修正済み](history/planning/ground-routing-trial-20260929-ja.md)。各比較用設定を通常設定へ切り替えたわけではない。
+
+## 認識側に残る留意点
+
+対応保留による再確認の過剰発火、色変化・同形物体での対応切れ、測定と自由文の説明の矛盾は、認識だけの正答率で解消済みとしない。以前のls20ログでは、黄色いバー端の変化を後続照合がプレイヤー移動と説明した。[比較HTML](../outputs/measured-runtime-20260928/gallery.html)・[原因分析](history/visual-recognition/cognition-handoff-analysis-20260928-ja.md)。これらは既知の未解決例であり、今回の資料整理による新しい作業指示ではない。
+
+## 作業の入口
 
 | 作業 | 入口 |
 |---|---|
-| 候補生成・保持・移動測定 | [sam_proposals.py](../agent/cognition/sam_proposals.py)、[proposal_tracking.py](../agent/cognition/proposal_tracking.py)、[hybrid_perception.py](../agent/cognition/hybrid_perception.py) |
-| 意味質問と再確認への分岐 | [perception.py](../agent/cognition/perception.py)、[workflow.py](../agent/cognition/workflow.py) |
-| 対象参照の受理と計画 | [deliberation.py](../agent/cognition/deliberation.py) |
-| 再生・回帰確認 | [verify_hybrid_runtime.py](../scripts/verify_hybrid_runtime.py)、[結合テスト](../tests/test_hybrid_perception.py)、[主要ログ一覧](visual-recognition-adopted-ja.md) |
-| 人がログを読む | [可視化ノート](../notebooks/agent_observatory.ipynb)の「測定・計画を読む」 |
+| 認識の採用構成・根拠 | [認識の統合資料](visual-recognition-adopted-ja.md) |
+| 計画の3要素・小目標生成・検証根拠 | [計画の統合資料](planning-adopted-ja.md) |
+| 候補生成・追跡・移動測定 | [ランタイム仕様](hybrid-perception-runtime-20260928-ja.md) |
+| 通常の状態遷移と実行 | [fast/slow仕様](fast-slow-runtime-ja.md)、[状態定義](../agent/cognition/state.py)、[熟考処理](../agent/cognition/deliberation.py) |
+| ログの閲覧 | [可視化ノート](../notebooks/agent_observatory.ipynb) |
 
-## 再開時の注意
-
-未コミット変更があるため最初に`git status`を確認する。既存の実験データを上書きせず、新しい出力先で測定する。現在の認識精度、意味質問の正答、Qwenの呼出し数、ゲームの進展を別々に記録する。
-
-過去の個別試験は[履歴フォルダ](history/visual-recognition/README.md)へ整理済み。「未実装」「次に試す」といった記述は当時の状態であり、現在の採用方針を上書きしない。
+未コミット変更があるため、再開時は `git status` を確認する。個別の計画検証11件は `docs/history/planning/`、認識の検証は[認識の履歴](history/visual-recognition/README.md)に保管した。本文の「未実装」「次に試す」は実験当時の状態であり、現在の採用方針を上書きしない。

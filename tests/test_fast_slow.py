@@ -185,7 +185,8 @@ class FastSlowTests(unittest.TestCase):
         self.assertEqual(r.memory.goal_status['approach']['status'],'confirmed')
 
     def test_invalid_stage_results_are_atomic_and_repaired_once(self):
-        for bad in ('stale','target','parent_cycle','dependency_cycle','unknown_target','selected_goal','coordinate','candidate'):
+        for bad in ('stale','target','parent_cycle','dependency_cycle','unknown_target','selected_goal',
+                    'coordinate','candidate','plan_understand','plan_backchain','execute_without_plan'):
             with self.subTest(bad=bad):
                 r=self.runtime()
                 def respond(m,p):
@@ -206,13 +207,46 @@ class FastSlowTests(unittest.TestCase):
                         v=grounding(c)
                         if bad=='coordinate':v['plan']['skills'][0]['steps'][0]['options'][0]['action']['x']=63
                         if bad=='candidate':v['plan']['reuse']=['missing']
+                        if bad=='plan_understand':v['next']='understand'
+                        if bad=='plan_backchain':v['next']='backchain'
+                        if bad=='execute_without_plan':v['plan']=None
                         return call('submit_grounding',v)
                     return answer(m,p)
                 with patch.object(LocalVisionLlm,'_complete',respond):result=r.decide(obs())
                 self.assertEqual(result['reason'],'stage_output_invalid')
                 self.assertEqual(r.memory.skills,{})
                 if bad in ('stale','target'):self.assertIsNone(r.memory.understanding)
-                elif bad not in ('coordinate','candidate'):self.assertEqual(r.memory.goals,{})
+                elif bad not in ('coordinate','candidate','plan_understand','plan_backchain','execute_without_plan'):
+                    self.assertEqual(r.memory.goals,{})
+                if bad.startswith('plan_') or bad=='execute_without_plan':
+                    self.assertIsNone(r.memory.plan)
+                    self.assertIsNone(r.memory.pending)
+                    self.assertFalse(any(n['kind']=='procedure' for n in r.memory.notes.values()))
+
+    def test_plan_with_reroute_is_repaired_before_execution(self):
+        for route in ('understand','backchain'):
+            with self.subTest(route=route):
+                r=self.runtime();works=[];grounds=0
+                def respond(m,p):
+                    nonlocal grounds
+                    c=context(p);works.append(c['work'])
+                    if c['work']=='ground':
+                        grounds+=1;v=grounding(c)
+                        if grounds==1:
+                            v['next']=route
+                        else:
+                            self.assertIn('plan requires next=execute',c['correction'])
+                            self.assertIsNone(r.memory.plan)
+                            self.assertEqual(r.memory.skills,{})
+                            self.assertIsNone(r.memory.pending)
+                        return call('submit_grounding',v)
+                    return answer(m,p)
+                with patch.object(LocalVisionLlm,'_complete',respond):result=r.decide(obs())
+                self.assertEqual(result['status'],'action')
+                self.assertEqual(grounds,2)
+                self.assertEqual(works.count('understand'),1)
+                self.assertEqual(works.count('backchain'),1)
+                self.assertEqual(works.count('execute_step'),1)
 
     def test_valid_stage_repair_retains_prior_stages(self):
         r=self.runtime();grounds=0

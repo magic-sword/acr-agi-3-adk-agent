@@ -24,6 +24,11 @@ and archived experiments. `COGNITION_PROPOSALS=program` retains the previous sen
 Preprocessing choices remain subject to their effect on downstream planning and
 causal reasoning; recognition scores alone do not establish the best input or amount of detail.
 
+For the adopted planning direction and supporting experiments, see
+[行動計画の採用方針と検証根拠](docs/planning-adopted-ja.md): three planning inputs
+and compact backward planning for subgoal generation. This records the design
+decision; it does not replace the current runtime specification.
+
 ## Setup
 
 Requires Docker Compose, NVIDIA Container Toolkit, and SSH forwarding for JupyterLab.

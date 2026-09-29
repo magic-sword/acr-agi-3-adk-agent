@@ -9,6 +9,7 @@
 | 現在の判断、実装済みの構成、検証の要点 | このページ |
 | 実装・設定・再実行・ログ項目 | [SAM＋画素追跡のランタイム仕様](hybrid-perception-runtime-20260928-ja.md) |
 | 次に直す課題と作業の入口 | [短い引継ぎ](visual-recognition-handoff-ja.md) |
+| 行動計画の3要素・コンパクトな逆算計画とその根拠 | [計画の統合資料](planning-adopted-ja.md) |
 | 個別の測定条件、未採用案、文献調査、生ログ | [調査履歴の要点と索引](history/visual-recognition/README.md) |
 
 ## 現時点の判断と直近の検証

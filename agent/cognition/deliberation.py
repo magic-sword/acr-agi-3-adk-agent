@@ -15,6 +15,13 @@ from agent.local_vlm import LocalVisionLlm
 from .tasks import TASKS, INSTRUCTIONS, OUTPUT_TOKENS
 from .validation import validate_intent
 
+MEASUREMENT_INSTRUCTION = ('\nMeasured changes are host observations. Do not replace them with '
+    'a no-change guess. Roles and causation remain hypotheses. When understanding targets, '
+    'fill candidate_refs from supplied current candidates or candidate_index rows where they match the image; use [] '
+    'when unresolved. Candidate references expire with that observation; target_correspondence '
+    'supplies conservative links to later observations, not proof of identity. A region may include '
+    'background or several objects.')
+
 
 class StageTool(BaseTool):
     def __init__(self, runtime, work):
@@ -123,6 +130,8 @@ class DeliberationStages:
                 acyclic(merged,field)
         elif work=='ground':
             if value.next!='execute':
+                if value.plan is not None:
+                    raise ValueError('a plan requires next=execute; to reconsider, set plan=null')
                 if not value.reason:
                     raise ValueError('rerouting requires a reason')
                 return
@@ -189,8 +198,7 @@ class DeliberationStages:
             if value.next!='execute':
                 m.phase=value.next
                 self.replan_reason=value.reason
-                m.handoff_question=(value.next_question.strip() or
-                                    (value.plan.question if value.plan else '') or value.reason)
+                m.handoff_question=value.next_question.strip() or value.reason
                 self._machine_transition('ground_'+value.next)
             else:
                 p=value.plan
@@ -240,12 +248,7 @@ class DeliberationStages:
                 model=LocalVisionLlm(model='qwen3-vl-4b-instruct',
                     api_base=os.getenv('VLM_API_BASE','http://vlm:8080/v1'),
                     max_output_tokens=OUTPUT_TOKENS[work],max_requests=1,completion_tools=(tool_name,)),
-                instruction=INSTRUCTIONS[work]+('\nMeasured changes are host observations. Do not replace them with '
-                    'a no-change guess. Roles and causation remain hypotheses. When understanding targets, '
-                    'fill candidate_refs from supplied current candidates or candidate_index rows where they match the image; use [] '
-                    'when unresolved. Candidate references expire with that observation; target_correspondence '
-                    'supplies conservative links to later observations, not proof of identity. A region may include '
-                    'background or several objects.'),tools=[StageTool(self,work)],
+                instruction=INSTRUCTIONS[work]+MEASUREMENT_INSTRUCTION,tools=[StageTool(self,work)],
                 before_tool_callback=self._before_tool,after_tool_callback=self._after_tool,
                 on_tool_error_callback=self._tool_error)
         return self.planners[work]

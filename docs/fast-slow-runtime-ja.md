@@ -29,6 +29,10 @@
 操作の意味が未知ならunderstand→groundで一操作の試行を作れる。
 操作後は毎回測定し、必要ならanswer_questionやreconcileを経てexecute_stepへ戻る。CLICKの場合は毎回aimで最新画像に合わせる。再考時に最初から計画全体を書き直す必要はない。
 
+2026-09-29：groundの計画と遷移先の整合を検証する。planありならnext=execute、
+understand/backchainへ戻るならplan=nullが必要。矛盾した提出は状態へ反映せず、
+既存の修正要求へ返す。計画を無視して再理解へ進めたり、自動的に実行へ読み替えたりしない。
+
 ## 試行・完了・進展を区別する
 
 `intent=probe` は特定の疑問に対する一操作の試行。操作の受付と対応する観測が届くと
@@ -105,6 +109,10 @@ Jevの学習済み並列予測機構ではない。モデルの確率は成功�
 観測ごとの再照準、期限切れ時の未送信、実画素と照準の分離を回帰テストで確認する。
 
 ## 実モデル評価
+
+行動計画の工程削減は[2026-09-29のA/B比較](history/planning/planning-comparison-20260929-ja.md)を参照。`COGNITION_PLANNING_COMPARISON=A/B`で比較用構成を選べる。未指定なら本ページの通常構成。Bは初手を短縮したが、予測・対象・観測の混同が残り、精度改善は未確認のため通常構成へ採用していない。
+
+同じBの工程を固定した[記憶分離比較](history/planning/memory-separation-comparison-20260929-ja.md)は、さらに`COGNITION_MEMORY_COMPARISON=mixed/separated`で選べる。指示・出力契約・知識更新規則を共通にして入力構成を比較した。古い候補参照による拒否は減ったが、誤った観測説明と無変化操作の反復が残り、こちらも通常構成へ採用していない。
 
 最新の構成・実測・残課題は[物体認識の統合資料](visual-recognition-adopted-ja.md)を参照。SAM導入前のステートマシン統合評価は[採用経緯の履歴](history/visual-recognition/measured-perception-adoption-20260928-ja.md)に保存した。
 参考として、カーソル導入前の2026-09-26の短時間評価でも、根拠のない移動説明と再計画の反復が見られ、3ゲームとも到達レベルは0だった。

@@ -6,7 +6,26 @@ from .cognition.workflow import CognitiveRuntime
 
 
 def create_runtime(game_id: str) -> CognitiveRuntime:
-    return CognitiveRuntime(
+    variant = os.getenv('COGNITION_PLANNING_COMPARISON', '')
+    runtime = CognitiveRuntime
+    if variant:
+        from .cognition.planning_comparison import ComparisonRuntime, OneActionRuntime
+        if variant not in ('A', 'B'):
+            raise ValueError('COGNITION_PLANNING_COMPARISON must be A or B')
+        runtime = ComparisonRuntime if variant == 'A' else OneActionRuntime
+    memory_variant = os.getenv('COGNITION_MEMORY_COMPARISON', '')
+    if memory_variant:
+        if variant != 'B' or memory_variant not in ('mixed', 'separated'):
+            raise ValueError('COGNITION_MEMORY_COMPARISON requires planning B and mixed/separated')
+        from .cognition.memory_comparison import MemoryComparisonRuntime, SeparatedMemoryRuntime
+        runtime = MemoryComparisonRuntime if memory_variant == 'mixed' else SeparatedMemoryRuntime
+    update_variant = os.getenv('COGNITION_ACTION_UPDATE_COMPARISON', '')
+    if update_variant:
+        if variant != 'B' or memory_variant != 'separated' or update_variant not in ('A', 'B', 'C', 'D'):
+            raise ValueError('COGNITION_ACTION_UPDATE_COMPARISON requires planning B, separated memory and A/B/C/D')
+        from .cognition.action_update_comparison import ActionUpdateRuntime
+        runtime = ActionUpdateRuntime
+    return runtime(
         game_id, os.getenv("ADK_MODEL") or None,
         repair_attempts=int(os.getenv("COGNITION_REPAIR_ATTEMPTS", "1")),
         decision_seconds=float(os.getenv("COGNITION_DECISION_SECONDS", "45")),
