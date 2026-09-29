@@ -20,6 +20,13 @@ from .perception import PerceptionRuntime, context_record
 
 
 class CognitiveRuntime(PerceptionRuntime, NotebookRuntime, DeliberationStages, ExecutionRuntime):
+    slow_tasks = SLOW_TASKS
+    probe_completes_on_receipt = True
+
+    async def _run_slow_stage(self, ctx, work):
+        await self._read_memory(work)
+        await self._deliberate(ctx, work)
+
     def __init__(self, game_id, model=None, *, repair_attempts=1, max_resets=2,
                  seconds=600, decision_seconds=45, log_dir=None,
                  proposal_mode=None, sam_proposer=None):
@@ -86,7 +93,7 @@ class CognitiveRuntime(PerceptionRuntime, NotebookRuntime, DeliberationStages, E
             self.recent_trials.clear()
             self.replan_reason=f'New {boundary} boundary; re-ground retained causal knowledge and procedures.'
         self._machine_transition('next_observation' if self.outcome else 'received')
-        if (not boundary and m.plan and m.plan['intent']=='probe' and self._current_result()
+        if (self.probe_completes_on_receipt and not boundary and m.plan and m.plan['intent']=='probe' and self._current_result()
                 and self.outcome['acknowledged']):
             self._queue_review('probe_result','One probe action was acknowledged; interpret its observed result.',
                                'probe_observed')
@@ -256,10 +263,9 @@ class CognitiveRuntime(PerceptionRuntime, NotebookRuntime, DeliberationStages, E
             if m.phase=='answer_question':
                 await self._answer_semantic_question()
                 continue
-            if m.phase in SLOW_TASKS:
+            if m.phase in self.slow_tasks:
                 work=m.phase
-                await self._read_memory(work)
-                await self._deliberate(ctx,work)
+                await self._run_slow_stage(ctx,work)
                 continue
             if m.phase=='choose_skill':
                 choice=await self._fast('choose_skill',self._skill_options())
@@ -283,7 +289,7 @@ class CognitiveRuntime(PerceptionRuntime, NotebookRuntime, DeliberationStages, E
                 continue
             # A one-action probe finishes on its acknowledged observation, not on
             # a visual completion guess before it has been executed.
-            if m.plan['intent']=='achieve':
+            if m.plan['intent']=='achieve' or not self.probe_completes_on_receipt:
                 options['7']={'kind':'advance','meaning':'The specified done_when relation is visible'}
             choice=await self._fast('execute_step',options)
             if choice is None:continue

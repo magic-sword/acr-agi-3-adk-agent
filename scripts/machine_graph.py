@@ -19,6 +19,8 @@ def ports(node):
 @lru_cache(maxsize=8)
 def routes(serialized):
     data=json.loads(serialized);states=data['states'];occupied={};blocked=set()
+    max_x = max(n[2]+WIDTH+100 for n in states.values())//STEP
+    max_y = max(n[3]+HEIGHT+120 for n in states.values())//STEP
     for _,_,x,y in states.values():
         for a in range((x-10)//STEP,(x+WIDTH+10)//STEP+1):
             for b in range((y-10)//STEP,(y+HEIGHT+10)//STEP+1):blocked.add((a,b))
@@ -35,7 +37,7 @@ def routes(serialized):
                 return cost,list(reversed(path))
             for direction,(dx,dy) in enumerate(((1,0),(-1,0),(0,1),(0,-1))):
                 nx,ny=x+dx,y+dy
-                if not (0<=nx<=138 and 0<=ny<=72) or (nx,ny) in blocked:continue
+                if not (0<=nx<=max_x and 0<=ny<=max_y) or (nx,ny) in blocked:continue
                 new=(nx,ny,direction)
                 score=cost+1+(3 if d!=4 and d!=direction else 0)+occupied.get((nx,ny),0)*2
                 if score>=best.get(new,float('inf')):continue
@@ -69,6 +71,8 @@ def routes(serialized):
 
 def graph_svg(data, machine):
     states=data['states'];active={'end':'stop'}.get(machine.get('node'),machine.get('node'))
+    canvas_width = max(n[2]+WIDTH+120 for n in states.values())
+    canvas_height = max(n[3]+HEIGHT+140 for n in states.values())
     if active not in states:active=machine.get('work')
     paths=[];boxes=[];legend=[]
     for number,(event,source,target,label,kind,points,(tx,ty)) in enumerate(routes(json.dumps({'states':states,'transitions':data['transitions']})),1):
@@ -87,7 +91,7 @@ def graph_svg(data, machine):
             f'<text x="{x+12}" y="{y+61}" font-size="11" fill="#475569">{escape(key)}</text></g>')
     markers=''.join(f'<marker id="arrow-{k}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="{v}"/></marker>' for k,v in COLORS.items())
     gates=''.join('<li>'+escape(line)+'</li>' for line in data['gates'])
-    return ('<div class="machine-graph"><div style="padding:8px"><b>強調する経路: </b><label><input type="checkbox" class="show-skill" checked> スキル</label>　<label><input type="checkbox" class="show-recovery" checked> 差し戻し</label>　<label><input type="checkbox" class="show-stop" checked> 停止</label></div><div style="overflow:auto"><svg xmlns="http://www.w3.org/2000/svg" role="img" aria-label="最新実装の全ステートと条件付き遷移" viewBox="0 0 1400 740" style="width:100%;min-width:1000px;font-family:system-ui">'
+    return (f'<div class="machine-graph"><div style="padding:8px"><b>強調する経路: </b><label><input type="checkbox" class="show-skill" checked> スキル</label>　<label><input type="checkbox" class="show-recovery" checked> 差し戻し</label>　<label><input type="checkbox" class="show-stop" checked> 停止</label></div><div style="overflow:auto"><svg xmlns="http://www.w3.org/2000/svg" role="img" aria-label="最新実装の全ステートと条件付き遷移" viewBox="0 0 {canvas_width} {canvas_height}" style="width:100%;min-width:1000px;font-family:system-ui">'
             +'<style>.machine-graph:has(.show-skill:not(:checked)) .edge-skill,.machine-graph:has(.show-recovery:not(:checked)) .edge-recovery,.machine-graph:has(.show-stop:not(:checked)) .edge-stop{opacity:.08;pointer-events:none}.transition:hover path{stroke-width:4}.transition:hover circle{stroke-width:3}</style><defs>'+markers+'</defs>'+''.join(paths)+''.join(boxes)+'</svg></div>'
             +'<div style="padding:12px;background:#fff1f2;border-radius:10px"><b>共通の終了・検証条件</b><ul>'+gates+'</ul></div>'
             +'<details><summary>矢印の番号と遷移条件（矢印にカーソルを置いても確認できます）</summary><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:8px">'+''.join(legend)+'</div></details></div>')

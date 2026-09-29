@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import os
 from .cognition.workflow import CognitiveRuntime
+from .cognition.focused_workflow import FocusedRuntime
 
 
-def create_runtime(game_id: str) -> CognitiveRuntime:
+def create_runtime(game_id: str, *, candidate_generator=None) -> CognitiveRuntime:
     variant = os.getenv('COGNITION_PLANNING_COMPARISON', '')
-    runtime = CognitiveRuntime
+    runtime = FocusedRuntime
     if variant:
         from .cognition.planning_comparison import ComparisonRuntime, OneActionRuntime
         if variant not in ('A', 'B'):
@@ -25,8 +26,11 @@ def create_runtime(game_id: str) -> CognitiveRuntime:
             raise ValueError('COGNITION_ACTION_UPDATE_COMPARISON requires planning B, separated memory and A/B/C/D')
         from .cognition.action_update_comparison import ActionUpdateRuntime
         runtime = ActionUpdateRuntime
+    if candidate_generator is not None and runtime is not FocusedRuntime:
+        raise ValueError("candidate_generator is supported by the default focused workflow only")
+    options = {"candidate_generator": candidate_generator} if runtime is FocusedRuntime else {}
     return runtime(
-        game_id, os.getenv("ADK_MODEL") or None,
+        game_id, os.getenv("ADK_MODEL") or None, **options,
         repair_attempts=int(os.getenv("COGNITION_REPAIR_ATTEMPTS", "1")),
         decision_seconds=float(os.getenv("COGNITION_DECISION_SECONDS", "45")),
         max_resets=int(os.getenv("COGNITION_MAX_RESETS", "2")),

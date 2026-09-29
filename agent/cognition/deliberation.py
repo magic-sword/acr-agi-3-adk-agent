@@ -25,7 +25,7 @@ MEASUREMENT_INSTRUCTION = ('\nMeasured changes are host observations. Do not rep
 
 class StageTool(BaseTool):
     def __init__(self, runtime, work):
-        name, self.contract = TASKS[work]
+        name, self.contract = runtime.stage_tasks[work]
         super().__init__(name=name, description=f'Submit the {work} result for the current observation.')
         self.runtime, self.work = runtime, work
 
@@ -105,6 +105,11 @@ def acyclic(goals, field):
 
 
 class DeliberationStages:
+    stage_tasks = TASKS
+    stage_instructions = INSTRUCTIONS
+    stage_tokens = OUTPUT_TOKENS
+    stage_tool = StageTool
+
     def validate_stage(self, work, value):
         if value.observation_id != self.obs['observation_id']:
             raise ValueError('stale observation_id')
@@ -243,17 +248,17 @@ class DeliberationStages:
 
     def _agent(self, work):
         if work not in self.planners:
-            tool_name=TASKS[work][0]
+            tool_name=self.stage_tasks[work][0]
             self.planners[work]=LlmAgent(name=work,include_contents='none',
                 model=LocalVisionLlm(model='qwen3-vl-4b-instruct',
                     api_base=os.getenv('VLM_API_BASE','http://vlm:8080/v1'),
-                    max_output_tokens=OUTPUT_TOKENS[work],max_requests=1,completion_tools=(tool_name,)),
-                instruction=INSTRUCTIONS[work]+MEASUREMENT_INSTRUCTION,tools=[StageTool(self,work)],
+                    max_output_tokens=self.stage_tokens[work],max_requests=1,completion_tools=(tool_name,)),
+                instruction=self.stage_instructions[work]+MEASUREMENT_INSTRUCTION,tools=[self.stage_tool(self,work)],
                 before_tool_callback=self._before_tool,after_tool_callback=self._after_tool,
                 on_tool_error_callback=self._tool_error)
         return self.planners[work]
 
-    async def _deliberate(self, ctx, work):
+    async def _deliberate(self, ctx, work, *, accept_result=True):
         self.work=work
         self.rejection=None
         for attempt in range(1+self.repair_attempts):
@@ -285,7 +290,8 @@ class DeliberationStages:
                     raise ValueError(self.rejection or 'no stage result submitted')
                 if self.time_left()<=0:
                     return
-                self._accept_stage(work,self.submission)
+                if accept_result:
+                    self._accept_stage(work,self.submission)
                 record.update(schema_valid=True,response=self.submission.model_dump_json())
             except Exception as exc:
                 self.rejection=self.rejection or f'{type(exc).__name__}: {exc}'[:500]
@@ -300,7 +306,7 @@ class DeliberationStages:
                 self._record('model','model_decision',**record)
                 self._record('states','state_exited',state='DECIDE',work=work,output=record)
             if record.get('schema_valid'):
-                return
+                return self.submission
             if attempt<self.repair_attempts:
                 self._machine_transition('repair_'+work)
         if self.time_left()>0:

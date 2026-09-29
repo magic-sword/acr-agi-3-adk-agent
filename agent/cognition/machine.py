@@ -3,10 +3,11 @@ STATES = {
     'observe': ('画面・受付・実測', 'host', 40, 50),
     'understand': ('熟考：状況理解', 'llm', 370, 50),
     'backchain': ('熟考：前提条件を逆算', 'llm', 700, 50),
+    'candidates': ('暫定：動詞と対象の候補生成', 'llm', 1360, 50),
     'ground': ('熟考：実行手順へ具体化', 'llm', 1030, 50),
     'reconcile': ('熟考：結果照合・更新', 'llm', 370, 300),
-    'read_memory': ('高速：記憶の選択 / 8', 'llm', 700, 300),
-    'choose_skill': ('高速：スキル選択 / 8', 'llm', 1030, 300),
+    'read_memory': ('旧比較：記憶の選択 / 8', 'llm', 700, 300),
+    'choose_skill': ('旧比較：スキル選択 / 8', 'llm', 1030, 300),
     'execute_step': ('高速：操作 / 7 / 8', 'llm', 700, 530),
     'aim': ('高速：照準 / 7 / 8', 'llm', 1030, 530),
     'wait': ('操作送信・観測待ち', 'host', 40, 300),
@@ -14,6 +15,13 @@ STATES = {
     'answer_question': ('高速：測定変化の意味を質問', 'llm', 370, 530),
 }
 TRANSITIONS = {
+    "compact_backchained": ("backchain","candidates","小目標から抽象操作候補へ","normal"),
+    "scene_candidates": ("understand","candidates","現在の対象を再取得","normal"),
+    "candidates_ready": ("candidates","ground","最大3候補から行動計画","normal"),
+    "candidates_missing": ("candidates","understand","対象情報の不足","recovery"),
+    "focused_grounded": ("ground","execute_step","選択した手順を起動","normal"),
+    "repair_candidates": ("candidates","candidates","候補の出力修正","recovery"),
+    "invalid_candidates": ("candidates","stop","候補の出力契約エラー","stop"),
     'objects_uncertain': ('execute_step','reconcile','測定・対応に保留あり','recovery'),
     'questions_for_execution': ('execute_step','answer_question','測定変化と期待効果を照合','normal'),
     'questions_for_review': ('reconcile','answer_question','照合前の短い意味質問','normal'),
@@ -63,13 +71,13 @@ TRANSITIONS = {
     'memory_to_reconcile': ('read_memory','reconcile','選んだ記録を渡す','normal'),
 }
 GLOBAL_GATES = [
-    '熟考は理解・逆算・具体化・結果照合。必要な工程だけに戻る',
+    '通常は理解・コンパクト逆算・暫定候補生成・具体化・結果照合。旧比較経路も再生用に表示',
     '高速は1トークン。8は結果照合へ。7の小目標完了は確認前の候補',
-    '一操作の試行は受付済みの結果で照合へ。試行終了と目標達成は別',
+    '通常の試行は複数操作を許容。旧比較の一操作試行は受付後に照合。試行終了と目標達成は別',
     '概念・役割の仮説と意味による対象指定を保持。座標は実行時に照準で確定',
     '照準は観測ごとに再取得。ホストのカーソル移動はゲームの操作・変化に含めない',
     '同条件の反復拒否なし。合法操作・観測ID・受付・実時間予算を検証',
-    '実測とモデル解釈は追記で保持。読み出しの8は選んだ記憶を次の熟考へ渡す',
+    '実測とモデル解釈を区別して保持。通常経路では汎用ノート巡回を使わない',
 ]
 
 

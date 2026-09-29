@@ -145,8 +145,8 @@ class PlanningComparisonTests(unittest.TestCase):
 
     def test_factory_is_opt_in(self):
         from agent.adk_policy import create_runtime
-        from agent.cognition.workflow import CognitiveRuntime
-        for arm, expected in [('', CognitiveRuntime), ('A', ComparisonRuntime), ('B', OneActionRuntime)]:
+        from agent.cognition.focused_workflow import FocusedRuntime
+        for arm, expected in [('', FocusedRuntime), ('A', ComparisonRuntime), ('B', OneActionRuntime)]:
             with patch.dict('os.environ', {'COGNITION_PLANNING_COMPARISON': arm, 'ADK_MODEL': ''}):
                 r = create_runtime('test'); self.addCleanup(r.close)
                 self.assertIs(type(r), expected)

@@ -1,11 +1,13 @@
 # ARC-AGI-3 fast/slow agent
 
 A local Google ADK 2.0 agent with two decision speeds using Qwen3-VL-4B-Instruct.
-Deliberation has four stages: understand the relevant objects, backchain from a goal,
-ground a small executable procedure, and reconcile its result. Goals and their
-prerequisites persist across replanning. The fast path selects a skill or action
-with one output token. `7` proposes step completion; `8` returns to reconciliation.
-One-action probes return their acknowledged result for learning without confirming a goal.
+The default workflow observes relevant targets, generates one compact subgoal,
+proposes up to three semantic action candidates, grounds the chosen procedure,
+and reconciles its actual results. Candidate generation is a replaceable provisional
+provider. Planning receives purpose, candidates and scoped evidence; it does not
+reread a shared notebook. The fast path repeats controller actions and aligns clicks
+with one output token. `7` proposes step completion; `8` requests reconciliation.
+Probes may span several actions; completing a probe does not confirm the goal.
 Without a model the driver uses deterministic smoke probes.
 
 See the [current design and limits](docs/fast-slow-runtime-ja.md),
@@ -26,8 +28,8 @@ causal reasoning; recognition scores alone do not establish the best input or am
 
 For the adopted planning direction and supporting experiments, see
 [行動計画の採用方針と検証根拠](docs/planning-adopted-ja.md): three planning inputs
-and compact backward planning for subgoal generation. This records the design
-decision; it does not replace the current runtime specification.
+and compact backward planning for subgoal generation, including the default workflow,
+provider interface, validation results and remaining limitations in section 6.
 
 ## Setup
 
