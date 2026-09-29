@@ -1,12 +1,30 @@
 import unittest
 from unittest.mock import patch
 
-from agent.cognition.simple_workflow import SimpleRuntime, NextAction, click_point
+from agent.cognition.simple_workflow import SimpleRuntime, NextAction, click_point, compact_result
 from agent.local_vlm import LocalVisionLlm
 from runtime_helpers import obs, ack, context, call
 
 
 class SimpleWorkflowTests(unittest.TestCase):
+    def test_history_retains_target_zero_and_other_changes_only(self):
+        def row(ident, count=0, delta=None):
+            return dict(object_id=ident, changed_pixels_on_previous_support=count,
+                        delta_xy=[0, 0] if delta is None else delta,
+                        correspondence='tracked', clicked_previous_mask=False,
+                        before_version='old', after_version='new', scope='long repeated explanation')
+        result = dict(action={'action':'ACTION6', 'x':1, 'y':1}, acknowledged=True,
+            changed_cell_count=2, object_observations=[row('target'), row('irrelevant'),
+                row('changed', 2), row('moved', 0, [1, 0])])
+        compact = compact_result(result, ['target', 'missing'])
+        rows = {r['object_id']:r for r in compact['object_observations']}
+        self.assertEqual(set(rows), {'target', 'missing', 'changed', 'moved'})
+        self.assertEqual(rows['target']['changed_pixels_on_previous_support'], 0)
+        self.assertFalse(rows['target']['clicked_previous_mask'])
+        self.assertIsNone(rows['missing']['changed_pixels_on_previous_support'])
+        self.assertNotIn('before_version', rows['target'])
+        self.assertEqual(len(result['object_observations']), 4)
+
     def runtime(self):
         r = SimpleRuntime('test', 'local/qwen3-vl-4b-instruct', proposal_mode='program')
         self.addCleanup(r.close)

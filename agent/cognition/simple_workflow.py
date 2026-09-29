@@ -34,6 +34,26 @@ def click_point(obj, observation):
     return min(points, key=lambda p: ((p[0]*n-sx)**2 + (p[1]*n-sy)**2, p[1], p[0]))
 
 
+def compact_result(result, target_ids):
+    """Retain target evidence (including zero/unknown) and actual changes elsewhere."""
+    targets = set(target_ids)
+    rows = []
+    for row in result.get('object_observations', []):
+        delta = row.get('delta_xy')
+        if (row['object_id'] not in targets
+                and not row.get('changed_pixels_on_previous_support')
+                and not (delta and any(delta))):
+            continue
+        rows.append({k: row.get(k) for k in ('object_id', 'correspondence',
+            'changed_pixels_on_previous_support', 'delta_xy', 'clicked_previous_mask')})
+    measured = {r['object_id'] for r in rows}
+    rows.extend(dict(object_id=ident, correspondence='unmeasured',
+                     changed_pixels_on_previous_support=None, delta_xy=None,
+                     clicked_previous_mask=None) for ident in sorted(targets - measured))
+    return {**{k: deepcopy(result.get(k)) for k in ('action', 'acknowledged', 'changed_cell_count')},
+            'object_observations': rows}
+
+
 class NextActionTool(StageTool):
     def _get_declaration(self):
         declaration = super()._get_declaration()
@@ -90,12 +110,15 @@ reunderstanding, completion checks, cursor adjustment, or another planning stage
             m.causal_knowledge.clear()
             m.plan = m.active_skill = None
         elif self.outcome:
-            trial = dict(observation_id=self.obs['observation_id'], step=self.obs['step'], **self.outcome)
+            target_ids = list((m.plan or {}).get('object_ids', []))
+            trial = dict(observation_id=self.obs['observation_id'], step=self.obs['step'],
+                         **compact_result(self.outcome, target_ids))
             self._record('artifacts', 'action_feedback', trial=trial)
             m.trial_ledger = (m.trial_ledger + [dict(
                 invocation_id=(self.outcome.get('skill') or {}).get('invocation_id'),
-                target_object_ids=list((m.plan or {}).get('object_ids', [])),
-                target_objects=deepcopy((m.plan or {}).get('target_objects', [])),
+                target_object_ids=target_ids,
+                target_objects=[{k: deepcopy(o[k]) for k in ('object_id', 'identity_segment', 'bbox', 'color_ids')}
+                                for o in (m.plan or {}).get('target_objects', [])],
                 execution_status='acknowledged' if trial['acknowledged'] else 'not_executed_or_unacknowledged',
                 expected_effect=(m.plan or {}).get('expected_effect'),
                 question=(m.plan or {}).get('question'), actual_trials=[trial],
@@ -108,6 +131,8 @@ reunderstanding, completion checks, cursor adjustment, or another planning stage
         return controller_context(dict(work='act', observation_id=self.obs['observation_id'],
             remaining_actions=self.obs['remaining_actions'],
             available_actions=self.obs['available_actions'],
+            history_note='Object results retain planned targets including zero/unknown, plus changes elsewhere. '
+                         'Counts refer to previous mask pixels, not causal proof. Omitted objects are not target evidence.',
             object_index=objects.index(self.memory.object_memory),
             recent_trials=[dict(question=t['question'], target_object_ids=t['target_object_ids'],
                 expected_effect=t['expected_effect'],
