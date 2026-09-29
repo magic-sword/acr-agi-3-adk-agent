@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from agent.cognition.hybrid_perception import HybridPerception
-from agent.cognition.perception import context_record, questions
+from agent.cognition.perception import context_record, questions, without_masks
 from agent.cognition.workflow import CognitiveRuntime
 from agent.local_vlm import LocalVisionLlm
 from runtime_helpers import obs, context, answer, token, ack, understanding
@@ -48,7 +48,7 @@ class HybridTests(unittest.TestCase):
         self.assertEqual(record['target_correspondence'][0]['current_candidate_refs'], [change['after']['id']])
         outcome = dict(acknowledged=True, prediction='The cross moves right.', decision_id='d0')
         queue, _ = questions(record, outcome, None)
-        self.assertEqual(queue[0]['change'], change)
+        self.assertEqual(queue[0]['change'], without_masks(change))
         self.assertEqual(queue[0]['target_correspondence'][0]['status'], 'tracked')
         sensor.measure(cross(15), cross(15), before_id='o1', after_id='o2')
         self.assertEqual(proposer.calls, 1)

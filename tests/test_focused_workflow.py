@@ -28,7 +28,7 @@ def batch(c):
     return dict(observation_id=c['observation_id'], goal_id=c['goal_id'], candidates=[
         dict(id='move-exit', verb='move_to', target_query='The marked exit.',
              expected_effect='Actor reaches the exit.', rationale='Advance toward the goal.',
-             candidate_refs=[], source='proposed', skill_name=None)], missing_info='')
+             candidate_refs=[], object_refs=[], source='proposed', skill_name=None)], missing_info='')
 
 
 def plan(c):
@@ -79,7 +79,7 @@ class FocusedWorkflowTests(unittest.TestCase):
                 self.assertEqual(result['action'], 'ACTION1', r.errors)
                 expected = ['understand', 'backchain'] + ([] if provider else ['candidates']) + ['ground', 'execute_step']
                 self.assertEqual(works, expected)
-                self.assertEqual(r.memory.schema_version, 13)
+                self.assertEqual(r.memory.schema_version, 14)
                 self.assertEqual(r.memory.supported_skills, {})
                 self.assertEqual(r.memory.memory_brief, {})
 
@@ -140,6 +140,27 @@ class FocusedWorkflowTests(unittest.TestCase):
         self.assertEqual(r.memory.phase, 'understand')
         self.assertEqual(r.memory.handoff_question, value['missing_info'])
 
+    def test_ground_reroute_requires_execution_obstacle(self):
+        r = self.runtime(); self.prepare(r, intent='probe')
+        value = dict(observation_id=r.obs['observation_id'], candidate_id=None,
+                     procedure=None, probe_action_limit=None, next='understand',
+                     reason='The effect is unknown on this static board.')
+        schema = FocusedTool(r, 'ground')._get_declaration().parameters_json_schema
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.validate(value, schema)
+        with self.assertRaises(ValueError):
+            r._accept_stage('ground', PlanChoice.model_validate(value))
+        self.assertIsNotNone(r.memory.candidate_batch)
+        for blocker in ('missing_target', 'unavailable_control'):
+            blocked = {**value, 'blocked_by': blocker, 'reason': 'Cannot locate the target or use its control.'}
+            jsonschema.validate(blocked, schema)
+            r.validate_stage('ground', PlanChoice.model_validate(blocked))
+        executable = {**plan(r._context('ground')), 'blocked_by': 'missing_target'}
+        with self.assertRaises(ValueError):
+            r.validate_stage('ground', PlanChoice.model_validate(executable))
+        r._accept_stage('ground', PlanChoice.model_validate(blocked))
+        self.assertEqual(r.memory.phase, 'understand')
+
     def test_probe_can_repeat_fast_actions_before_review(self):
         r = self.runtime(); works = []
         with patch.object(LocalVisionLlm, '_complete', self.response(works, intent='probe')):
@@ -148,6 +169,40 @@ class FocusedWorkflowTests(unittest.TestCase):
         self.assertEqual(works[-1], 'execute_step')
         self.assertNotIn('reconcile', works)
         self.assertEqual(r.memory.active_skill['action_count'], 1)
+
+    def test_probe_completion_requires_acknowledged_observation(self):
+        for acknowledged in (False, True):
+            with self.subTest(acknowledged=acknowledged):
+                r = self.runtime(); works = []; choices = []
+                ordinary = self.response(works, intent='probe')
+                def respond(model, payload):
+                    c = context(payload)
+                    if c['work'] == 'execute_step':
+                        choices.append(c['choices'])
+                    return ordinary(model, payload)
+                with patch.object(LocalVisionLlm, '_complete', respond):
+                    r.decide(obs())
+                    self.assertNotIn('7', choices[-1])
+                    self.assertIn('8', choices[-1])
+                    if acknowledged:
+                        ack(r)
+                        # Receipt alone does not yet supply the post-action observation.
+                        self.assertEqual(r.memory.active_skill['action_count'], 0)
+                    r.decide(obs(1))  # Identical pixels are still a valid result.
+                self.assertEqual('7' in choices[-1], acknowledged)
+
+    def test_achieve_offers_completion_without_action(self):
+        r = self.runtime(); works = []
+        ordinary = self.response(works)
+        def respond(model, payload):
+            c = context(payload)
+            if c['work'] == 'execute_step':
+                self.assertIn('7', c['choices'])
+                self.assertEqual(r.memory.active_skill['action_count'], 0)
+            return ordinary(model, payload)
+        with patch.object(LocalVisionLlm, '_complete', respond):
+            r.decide(obs())
+        self.assertIn('execute_step', works)
 
     def test_probe_limit_reviews_no_change_then_refreshes_targets_before_replanning(self):
         r = self.runtime(); works = []
@@ -220,6 +275,90 @@ class FocusedWorkflowTests(unittest.TestCase):
         self.assertIsNone(r.memory.subgoal)
         self.assertEqual(r.memory.trial_ledger, [])
         self.assertEqual(r.memory.final_goal, '')
+
+    def test_object_identity_flows_from_scene_to_trial_and_candidate_history(self):
+        r = self.runtime(); r._receive(obs())
+        ident = r.memory.object_memory['objects'][0]['object_id']
+        data = scene(r._context('understand')); data['targets'][0]['object_id'] = ident
+        r._accept_stage('understand', Scene.model_validate(data))
+        self.assertTrue(r.memory.understanding['targets'][0]['candidate_refs'])
+        r._accept_stage('backchain', Subgoal.model_validate(subgoal(r._context('backchain'), 'probe')))
+        data = batch(r._context('candidates')); data['candidates'][0]['object_refs'] = [ident]
+        schema = FocusedTool(r, 'candidates')._get_declaration().parameters_json_schema
+        jsonschema.validate(data, schema)
+        missing = deepcopy(data); missing['candidates'][0].pop('object_refs')
+        with self.assertRaises(jsonschema.ValidationError): jsonschema.validate(missing, schema)
+        r._accept_stage('candidates', CandidateBatch.model_validate(data))
+        r._accept_stage('ground', PlanChoice.model_validate(plan(r._context('ground'))))
+        saved = deepcopy(r.memory.active_target_binding)
+        fast = r._context('execute_step')['current_target_objects']
+        self.assertEqual(fast['targets'][0]['object_id'], ident)
+        self.assertEqual(fast['observation_id'], r.obs['observation_id'])
+        self.assertEqual(fast['missing_object_ids'], [])
+        r._select({'action': 'ACTION6', 'x': 1, 'y': 0}, 'Observe the target.')
+        ack(r); r._receive(obs(1))
+        trial = r.recent_trials[-1]
+        self.assertTrue(trial['object_observations'][0]['clicked_previous_mask'])
+        self.assertEqual(trial['object_observations'][0]['changed_pixels_on_previous_support'], 0)
+        r._queue_review('probe_result', 'Observe the result.', 'probe_observed')
+        review = dict(observation_id=r.obs['observation_id'], goal_id=r.memory.plan['goal_id'],
+            assessment='probe_result', evidence='No visible change on the clicked target.', goal_status='unknown',
+            causal_notes='', next='ground', reason='Choose another test.', next_question='What is untested?')
+        r._accept_stage('reconcile', Reconciliation.model_validate(review))
+        self.assertEqual(r.memory.trial_ledger[-1]['target_objects'], saved['target_objects'])
+        self.assertEqual(r.memory.trial_ledger[-1]['target_object_ids'], [ident])
+        # Force the relevant trial outside the old last-three window.
+        r.memory.trial_ledger.extend([dict(observation_id='other', target_objects=[], target_object_ids=[],
+            verb='activate', evidence='Unrelated object trial.') for _ in range(4)])
+        data = scene(r._context('understand')); data['targets'][0]['object_id'] = ident
+        r._accept_stage('understand', Scene.model_validate(data))
+        target = r._context('candidates')['targets'][0]
+        self.assertEqual(target['related_history']['trials'][0]['correspondence'], 'tracked')
+        data = batch(r._context('candidates')); data['candidates'][0]['object_refs'] = [ident]
+        r._accept_stage('candidates', CandidateBatch.model_validate(data))
+        card = r._context('ground')['candidates'][0]
+        self.assertEqual(card['related_history']['trials'][0]['trial']['target_object_ids'], [ident])
+        self.assertNotIn('mask_runs', str(r._context('ground')))
+        self.assertNotIn('mask_runs', str(r._context('understand')))
+
+    def test_invented_object_and_incompatible_part_are_rejected_without_mutation(self):
+        grid = [[5]*12 for _ in range(12)]
+        for x, color in [(2, 8), (8, 9)]:
+            for y in (2, 3):
+                grid[y][x:x+2] = [color, color]
+        r = self.runtime(); r._receive(obs(grid=grid))
+        current = r.memory.object_memory['objects']
+        self.assertGreaterEqual(len(current), 2)
+        left, right = current[0], current[-1]
+        data = scene(r._context('understand')); data['targets'][0].update(object_id='invented')
+        with self.assertRaisesRegex(ValueError, 'unknown object'):
+            r._accept_stage('understand', Scene.model_validate(data))
+        self.assertIsNone(r.memory.understanding)
+        data['targets'][0].update(object_id=left['object_id'], candidate_refs=right['candidate_refs'])
+        with self.assertRaises(ValueError): r._accept_stage('understand', Scene.model_validate(data))
+        data['targets'][0].update(candidate_refs=[])
+        r._accept_stage('understand', Scene.model_validate(data))
+        r._accept_stage('backchain', Subgoal.model_validate(subgoal(r._context('backchain'))))
+        candidate = batch(r._context('candidates')); candidate['candidates'][0]['object_refs'] = [right['object_id']]
+        with self.assertRaisesRegex(ValueError, 'current targets'):
+            r._accept_stage('candidates', CandidateBatch.model_validate(candidate))
+        self.assertIsNone(r.memory.candidate_batch)
+
+    def test_supported_skill_cannot_reuse_same_description_for_a_different_object(self):
+        r = self.runtime(); self.prepare(r)
+        current = r.memory.object_memory['objects'][0]
+        ident = current['object_id']
+        r.memory.understanding['targets'][0]['object_id'] = ident
+        known = dict(verb='move_to', target_query='The marked exit.', procedure=skill(),
+                     target_objects=[{**deepcopy(current), 'identity_segment': current['identity_segment']+1}],
+                     evidence='A past test.', observation_id='old')
+        r.memory.supported_skills['move'] = known
+        candidate = batch(r._context('candidates'))
+        candidate['candidates'][0].update(source='reuse', skill_name='move', object_refs=[ident],
+                                         expected_effect=known['procedure']['effect'])
+        with self.assertRaisesRegex(ValueError, 'supported object identity'):
+            r._accept_stage('candidates', CandidateBatch.model_validate(candidate))
+        self.assertEqual(r._skill_cards(), [])
 
 
 if __name__ == '__main__': unittest.main()

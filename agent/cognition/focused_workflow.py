@@ -11,6 +11,7 @@ from .perception import context_record
 from .state import Reconciliation
 from .validation import validate_intent
 from .workflow import CognitiveRuntime
+from . import object_memory as objects
 
 
 class FocusedTool(StageTool):
@@ -31,6 +32,7 @@ class FocusedTool(StageTool):
                     continue
                 branch = deepcopy(schema)
                 branch['properties']['next'] = {'type': 'string', 'enum': ['execute']}
+                branch['properties']['blocked_by'] = {'type': 'null'}
                 branch['properties']['candidate_id'] = {'type': 'string', 'enum': ids}
                 branch['properties']['procedure'] = {'$ref': '#/$defs/Procedure'} if source == 'proposed' else {'type': 'null'}
                 branch['properties']['probe_action_limit'] = (
@@ -42,12 +44,21 @@ class FocusedTool(StageTool):
             branch['properties']['candidate_id'] = {'type': 'null'}
             branch['properties']['procedure'] = {'type': 'null'}
             branch['properties']['probe_action_limit'] = {'type': 'null'}
+            branch['properties']['blocked_by'] = {'type': 'string', 'enum': ['missing_target', 'unavailable_control']}
+            branch['required'] = list(dict.fromkeys(branch['required'] + ['blocked_by']))
             variants.append(branch)
             schema = {'anyOf': variants, '$defs': definitions}
         if self.work == 'candidates':
             schema['properties']['goal_id']['enum'] = [self.runtime.memory.selected_goal_id]
             verbs = list(DEFAULT_VERBS) + [r['verb'] for r in self.runtime.memory.supported_skills.values()]
             schema['$defs']['Candidate']['properties']['verb']['enum'] = list(dict.fromkeys(verbs))
+            target_ids = sorted({t['object_id'] for t in (self.runtime.memory.understanding or {}).get('targets', [])
+                                 if t.get('object_id')})
+            if target_ids:
+                candidate_schema = schema['$defs']['Candidate']
+                candidate_schema['properties']['object_refs'].update(minItems=1, uniqueItems=True,
+                                                                      items={'type': 'string', 'enum': target_ids})
+                candidate_schema['required'] = list(dict.fromkeys(candidate_schema.get('required', []) + ['object_refs']))
         return types.FunctionDeclaration(name=self.name, description=self.description, parameters_json_schema=schema)
 
 
@@ -70,11 +81,18 @@ Identify a plausible final goal; earlier trial records are historical, not curre
 The final goal is an observable game outcome, not 'identify relations' or 'explore'.
 Candidate indices, captions and measurement tables are host metadata, not game objects.
 Use current measured references if available; leave references empty if unresolved.
+Select object_id from object_index when supported. Whole/part/group entries are
+hypotheses. Contact or synchronized movement alone does not prove physical unity.
+Name targets by their visible colors, shape and position. Do not use a grouping
+method (region, spatial_group), candidate refs or object IDs as an appearance/name.
 Submit submit_scene. Do not propose controls or reproduce historical descriptions.''',
         'backchain': '''Work backwards from final_goal just far enough to choose ONE useful next
 subgoal. Explain its link to the final goal in rationale. If a necessary causal relation
 is unknown, choose intent=probe and a specific question with an observable discriminating
 result. Otherwise choose achieve and question="". No full goal tree or optimal sequence.
+Unknown effects, uncertain goals and a static initial image call for a probe of a
+visible target using an available control. Do not wait for spontaneous movement.
+Ask what changes after an intervention; compare changed AND unchanged outcomes.
 Past skills/effects have scoped evidence, not universal truth. Submit submit_subgoal.''',
         'candidates': '''Generate up to three distinct verb + target candidates serving purpose.
 Use temporally extended semantic actions such as move_to(the right wall), activate(the
@@ -82,24 +100,38 @@ left switch), attack(the obstacle), or a composite skill. Do not substitute a bu
 press for an abstract action. Each candidate needs an expected observable effect.
 New candidates are source=proposed, skill_name=null. Reuse only a supplied supported
 skill with its exact target query and effect, with source=reuse and skill_name.
-Bind references only to the current targets. Missing effects can be probed; missing
-targets should produce an empty list with missing_info. Submit submit_candidates.''',
+Bind references only to the current targets. Use object_refs for target IDs and
+candidate_refs for an acted part if needed. related_history includes correspondence
+uncertainty and original conditions; a part's result does not apply to the whole.
+Missing effects can be probed; ambiguous grouping can motivate inspect with a
+discriminating expected observation. Inspect means an intervention on one visible
+target followed by comparison, not merely looking at the same image again. Unknown
+effects are not missing targets. Missing targets should produce an empty list
+with missing_info. Submit submit_candidates.''',
         'ground': '''Use only purpose, candidates and evidence to choose one candidate and
 implement it as a short procedure. Compare relevant past failures and results with
 the expected effect. Repetition needs a reason why it remains useful; never assume
 an acknowledged click established the effect. Set observable continue_when, done_when,
 and reconsider_when. Fast execution can repeat actions and advance through steps.
-For a probe set probe_action_limit to a small number of controller actions sufficient
+For a probe start with 1 or 2 actions; set probe_action_limit sufficient
 to observe its effect (1 for a single activation; more for movement/composite tests).
 Reconciliation occurs by that limit even if nothing changes. For achieve use null.
 For a proposed candidate supply procedure; for reuse set procedure=null to use the
 stored procedure. CLICK uses a semantic target_query, never coordinates; cursor alignment
-is the fast stage's responsibility. For an ungroundable plan set candidate_id=null,
-procedure=null and next=understand or backchain with a specific reason.
+is the fast stage's responsibility. A CLICK target must name ONE visible object,
+not a question about several objects. Probe done_when must refer to the observation
+AFTER the intervention, including no change, never the already-visible baseline.
+Effect uncertainty and a static scene are reasons to execute a probe, not reroute.
+For an ungroundable plan set candidate_id=null, procedure=null, and next=understand
+or backchain ONLY with blocked_by=missing_target or unavailable_control. Name the
+missing target or unavailable control in reason. For execute use blocked_by=null.
 An executable choice requires next=execute. Submit submit_plan_choice.''',
         'reconcile': '''Compare this invocation's acknowledged trials, before/current observations
 and expected relation. A fast completion signal and pixel change are not proof of the
 effect. Confirm an achievement only with observed evidence from this invocation.
+Without acknowledged trials, report uncertainty about execution, never evidence
+against an effect. No change after a probe is evidence to choose a different test,
+not a reason to wait for the scene to change by itself.
 Probes do not confirm the goal. Explain supported/contradicted/unknown causal relations
 conditionally; these are attributed interpretations, not universal rules. Choose resume
 for an unfinished achievement, ground for a procedure revision, backchain for a new
@@ -118,12 +150,51 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
             m = self.memory
             m.final_goal = ''
             m.subgoal = m.candidate_batch = m.selected_candidate = None
+            m.active_target_binding = None
             m.trial_ledger.clear()
             self._after_scene = 'backchain'
         super()._on_observation(boundary)
 
     def _retained_skills(self):
         return {name: record['procedure'] for name, record in self.memory.supported_skills.items()}
+
+    def _fast_instruction(self, instruction):
+        if instruction == 'execute_step' and (self.memory.plan or {}).get('intent') == 'probe':
+            return '''Execute the bounded probe to learn an unknown effect. Return one
+offered digit. Before its first action, choose an offered executable action even if
+the scene is static or the effect is uncertain. Choose 8 only if the target cannot
+be located, the control cannot be used, or observation contradicts the grounding.
+Unknown effects alone are not execution obstacles. After an acknowledged action
+and its observation, 7 may finish the test, including when nothing changed.
+Never invent a target or control. Only use digits offered in choices.'''
+        return super()._fast_instruction(instruction)
+
+    def _snapshot_extra(self):
+        if not isinstance(self.memory, FocusedMemory):
+            return {}
+        return dict(object_index=objects.index(self.memory.object_memory),
+                    candidate_batch=self.memory.candidate_batch,
+                    object_trials=[objects.trial_card(t) for t in self.memory.trial_ledger[-8:]])
+
+    def _measure_observation(self, boundary):
+        previous = deepcopy(self.memory.object_memory)
+        super()._measure_observation(boundary)
+        self.memory.object_memory = objects.update(deepcopy(previous), self.perception)
+        if self.outcome and not boundary:
+            self.outcome['object_observations'] = objects.observations(previous, self.memory.object_memory,
+                self.previous.get('grid'), self.obs.get('grid'), self.outcome.get('action') or {})
+        self._record('artifacts', 'object_hypotheses_updated', objects=self.memory.object_memory)
+
+    def _targets(self):
+        scene = self.memory.understanding or {}
+        if scene.get('observation_id') != self.obs['observation_id']:
+            return []
+        targets = deepcopy(scene.get('targets', []))
+        for t in targets:
+            t['part_refs'] = sorted(objects.allowed_refs(self.memory.object_memory, t.get('object_id')))
+            t['related_history'] = objects.history(self.memory.object_memory, self.memory.trial_ledger,
+                                                   [t['object_id']] if t.get('object_id') else [])
+        return targets
 
     def _route_perception(self):
         m = self.memory
@@ -135,14 +206,26 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
         super()._route_perception()
 
     @staticmethod
-    def _trial(t):
-        return {**{k: deepcopy(t.get(k)) for k in
+    def _trial(t, target_ids=()):
+        result = {**{k: deepcopy(t.get(k)) for k in
                    ('observation_id', 'acknowledged', 'frame_changed', 'changed_cell_count')},
                 'action': (t.get('action') or {}).get('action')}
+        measured = t.get('object_observations', [])
+        if measured:
+            intended = [o for o in measured if o['object_id'] in target_ids]
+            elsewhere = [o for o in measured if o['object_id'] not in target_ids and
+                         (o['clicked_previous_mask'] or o['changed_pixels_on_previous_support'] or
+                          o['delta_xy'] and any(o['delta_xy']))]
+            result.update(intended_target_observations=deepcopy(intended),
+                          other_object_observations=deepcopy(elsewhere[:4]),
+                          other_object_observations_omitted=max(0, len(elsewhere)-4),
+                          effect_note='Measured mask changes and hits, not evidence that an action caused the change.')
+        return result
 
     def _attempt_results(self):
         active = self.memory.active_skill
-        return [self._trial(t) for t in self.recent_trials if active and
+        targets = (self.memory.selected_candidate or {}).get('object_refs', [])
+        return [self._trial(t, targets) for t in self.recent_trials if active and
                 (t.get('skill') or {}).get('invocation_id') == active['invocation_id']]
 
     def _evidence(self):
@@ -160,17 +243,21 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
             measured_status=sensor.get('status'), changed_pixels=sensor.get('changed_pixels'),
             changes=changes, changes_omitted=max(0, len(sensor.get('changes', []))-8),
             requires_review=sensor.get('requires_review')),
-            past_trials=deepcopy(m.trial_ledger[-3:]),
+            past_trials=[objects.trial_card(t) for t in m.trial_ledger[-3:]],
             conditional_knowledge=deepcopy(m.causal_knowledge[-3:]),
             available_actions=self.obs['available_actions'])
 
     def _skill_cards(self):
         # Bounded provisional retrieval. Target applicability must be rechecked by
         # the generator; no old location or observed scene is transferred as fact.
+        current = {o['object_id']: o['identity_segment'] for o in self.memory.object_memory['objects']}
+        applicable = [(name, r) for name, r in self.memory.supported_skills.items()
+                      if all(current.get(o['object_id']) == o['identity_segment'] for o in r.get('target_objects', []))]
         return [dict(name=name, verb=r['verb'], target_query=r['target_query'], effect=r['procedure']['effect'],
                      when_to_use=r['procedure']['when_to_use'], evidence=r['evidence'],
+                     target_object_ids=[o['object_id'] for o in r.get('target_objects', [])],
                      source_observation_id=r['observation_id'], status='supported_in_one_context')
-                for name, r in list(self.memory.supported_skills.items())[-4:]]
+                for name, r in applicable[-4:]]
 
     def _context(self, work=None):
         work = work or self.work
@@ -180,18 +267,23 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
             common['correction'] = self.rejection
         if work == 'understand':
             common.update(measured_objects=context_record(self.perception, inventory=True) if self.perception else None,
-                          previous_trial=m.trial_ledger[-1:], question=m.handoff_question)
+                          object_index=objects.index(m.object_memory),
+                          previous_trial=[objects.trial_card(t) for t in m.trial_ledger[-1:]], question=m.handoff_question)
         elif work == 'backchain':
             common.update(final_goal=m.final_goal, current_scene=m.understanding,
                           evidence=self._evidence(), known_skills=self._skill_cards())
         elif work == 'candidates':
             common.update(purpose=m.subgoal, goal_id=m.selected_goal_id,
-                          targets=(m.understanding or {}).get('targets', []),
+                          targets=self._targets(),
                           evidence=self._evidence(), known_skills=self._skill_cards())
         elif work == 'ground':
             cards = deepcopy((m.candidate_batch or {}).get('candidates', []))
             for c in cards:
                 c.pop('candidate_refs', None)
+                c['targets'] = [{k: t[k] for k in ('object_id', 'concept', 'appearance', 'role_hypothesis') if k in t}
+                                for t in (m.understanding or {}).get('targets', [])
+                                if t.get('object_id') in c.get('object_refs', [])]
+                c['related_history'] = objects.history(m.object_memory, m.trial_ledger, c.get('object_refs', []), c['verb'])
                 if c['source'] == 'reuse':
                     c['procedure'] = self._retained_skills()[c['skill_name']]
             common.update(purpose=m.subgoal, candidates=cards, evidence=self._evidence())
@@ -199,11 +291,19 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
             common.update(purpose=m.subgoal, plan=m.plan, candidate=m.selected_candidate,
                           review=m.review, attempt_results=self._attempt_results(),
                           evidence=self._evidence(), semantic_answers=self.semantic_answers)
+            common['target_history'] = objects.history(m.object_memory, m.trial_ledger,
+                (m.selected_candidate or {}).get('object_refs', []), (m.selected_candidate or {}).get('verb'))
         else:
             common = super()._context(work)
             # Fast control needs measured changes and the active step, not stale
             # global target hypotheses from the last planning observation.
             common.pop('scene_hypotheses', None)
+            selected = (m.selected_candidate or {}).get('object_refs', [])
+            current = [o for o in m.object_memory['objects'] if o['object_id'] in selected]
+            common['current_target_objects'] = dict(observation_id=m.object_memory['observation_id'],
+                targets=[{k: o[k] for k in ('object_id', 'bbox', 'color_ids', 'candidate_refs', 'identity_status')} for o in current],
+                missing_object_ids=sorted(set(selected)-{o['object_id'] for o in current}),
+                note='Current measured grounding for selected IDs. Masks may have holes; confirm the acted part in the current image.')
         return controller_context(common)
 
     def _views(self, slow=False):
@@ -265,6 +365,11 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
             ids = {c['id'] for c in (self.perception or {}).get('candidates', [])}
             if any(ref not in ids for t in value.targets for ref in t.candidate_refs):
                 raise ValueError('unknown current target reference')
+            by_id = {o['object_id']: o for o in m.object_memory['objects']}
+            for t in value.targets:
+                if t.object_id is not None and (t.object_id not in by_id or
+                        not set(t.candidate_refs) <= objects.allowed_refs(m.object_memory, t.object_id)):
+                    raise ValueError('unknown object or incompatible target references')
         elif work == 'backchain':
             if value.intent == 'probe' and not value.question.strip():
                 raise ValueError('probe requires a discriminating question')
@@ -276,24 +381,45 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
             unique([c.id for c in value.candidates], 'candidate IDs')
             unique([(c.verb, c.target_query) for c in value.candidates], 'semantic candidates')
             refs = {ref for t in m.understanding['targets'] for ref in t['candidate_refs']}
+            target_ids = {t['object_id'] for t in m.understanding['targets'] if t.get('object_id')}
+            for ident in target_ids:
+                refs.update(objects.allowed_refs(m.object_memory, ident))
             for c in value.candidates:
+                if target_ids and not c.object_refs and not c.candidate_refs:
+                    raise ValueError('bind a candidate to an offered object or measured part')
                 if any(ref not in refs for ref in c.candidate_refs):
                     raise ValueError('candidate references must belong to current targets')
+                if not set(c.object_refs) <= target_ids:
+                    raise ValueError('candidate objects must belong to current targets')
+                allowed = {ref for ident in c.object_refs for ref in objects.allowed_refs(m.object_memory, ident)}
+                if c.object_refs and not set(c.candidate_refs) <= allowed:
+                    raise ValueError('acted part must belong to the selected object')
                 if c.verb.lower() in ('click', 'up', 'down', 'left', 'right', 'act', 'undo'):
                     raise ValueError('use a semantic verb such as activate or move_to, not a controller button')
                 if c.source == 'reuse':
                     known = m.supported_skills.get(c.skill_name)
                     if not known or c.target_query != known['target_query'] or c.expected_effect != known['procedure']['effect']:
                         raise ValueError('reuse requires a supported skill with matching target and effect')
+                    prior = known.get('target_objects', [])
+                    if prior:
+                        current = {o['object_id']: o for o in m.object_memory['objects']}
+                        if set(c.object_refs) != {o['object_id'] for o in prior} or any(
+                                o['object_id'] not in current or current[o['object_id']]['identity_segment'] != o['identity_segment']
+                                for o in prior):
+                            raise ValueError('reuse requires supported object identity; propose transfer as a new trial')
                 elif c.skill_name is not None:
                     raise ValueError('proposed candidate cannot claim a supported skill')
             if not value.candidates and not value.missing_info.strip():
                 raise ValueError('empty candidates require missing_info')
         elif work == 'ground':
             if value.next != 'execute':
+                if value.blocked_by is None:
+                    raise ValueError('rerouting requires missing_target or unavailable_control; unknown effects require a bounded probe')
                 if value.candidate_id is not None or value.procedure is not None or value.probe_action_limit is not None:
                     raise ValueError('executable plan cannot reroute to understanding')
                 return
+            if value.blocked_by is not None:
+                raise ValueError('an executable plan cannot claim an execution blocker')
             batch = m.candidate_batch
             if not batch or batch['observation_id'] != value.observation_id or batch['goal_id'] != m.selected_goal_id:
                 raise ValueError('planning requires fresh candidates for the current goal')
@@ -325,6 +451,7 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
         m = self.memory
         data = value.model_dump()
         if work == 'understand':
+            data['targets'] = [objects.bind_target(m.object_memory, t) for t in data['targets']]
             m.understanding = data
             if self.proposal_perception is not None:
                 self.proposal_perception.bind_targets(data)
@@ -346,6 +473,13 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
             m.phase = 'candidates'
             self._machine_transition('compact_backchained')
         elif work == 'candidates':
+            for c in data['candidates']:
+                if not c['object_refs'] and c['candidate_refs']:
+                    matches = {
+                        t['object_id'] for t in m.understanding['targets'] if t.get('object_id') and
+                        set(c['candidate_refs']) <= objects.allowed_refs(m.object_memory, t['object_id'])}
+                    if len(matches) == 1:
+                        c['object_refs'] = sorted(matches)
             m.candidate_batch = data
             m.phase = 'ground' if value.candidates else 'understand'
             if not value.candidates:
@@ -374,6 +508,11 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
                     invocation_id=f'{m.run_id}:attempt:{self.invocation_sequence}',
                     started_at=value.observation_id, step_started_at=value.observation_id,
                     action_count=0, step_action_count=0)
+                m.active_target_binding = dict(invocation_id=m.active_skill['invocation_id'],
+                    target_objects=objects.snapshot(m.object_memory, c.get('object_refs', [])),
+                    acted_candidate_refs=list(c['candidate_refs']),
+                    acted_part_ids=[o['object_id'] for o in m.object_memory['objects'] if o['kind'] == 'region' and
+                                    set(o['candidate_refs']).intersection(c['candidate_refs'])])
                 m.review = None
                 m.phase = 'execute_step'
                 self.plan_anchor = deepcopy(self.obs)
@@ -384,23 +523,37 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
             active = m.active_skill
             trials = self._attempt_results()
             candidate = m.selected_candidate or {}
+            binding = m.active_target_binding or {}
+            if not active or binding.get('invocation_id') != active['invocation_id']:
+                binding = {}
             record = dict(observation_id=value.observation_id, invocation_id=active['invocation_id'] if active else None,
                           purpose=m.subgoal, verb=candidate.get('verb'), target_query=candidate.get('target_query'),
                           expected_effect=candidate.get('expected_effect'), actual_trials=trials,
                           assessment=value.assessment, evidence=value.evidence, causal_interpretation=value.causal_notes)
-            m.trial_ledger = (m.trial_ledger + [record])[-8:]
+            record.update(target_object_ids=list(candidate.get('object_refs', [])),
+                          execution_status='acknowledged' if any(t['acknowledged'] for t in trials) else 'not_executed_or_unacknowledged',
+                          actual_trials_omitted=max(0, (active or {}).get('action_count', 0)-len(trials)),
+                          target_objects=deepcopy(binding.get('target_objects', [])),
+                          acted_candidate_refs=deepcopy(binding.get('acted_candidate_refs', [])),
+                          acted_part_ids=deepcopy(binding.get('acted_part_ids', [])),
+                          baseline=deepcopy((m.plan or {}).get('baseline')),
+                          object_observations=[deepcopy(t.get('object_observations', [])) for t in self.recent_trials
+                                               if active and (t.get('skill') or {}).get('invocation_id') == active['invocation_id']])
+            m.trial_ledger = (m.trial_ledger + [record])[-128:]
             if value.causal_notes.strip() and any(t['acknowledged'] for t in trials):
                 m.causal_knowledge = (m.causal_knowledge + [dict(
                     target_query=candidate.get('target_query'), verb=candidate.get('verb'),
                     interpretation=value.causal_notes, assessment=value.assessment,
                     evidence=value.evidence, observation_id=value.observation_id,
                     invocation_id=record['invocation_id'], episode=m.episode,
+                    target_object_ids=record['target_object_ids'],
                     status='conditional_model_interpretation')])[-16:]
             if active and value.assessment == 'matched' and value.goal_status == 'confirmed':
                 procedure = deepcopy(m.skills[active['name']])
                 m.supported_skills.pop(active['name'], None)
                 m.supported_skills[active['name']] = dict(procedure=procedure, verb=candidate['verb'], target_query=candidate['target_query'],
-                    evidence=value.evidence, observation_id=value.observation_id)
+                    evidence=value.evidence, observation_id=value.observation_id,
+                    target_objects=deepcopy(record['target_objects']))
                 while len(m.supported_skills) > 16:
                     m.supported_skills.pop(next(iter(m.supported_skills)))
             elif candidate.get('source') == 'reuse' and value.assessment == 'unexpected':
@@ -415,6 +568,7 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
                 self._machine_transition('review_resume')
             else:
                 m.active_skill = None
+                m.active_target_binding = None
                 m.candidate_batch = None
                 # Re-ground current target descriptions before another candidate batch.
                 self._after_scene = 'candidates' if value.next == 'ground' and value.goal_status != 'confirmed' else 'backchain'

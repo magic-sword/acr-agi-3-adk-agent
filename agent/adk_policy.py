@@ -4,11 +4,12 @@ from __future__ import annotations
 import os
 from .cognition.workflow import CognitiveRuntime
 from .cognition.focused_workflow import FocusedRuntime
+from .cognition.simple_workflow import SimpleRuntime
 
 
 def create_runtime(game_id: str, *, candidate_generator=None) -> CognitiveRuntime:
     variant = os.getenv('COGNITION_PLANNING_COMPARISON', '')
-    runtime = FocusedRuntime
+    runtime = SimpleRuntime if candidate_generator is None else FocusedRuntime
     if variant:
         from .cognition.planning_comparison import ComparisonRuntime, OneActionRuntime
         if variant not in ('A', 'B'):

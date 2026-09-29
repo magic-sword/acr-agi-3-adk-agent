@@ -5,6 +5,7 @@ import os
 import sys
 import threading
 import time
+from .region_masks import native_mask
 
 
 class SamProposer:
@@ -54,15 +55,16 @@ class SamProposer:
                 anns = self.generator.generate(image)
             ranked = sorted(enumerate(anns), key=lambda p: (
                 -float(p[1]['predicted_iou']), -float(p[1]['stability_score']), p[0]))
-            boxes = []
+            boxes, masks = [], []
             for _, ann in ranked[:128]:
                 yy, xx = ann['segmentation'].nonzero()
                 if len(xx):
                     boxes.append([int(xx.min())//6, int(yy.min())//6,
                                   (int(xx.max())+6)//6, (int(yy.max())+6)//6])
+                    masks.append(native_mask(ann['segmentation'], h, w))
             if self.device.startswith('cuda'):
                 torch.cuda.synchronize(self.device)
-        return dict(boxes=boxes, seconds=time.perf_counter()-start,
+        return dict(boxes=boxes, masks=masks, mask_encoding='native_row_runs_majority_6x6', seconds=time.perf_counter()-start,
                     generated=len(anns), model='sam_vit_b', device=self.device)
 
 

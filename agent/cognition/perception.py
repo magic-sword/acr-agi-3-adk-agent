@@ -3,6 +3,7 @@ from copy import deepcopy
 import json
 import time
 from .geometry import extract, compare
+from .region_masks import encode
 
 COLORS = ['white','light gray','gray','dark gray','very dark gray','black',
           'magenta','pink','red','blue','light blue','yellow','orange','maroon','green','purple']
@@ -22,7 +23,8 @@ def support(obj):
 def brief(obj):
     if obj is None:return None
     return dict(id=obj['id'],shape=obj['class_name'],bbox=obj['bbox'],size=obj['size'],
-                colors=[COLORS[int(c)] for c in obj['colors']],pattern=obj['pattern'])
+                colors=[COLORS[int(c)] for c in obj['colors']],pattern=obj['pattern'],
+                mask_runs=encode(support(obj)))
 
 
 def measure(before, after, *, before_id=None, after_id, action=None, boundary=False):
@@ -63,6 +65,15 @@ def measure(before, after, *, before_id=None, after_id, action=None, boundary=Fa
     return result
 
 
+def without_masks(value):
+    """Native supports are audit/execution data, not repeated model input."""
+    if isinstance(value, list):
+        return [without_masks(v) for v in value]
+    if isinstance(value, dict):
+        return {k: without_masks(v) for k, v in value.items() if k != 'mask_runs'}
+    return value
+
+
 def context_record(record, *, inventory=False):
     """No silent truncation: keep all facts in logs, flag bounded model summaries."""
     r={k:deepcopy(record[k]) for k in ['observation_id','before_observation_id','status','action',
@@ -86,7 +97,7 @@ def context_record(record, *, inventory=False):
     for key in ['proposal_mode','sam','proposal_coverage_incomplete','target_correspondence']:
         if key in record:r[key]=deepcopy(record[key])
     if 'relations' in record:r['same_pattern_pairs']=record['relations'][:24]
-    return r
+    return without_masks(r)
 
 
 QUESTION_OPTIONS = {
@@ -109,7 +120,7 @@ def questions(record, outcome, understanding, *, limit=4):
         before_observation_id=record['before_observation_id'],decision_id=outcome['decision_id'],
         invocation_id=(outcome.get('skill') or {}).get('invocation_id'),
         action=record['action'],expected_effect=outcome['prediction'],
-        targets=targets,change=deepcopy(change),
+        targets=targets,change=without_masks(change),
         target_correspondence=deepcopy(record.get('target_correspondence',[])),
         question='How does this measured change relate to the expected effect?',choices=deepcopy(QUESTION_OPTIONS))
         for i,change in enumerate(record['changes'])]

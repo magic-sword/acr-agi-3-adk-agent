@@ -1,0 +1,99 @@
+{
+  "date": "2026-09-29",
+  "memory_schema": 14,
+  "tests": {
+    "passed": 286,
+    "log": "outputs/object-memory-20260929/tests-final.log"
+  },
+  "replay": {
+    "path": "outputs/object-memory-20260929/release-replay",
+    "source_manifest": {
+      "sam": "cached",
+      "device": "cuda",
+      "source": "outputs/temporal-proposals-20260928",
+      "source_sha256": "f5e5641189b22c7898d419089458a427825ef5c029c529b38916bb0e751fde00",
+      "mask_cache": "outputs/object-memory-20260929/cpu-live-validated/frames.jsonl",
+      "mask_cache_sha256": "9241578530830eeec79ad2f312be8c5ee325c12f6b686f2f463881d59d3d95a0",
+      "code_sha256": {
+        "agent/cognition/planning_comparison.py": "fde9baf7685ab28c62e99f5f9b3310cec598c7b282f0d87b6fc3fb84241f4d60",
+        "agent/cognition/focused_state.py": "d3b15b09ef838db3dcd3b2c021b5a376d7a24d1f9c658e0f7766fea94cbd2377",
+        "agent/cognition/proposal_tracking.py": "e083893c5b60a724da030aa7fc536bb2eee1305081060f1bc7d7495675cf04e4",
+        "agent/cognition/execution.py": "6983ee4b2f94391011a6e13d69cb1a5df35e9874f6c9ebfd28b011804a4a7011",
+        "agent/cognition/workflow.py": "a4ca92590b3b0a1b27242ba466840822c7a45eb55b71f2269db0e37c6fe041e7",
+        "agent/cognition/sam_proposals.py": "2993d336ceb30a4e35e5ce847162a482df4f9af3b02b16086c845a0223c93a02",
+        "agent/cognition/validation.py": "fafdb20c5083f7be05e62dbc33d9ca17e1587996d15f503c9534be5dd5e416d9",
+        "agent/cognition/state.py": "d669a367b94e3dc4fc7b10eca9cbe94a2b1fd87ba00171ca8d094c7ac462a733",
+        "agent/cognition/memory_comparison.py": "280a3dfa0e8e0647a8c40ac807d40fe3f0a6f8b7f7fa101721cf60a6285aaf9d",
+        "agent/cognition/geometry.py": "c0229a1de16c27ec6baf200dc1fd1eb99d4b7d5d9d899fd2ea11bda0e66534fa",
+        "agent/cognition/notebook.py": "f9f17eea4249fae80d747d7bfe5e46e2a3fb7003dcc6dd425164477618fa0330",
+        "agent/cognition/__init__.py": "1b54e4004691d9eff18773138ebf16cf80e4f60c49fc2460c2df9145e617c2d8",
+        "agent/cognition/evidence.py": "45626b8c21ebd66e1da69f3d835ea62aba3c52a412f1a8325cf8d81a2655c0f1",
+        "agent/cognition/perception.py": "42bdc01345c0ef189daafaa75c26272fa9ec576729f568946f3f9b348a1ae27a",
+        "agent/cognition/hybrid_perception.py": "46936ee09891a3632a903a54cbac7934e668a61ae7ddc5a674cbabfa7df287dc",
+        "agent/cognition/focused_workflow.py": "18d850371bf4cd19646610516c598e96950bd20b9c48b0fddf83eeeb6364ae66",
+        "agent/cognition/deliberation.py": "17e7a8ea1cba980341df547414937d152188f55f93b18e044d185f93b279610a",
+        "agent/cognition/action_update_comparison.py": "6ce380c18d8ab44301b7894dc8621b44ad63490dbd7f238b1246c8307cdd2b05",
+        "agent/cognition/tasks.py": "b33d5a7ea0945d7486cb78a3f2a4857094e1297e60fb0b78b6010544dbcd8db5",
+        "agent/cognition/audit.py": "e530d4300879b28ae09de0a815f40a30a70e6006bfc9c9aa17399351afb8ef74",
+        "agent/cognition/machine.py": "7c6e8099439177f85694b9e3ef30d8caa4f748501c452b436ca5bd7b26496f1a",
+        "agent/cognition/cursor.py": "815b22fa5feb7d2f2d5acbaf8a48b9e49232738265b68ae25fe93f631300cf24",
+        "agent/cognition/object_memory.py": "2c82dc3091be8960d036a2efec9a5d95cdb3820538b6a8c023bbf9a434aed1a8",
+        "agent/cognition/region_masks.py": "daa7cac735650753061a64eab226fe0aaa976e72b1746b75b0333724474c3f6a",
+        "agent/cognition/candidates.py": "a3472cef0f384150e9f467062faf4e021eea6245855258602776b961a3dbf6ac",
+        "/kaggle/working/scripts/benchmark_object_memory.py": "6c546596f6ff09976368bf5208e02708a1f71df34c42960f0e994c581d744af6"
+      },
+      "support_iou_threshold": 0.9,
+      "limitations": [
+        "real_partial annotations cannot measure precision or all missed objects",
+        "oracle support matching and history retrieval, not model selection or game progress",
+        "recorded SAM has boxes only; use live to evaluate native SAM masks"
+      ]
+    },
+    "metrics": {
+      "synthetic": {
+        "frames": 66,
+        "gold": 264,
+        "support_recovered": 262,
+        "matched_transitions": 235,
+        "selected_id_switches": 45,
+        "tracked": 488,
+        "tentative_identity_or_lineage": 23,
+        "wrong_gold_tracked_history": 0
+      },
+      "real_partial": {
+        "frames": 23,
+        "gold": 133,
+        "support_recovered": 130,
+        "matched_transitions": 113,
+        "selected_id_switches": 40,
+        "tracked": 151,
+        "tentative_identity_or_lineage": 77,
+        "wrong_gold_tracked_history": 0
+      }
+    },
+    "update_median_ms": 13.049888075329363,
+    "max_understand_context_bytes": 20822
+  },
+  "real_model_smoke": {
+    "path": "outputs/object-memory-20260929/runtime-grounded",
+    "game_id": "vc33-5430563c",
+    "run_id": "5440664415a34d07a08e74908779e518",
+    "actions": 0,
+    "levels_completed": 0,
+    "stop_reason": "decision_time_exhausted",
+    "wall_seconds": 100.55538675491698,
+    "model_calls": 12,
+    "validation_errors": [
+      "TimeoutError: "
+    ]
+  },
+  "limitations": [
+    "Support IoU >= 0.9; not comparable to the prior box coverage metric.",
+    "Real-frame annotations are partial; precision and unannotated recall are not measured.",
+    "History evaluation injects oracle-bound synthetic trial records after perception, not model-selected game actions.",
+    "Identity switches remain; zero wrong-gold tracked retrievals is limited to this oracle-matched sample.",
+    "CPU SAM was verified; CUDA was unavailable in the development container.",
+    "The real-model smoke reached target-bound planning but no action or level completion.",
+    "After that smoke, excluding unexecuted plans from trial retrieval was verified by the final regression tests."
+  ]
+}

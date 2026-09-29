@@ -6,6 +6,7 @@ import time
 
 from .proposal_tracking import ProposalTracker
 from .sam_proposals import default_proposer
+from .region_masks import decode
 
 
 class HybridPerception:
@@ -30,13 +31,15 @@ class HybridPerception:
         from .perception import COLORS
         x1, y1, x2, y2 = track['box']
         patch = [row[x1:x2] for row in grid[y1:y2]]
-        colors = sorted(Counter(c for row in patch for c in row))
+        mask = track.get('mask_runs')
+        pixels = decode(mask) if mask is not None else None
+        colors = sorted({grid[y][x] for x, y in pixels}) if pixels is not None else sorted(Counter(c for row in patch for c in row))
         detail = patch if (x2-x1)*(y2-y1) <= 100 else {
             'row_runs': [[[c, len(list(items))] for c, items in groupby(row)] for row in patch]}
         return dict(id=f'f{self.frame}t{track["id"]}', track_id=f'e{self.epoch}t{track["id"]}',
                     shape='region_proposal', bbox=[x1, y1, x2-1, y2-1],
                     size=[x2-x1, y2-y1], colors=[COLORS[c] for c in colors],
-                    color_ids=colors, pattern=detail, sources=list(track['sources']),
+                    color_ids=colors, pattern=detail, sources=list(track['sources']), mask_runs=deepcopy(mask),
                     support_note='Bounding rectangle pixels include background and may contain parts or multiple objects.')
 
     @staticmethod
@@ -81,8 +84,9 @@ class HybridPerception:
                 try:
                     sam_called = True
                     proposed = self.proposer.propose(after)
-                    self.tracker.add(proposed['boxes'][:128], 'sam')
-                    self.sam_status = {k: v for k, v in proposed.items() if k != 'boxes'}
+                    masks = proposed.get('masks')
+                    self.tracker.add(proposed['boxes'][:128], 'sam', masks[:128] if masks is not None else None)
+                    self.sam_status = {k: v for k, v in proposed.items() if k not in ('boxes', 'masks')}
                     self.sam_status.update(status='ready', proposals=len(proposed['boxes'][:128]),
                                            seconds=time.perf_counter()-sam_start)
                 except (ImportError, OSError, RuntimeError, ValueError, KeyError) as exc:

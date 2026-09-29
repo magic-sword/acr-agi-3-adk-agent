@@ -62,7 +62,10 @@ class CognitiveRuntime(PerceptionRuntime, NotebookRuntime, DeliberationStages, E
             'replan_reason':self.replan_reason,
             'measured_objects':context_record(self.perception,inventory=True) if self.perception else None,
             'semantic_answers':self.semantic_answers,'pending_semantic_questions':len(self.question_queue),
-            'deferred_semantic_questions':self.question_deferred})
+            'deferred_semantic_questions':self.question_deferred, **self._snapshot_extra()})
+
+    def _snapshot_extra(self):
+        return {}
 
     def _on_observation(self, boundary):
         m=self.memory
@@ -221,6 +224,9 @@ class CognitiveRuntime(PerceptionRuntime, NotebookRuntime, DeliberationStages, E
                 'effect':self.memory.skills[name]['effect']}
                 for i,name in enumerate(self.memory.plan['candidates'])}
 
+    def _fast_instruction(self, instruction):
+        return INSTRUCTIONS[instruction]
+
     async def _fast(self, work, options, *, timeout=None):
         self.work=work
         if work!='read_memory':
@@ -234,7 +240,7 @@ class CognitiveRuntime(PerceptionRuntime, NotebookRuntime, DeliberationStages, E
         if work=='aim' and self.memory.cursor['mode']=='adjust':
             parts=self._visual_parts()+cursor_parts(self.obs,self.memory.cursor)+[parts[-1]]
         instruction='aim_locate' if work=='aim' and self.memory.cursor['mode']=='locate' else work
-        record=await choose(self.choice_model,instruction=INSTRUCTIONS[instruction],parts=parts,
+        record=await choose(self.choice_model,instruction=self._fast_instruction(instruction),parts=parts,
                             options=options,observe_request=self._request_record,
                             timeout=self.time_left() if timeout is None else timeout)
         self.http_requests+=record['http_requests']
@@ -287,9 +293,10 @@ class CognitiveRuntime(PerceptionRuntime, NotebookRuntime, DeliberationStages, E
             except ValueError as exc:
                 self._queue_review('controls_changed','Re-ground controls or target descriptions: '+str(exc),'step_reconsider')
                 continue
-            # A one-action probe finishes on its acknowledged observation, not on
-            # a visual completion guess before it has been executed.
-            if m.plan['intent']=='achieve' or not self.probe_completes_on_receipt:
+            # Probe counts increase only when an acknowledged action's observation
+            # arrives for this invocation. An already-visible relation is not a trial.
+            if m.plan['intent']=='achieve' or (
+                    not self.probe_completes_on_receipt and active['action_count'] > 0):
                 options['7']={'kind':'advance','meaning':'The specified done_when relation is visible'}
             choice=await self._fast('execute_step',options)
             if choice is None:continue

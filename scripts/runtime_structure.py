@@ -9,7 +9,7 @@ LABELS = {'understand':'状況理解', 'backchain':'前提条件の逆算', 'can
 
 def read_structure(root):
     root = Path(root)
-    paths = [root/'agent/cognition'/name for name in ('workflow.py','deliberation.py','execution.py','tasks.py','state.py','machine.py','cursor.py','notebook.py','perception.py','geometry.py','focused_workflow.py','focused_state.py','candidates.py')]
+    paths = [root/'agent/cognition'/name for name in ('workflow.py','deliberation.py','execution.py','tasks.py','state.py','machine.py','cursor.py','notebook.py','perception.py','geometry.py','focused_workflow.py','focused_state.py','candidates.py','simple_workflow.py')]
     sources = {str(p.relative_to(root)):p.read_text() for p in paths if p.is_file()}
     if 'agent/cognition/workflow.py' not in sources:
         raise ValueError('この場所には実装ソースが保存されていません')
@@ -37,12 +37,12 @@ def read_structure(root):
         entries = {ast.literal_eval(k):v for k,v in zip(registry.keys,registry.values)}
         # Read the default subclass as source data, retaining legacy-only stages
         # for replay of archived comparison logs. Never import model/runtime code.
-        for filename in ('focused_state.py','candidates.py'):
+        for filename in ('focused_state.py','candidates.py','simple_workflow.py'):
             classes.update({n.name:n for n in ast.parse(sources.get('agent/cognition/'+filename,'')).body
                             if isinstance(n,ast.ClassDef)})
-        focused = ast.parse(sources.get('agent/cognition/focused_workflow.py',''))
+        focused = ast.parse(sources.get('agent/cognition/focused_workflow.py','') + '\n' + sources.get('agent/cognition/simple_workflow.py',''))
         for node in focused.body:
-            if isinstance(node,ast.ClassDef) and node.name == 'FocusedRuntime':
+            if isinstance(node,ast.ClassDef) and node.name in ('FocusedRuntime', 'SimpleRuntime'):
                 overrides = {n.targets[0].id:n.value for n in node.body if isinstance(n,ast.Assign)
                              and isinstance(n.targets[0],ast.Name)}
                 new_registry = overrides['stage_tasks']

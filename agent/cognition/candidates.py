@@ -20,6 +20,8 @@ class Candidate(Contract):
     expected_effect: str = Field(min_length=1, max_length=180)
     rationale: str = Field(min_length=1, max_length=180)
     candidate_refs: list[str] = Field(default_factory=list, max_length=6)
+    object_refs: list[str] = Field(default_factory=list, max_length=4,
+        description='Current object IDs selected from targets. Region references may specify the acted part.')
     source: Literal['proposed', 'reuse']
     skill_name: str | None = None
 

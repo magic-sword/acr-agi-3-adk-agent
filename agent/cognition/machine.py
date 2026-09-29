@@ -1,5 +1,6 @@
 """Executable transitions shared with the replay diagram."""
 STATES = {
+    'act': ('通常：結果解釈＋次の1操作', 'llm', 1360, 300),
     'observe': ('画面・受付・実測', 'host', 40, 50),
     'understand': ('熟考：状況理解', 'llm', 370, 50),
     'backchain': ('熟考：前提条件を逆算', 'llm', 700, 50),
@@ -15,6 +16,10 @@ STATES = {
     'answer_question': ('高速：測定変化の意味を質問', 'llm', 370, 530),
 }
 TRANSITIONS = {
+    'direct_received': ('observe','act','現在の観測と直前の結果','normal'),
+    'direct_accepted': ('act','wait','操作を直接実行・クリックはマスク内','normal'),
+    'repair_act': ('act','act','出力契約の修正は最大1回','recovery'),
+    'invalid_act': ('act','stop','出力契約エラー','stop'),
     "compact_backchained": ("backchain","candidates","小目標から抽象操作候補へ","normal"),
     "scene_candidates": ("understand","candidates","現在の対象を再取得","normal"),
     "candidates_ready": ("candidates","ground","最大3候補から行動計画","normal"),

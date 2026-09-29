@@ -1,14 +1,19 @@
-"""Contracts for the default compact planning workflow (memory schema 13)."""
+"""Contracts for the default compact planning workflow (memory schema 14)."""
 from typing import Literal
 from pydantic import Field
 from .state import Contract, Memory, Target, Procedure
+from .object_memory import empty
+
+
+class ObjectTarget(Target):
+    object_id: str | None = Field(default=None, description='Current object hypothesis ID from object_index; never invent an ID.')
 
 
 class Scene(Contract):
     observation_id: str
     observed: str = Field(min_length=1, max_length=400)
     goal_hypothesis: str = Field(min_length=1, max_length=200)
-    targets: list[Target] = Field(max_length=4)
+    targets: list[ObjectTarget] = Field(max_length=4)
 
 
 class Subgoal(Contract):
@@ -29,10 +34,12 @@ class PlanChoice(Contract):
         description='For a probe: maximum acknowledged controller actions before reviewing even no change. Otherwise null.')
     next: Literal['execute', 'understand', 'backchain']
     reason: str = Field(min_length=1, max_length=240)
+    blocked_by: Literal['missing_target', 'unavailable_control'] | None = Field(default=None,
+        description='Only for rerouting: concrete execution obstacle, not an unknown effect. Explain which target/control in reason.')
 
 
 class FocusedMemory(Memory):
-    schema_version: int = 13
+    schema_version: int = 14
     final_goal: str = ''
     subgoal: dict | None = None
     candidate_batch: dict | None = None
@@ -41,3 +48,5 @@ class FocusedMemory(Memory):
     trial_ledger: list[dict] = Field(default_factory=list)
     supported_skills: dict = Field(default_factory=dict)
     causal_knowledge: list[dict] = Field(default_factory=list)
+    object_memory: dict = Field(default_factory=empty)
+    active_target_binding: dict | None = None

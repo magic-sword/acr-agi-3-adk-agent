@@ -97,13 +97,13 @@ def diagnostics(directory: Path) -> dict:
             'memory_selected_records':sum(len(r.get('brief',{}).get('selected',[])) for r in artifacts if r.get('event')=='memory_prepared'),
             'memory_read_timeouts':sum(r.get('event')=='memory_prepared' and r.get('brief',{}).get('end_reason')=='read_time_budget' for r in artifacts),
             'no_visible_effect':sum(r['trial'].get('frame_changed') is False for r in feedback),
-            'repairs':sum(c.get('attempt',0)>0 for c in calls if c.get('work') in ('understand','backchain','candidates','ground','reconcile')),
+            'repairs':sum(c.get('attempt',0)>0 for c in calls if c.get('work') in ('act','understand','backchain','candidates','ground','reconcile')),
             'by_work':{work:{'calls':len(selected),
                 'seconds':sum(c.get('seconds',0) for c in selected),
                 'latency_p50':percentile([c['seconds'] for c in selected if 'seconds' in c],.5),
                 'latency_p95':percentile([c['seconds'] for c in selected if 'seconds' in c],.95),
                 'completion_tokens':sum((c.get('usage') or {}).get('completion_tokens',0) for c in selected)}
-                for work in ('understand','backchain','candidates','ground','reconcile','choose_skill','execute_step','aim','read_memory')
+                for work in ('act','understand','backchain','candidates','ground','reconcile','choose_skill','execute_step','aim','read_memory')
                 for selected in [[c for c in calls if c.get('work')==work]]}},
         'committed_actions':len(actions), 'hints':hints}
 

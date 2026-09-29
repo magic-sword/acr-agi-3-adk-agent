@@ -3,7 +3,8 @@
 Boxes are half-open internally. Multiple exact matches are unresolved, even
 when one lies at the old position. A region ID is not proof of object identity.
 """
-from .geometry import extract
+from .geometry import extract, components
+from .region_masks import encode, support, translate
 
 
 class ProposalTracker:
@@ -15,23 +16,36 @@ class ProposalTracker:
         self.shape = None
         self.program = None
 
-    def add(self, boxes, source):
+    def add(self, boxes, source, masks=None):
         h, w = self.shape
         # Validate the whole provider response before mutating state.
         for box in boxes:
             if (len(box) != 4 or any(type(x) is not int for x in box) or
                     not (0 <= box[0] < box[2] <= w and 0 <= box[1] < box[3] <= h)):
                 raise ValueError('invalid proposal box')
-        existing = {tuple(t['box']): t for t in self.tracks}
-        for box in boxes:
-            if tuple(box) in existing:
-                if source not in existing[tuple(box)]['sources']:
-                    existing[tuple(box)]['sources'].append(source)
+        if masks is not None:
+            if len(masks) != len(boxes):
+                raise ValueError('proposal masks must align with boxes')
+            for box, runs in zip(boxes, masks):
+                if any(len(r) != 3 or any(type(v) is not int for v in r) or
+                       not (box[1] <= r[0] < box[3] and box[0] <= r[1] < r[2] <= box[2]) for r in runs):
+                    raise ValueError('invalid proposal mask')
+        def key(box, mask):
+            return tuple(box), None if mask is None else tuple(tuple(r) for r in mask)
+        existing = {key(t['box'], t.get('mask_runs')): t for t in self.tracks}
+        for i, box in enumerate(boxes):
+            mask = masks[i] if masks is not None else None
+            k = key(box, mask)
+            if k in existing:
+                if source not in existing[k]['sources']:
+                    existing[k]['sources'].append(source)
                 continue
             self.serial += 1
             track = dict(id=self.serial, box=list(box), sources=[source])
+            if mask is not None:
+                track['mask_runs'] = [list(r) for r in mask]
             self.tracks.append(track)
-            existing[tuple(box)] = track
+            existing[k] = track
 
     def advance(self, grid):
         import numpy as np
@@ -46,8 +60,11 @@ class ProposalTracker:
         # combinatorial geometry extraction on stationary patterned boards.
         if not unchanged:
             self.program = extract(grid, 'p')
-        boxes = [[o['bbox'][0], o['bbox'][1], o['bbox'][2]+1, o['bbox'][3]+1]
-                 for o in self.program['instances']]
+            # Keep original parts even when the geometry extractor proposes a whole.
+            self.parts = components(grid)
+        instances = self.program['instances']
+        boxes = [[o['bbox'][0], o['bbox'][1], o['bbox'][2]+1, o['bbox'][3]+1] for o in instances]
+        masks = [encode(support(o)) for o in instances]
         old = self.tracks
         self.tracks = []
         links, unresolved = [], []
@@ -70,15 +87,25 @@ class ProposalTracker:
                     continue
                 y, x = matches[0]
                 box = (int(x+left), int(y+top), int(x+left+bw), int(y+top+bh))
-                found.setdefault(box, []).append(t)
-            for box, matches in found.items():
+                # Different masks within an identical box remain distinct proposals.
+                mask = t.get('mask_runs')
+                moved_mask = translate(mask, box[0]-x1, box[1]-y1) if mask is not None else None
+                key = box, None if moved_mask is None else tuple(tuple(r) for r in moved_mask)
+                found.setdefault(key, []).append(t)
+            for (box, mask), matches in found.items():
                 if len(matches) != 1:
                     unresolved.extend(dict(track=t, reason='competing_tracks') for t in matches)
                     continue
                 t = matches[0]
-                self.tracks.append(dict(t, box=list(box)))
+                moved = dict(t, box=list(box))
+                if mask is not None:
+                    moved['mask_runs'] = [list(r) for r in mask]
+                self.tracks.append(moved)
                 links.append(dict(id=t['id'], before=t['box'], after=list(box)))
-        self.add(boxes, 'program')
+        self.add(boxes, 'program', masks)
+        parts = self.parts[:256]
+        self.add([[p['box'][0], p['box'][1], p['box'][2]+1, p['box'][3]+1] for p in parts],
+                 'component', [encode(p['pixels']) for p in parts])
         covered = np.zeros(self.shape, bool)
         for t in old+self.tracks:
             x1, y1, x2, y2 = t['box']
@@ -88,4 +115,4 @@ class ProposalTracker:
         self.previous = current.copy()
         return dict(links=links, unresolved=unresolved, changed_pixels=int(changed.sum()),
                     uncovered_positions=residual, unchanged=unchanged,
-                    extraction_limited=bool(self.program.get('extraction_limited')))
+                    extraction_limited=bool(self.program.get('extraction_limited') or len(self.parts) > 256))

@@ -12,7 +12,8 @@ class StructureTests(unittest.TestCase):
     def test_registry_and_contracts_are_read_from_current_source(self):
         data=read_structure(ROOT)
         tasks={t['id']:t for t in data['tasks']}
-        self.assertEqual(set(tasks), {'understand','backchain','candidates','ground','reconcile','choose_skill','execute_step','aim','read_memory','answer_question'})
+        self.assertEqual(set(tasks), {'act','understand','backchain','candidates','ground','reconcile','choose_skill','execute_step','aim','read_memory','answer_question'})
+        self.assertEqual(tasks['act']['tool'], 'submit_next_action')
         self.assertEqual(tasks['ground']['tool'], 'submit_plan_choice')
         self.assertIn('desired_state', tasks['backchain']['fields'])
         self.assertIn('candidates', tasks['candidates']['fields'])
