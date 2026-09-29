@@ -1,23 +1,44 @@
-"""Current single-action lifecycle, shared with the replay diagram."""
-STATES = {
-    'observe': ('画面・受付・実測', 'host', 40, 50),
-    'act': ('結果解釈＋次の1操作', 'llm', 370, 50),
-    'wait': ('操作送信・観測待ち', 'host', 700, 50),
-    'stop': ('終了・期限・受付による停止', 'terminal', 370, 300),
-}
-TRANSITIONS = {
-    'direct_received': ('observe','act','現在の観測と直前の結果','normal'),
-    'direct_accepted': ('act','wait','使用可能な操作・現在マスク内の座標','normal'),
-    'repair_act': ('act','act','出力契約の修正は最大1回','recovery'),
-    'invalid_act': ('act','stop','出力契約エラー','stop'),
-}
-GLOBAL_GATES = [
-    '通常は結果解釈と次の1操作の選択を1回のモデル要求に統合',
-    'クリック位置は現在の対象マスク内からホストが決定',
-    '操作対象の無変化・不明と、別対象の実測された変化だけを履歴へ保存',
-    '終了・受付不明・使用不可操作・観測ID・実時間予算はホストが検査',
-    '操作選択・受付・実測とモデルの因果解釈を区別する',
-]
+"""Goal planning and fast abstract-operation execution; no cursor or memory-reader stages."""
+STATES = {'observe': ('画面・受付・実測', 'host', 40, 50),
+ 'understand': ('熟考：状況理解', 'llm', 370, 50),
+ 'backchain': ('熟考：前提条件を逆算', 'llm', 700, 50),
+ 'candidates': ('暫定：動詞と対象の候補生成', 'llm', 1360, 50),
+ 'ground': ('熟考：実行手順へ具体化', 'llm', 1030, 50),
+ 'reconcile': ('熟考：結果照合・更新', 'llm', 370, 300),
+ 'execute_step': ('高速：操作 / 7 / 8', 'llm', 700, 530),
+ 'wait': ('操作送信・観測待ち', 'host', 40, 300),
+ 'stop': ('終了・期限・受付による停止', 'terminal', 40, 530)}
+TRANSITIONS = {'compact_backchained': ('backchain', 'candidates', '小目標から抽象操作候補へ', 'normal'),
+ 'scene_candidates': ('understand', 'candidates', '現在の対象を再取得', 'normal'),
+ 'candidates_ready': ('candidates', 'ground', '最大3候補から行動計画', 'normal'),
+ 'candidates_missing': ('candidates', 'understand', '対象情報の不足', 'recovery'),
+ 'focused_grounded': ('ground', 'execute_step', '選択した手順を起動', 'normal'),
+ 'repair_candidates': ('candidates', 'candidates', '候補の出力修正', 'recovery'),
+ 'invalid_candidates': ('candidates', 'stop', '候補の出力契約エラー', 'stop'),
+ 'understood': ('understand', 'backchain', '対象と疑問から逆算', 'normal'),
+ 'ground_understand': ('ground', 'understand', '対象の再解釈が必要', 'recovery'),
+ 'ground_backchain': ('ground', 'backchain', '前提条件の修正が必要', 'recovery'),
+ 'probe_observed': ('observe', 'reconcile', '試行結果を取得（達成とは別）', 'normal'),
+ 'step_reconsider': ('execute_step', 'reconcile', '8：予想外／判断不能', 'recovery'),
+ 'step_done': ('execute_step', 'execute_step', '7：手続き内の次の段階', 'normal'),
+ 'procedure_done': ('execute_step', 'reconcile', '7：小目標の完了候補', 'normal'),
+ 'review_understand': ('reconcile', 'understand', '対象・目標解釈を更新', 'recovery'),
+ 'review_resume': ('reconcile', 'execute_step', '未完了の手順を継続', 'normal'),
+ 'repair_understand': ('understand', 'understand', '理解の出力修正', 'recovery'),
+ 'repair_backchain': ('backchain', 'backchain', '依存関係の出力修正', 'recovery'),
+ 'repair_ground': ('ground', 'ground', '手順の出力修正', 'recovery'),
+ 'repair_reconcile': ('reconcile', 'reconcile', '照合の出力修正', 'recovery'),
+ 'invalid_understand': ('understand', 'stop', '理解の出力契約エラー', 'stop'),
+ 'invalid_backchain': ('backchain', 'stop', '依存関係の出力契約エラー', 'stop'),
+ 'invalid_ground': ('ground', 'stop', '手順の出力契約エラー', 'stop'),
+ 'invalid_reconcile': ('reconcile', 'stop', '照合の出力契約エラー', 'stop'),
+ 'direct_accepted': ('execute_step', 'wait', '具体的な1アクションを送信', 'normal'),
+ 'direct_received': ('observe', 'understand', '初回・境界の理解', 'normal')}
+GLOBAL_GATES = ['SAM・追跡から対象仮説を得て、最終目標・小目標・抽象操作・手順を保持',
+ '高速実行は現在の手順から1トークンで具体的な1アクションを選ぶ',
+ 'クリック座標は現在マスク内で決定。カーソル調整・汎用記憶読み出しは使わない',
+ '操作対象の無変化・不明と、別対象の実測変化だけを履歴に残す',
+ '未実行の検証を完了扱いしない。実行受付と次の観測を待つ']
 
 
 def destination(event):

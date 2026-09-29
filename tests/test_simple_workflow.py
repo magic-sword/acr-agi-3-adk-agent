@@ -96,12 +96,13 @@ class SimpleWorkflowTests(unittest.TestCase):
         self.assertEqual(result['reason'], 'execution_outcome_unknown')
         self.assertEqual(r.memory.model_calls, 1)
 
-    def test_default_factory_uses_simple_runtime(self):
+    def test_default_factory_preserves_planning(self):
         from agent.adk_policy import create_runtime
         with patch.dict('os.environ', {'COGNITION_PLANNING_COMPARISON':'',
                 'COGNITION_MEMORY_COMPARISON':'', 'COGNITION_ACTION_UPDATE_COMPARISON':''}):
             r = create_runtime('test'); self.addCleanup(r.close)
-        self.assertIsInstance(r, SimpleRuntime)
+        from agent.cognition.focused_workflow import FocusedRuntime
+        self.assertIsInstance(r, FocusedRuntime)
 
     def test_invalid_output_repairs_once_without_sending_an_invalid_action(self):
         r = self.runtime(); calls = []

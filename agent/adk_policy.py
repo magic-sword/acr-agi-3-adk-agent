@@ -3,15 +3,15 @@ from __future__ import annotations
 
 import os
 from .cognition.workflow import CognitiveRuntime
-from .cognition.simple_workflow import SimpleRuntime
+from .cognition.focused_workflow import FocusedRuntime
 
 
-def create_runtime(game_id: str) -> CognitiveRuntime:
+def create_runtime(game_id: str, *, candidate_generator=None) -> CognitiveRuntime:
     retired = ('COGNITION_PLANNING_COMPARISON', 'COGNITION_MEMORY_COMPARISON', 'COGNITION_ACTION_UPDATE_COMPARISON')
     if any(os.getenv(key) for key in retired):
         raise ValueError('Legacy comparison runtimes were removed; unset COGNITION_*_COMPARISON')
-    return SimpleRuntime(
-        game_id, os.getenv("ADK_MODEL") or None,
+    return FocusedRuntime(
+        game_id, os.getenv("ADK_MODEL") or None, candidate_generator=candidate_generator,
         repair_attempts=int(os.getenv("COGNITION_REPAIR_ATTEMPTS", "1")),
         decision_seconds=float(os.getenv("COGNITION_DECISION_SECONDS", "45")),
         max_resets=int(os.getenv("COGNITION_MAX_RESETS", "2")),

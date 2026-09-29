@@ -2,7 +2,7 @@
 
 実装日：2026-09-29。対象認識処理に、領域候補より上の対象仮説と履歴対応を追加した。**元の候補を保持し、部品・全体・連動する集合を併存させる。対象の同一性が曖昧なら、過去結果の対応も曖昧なものとして提示する。**
 
-これは認識・記憶の実装方針であり、未知ゲームの攻略性能や物理的な物体認識の正しさを保証するものではない。通常経路は後続の単純化で `SimpleRuntime` に統一した。以下の対象統合・対応の研究機能すべてが現在のモデル入力に使われるわけではない。現在の入力と履歴は[引き継ぎ](visual-recognition-handoff-ja.md)を参照。
+これは認識・記憶の実装方針であり、未知ゲームの攻略性能や物理的な物体認識の正しさを保証するものではない。通常経路は計画と高速実行を持つ `FocusedRuntime` に復元した。以下の対象統合・対応の研究機能すべてが現在のモデル入力に使われるわけではない。現在の入力と履歴は[引き継ぎ](visual-recognition-handoff-ja.md)を参照。
 
 ## 1. データの流れ
 
@@ -15,7 +15,7 @@ SAMマスク・プログラム領域・元の連結成分
   → 実行、対象自身と別対象の変化を分けた結果照合
 ```
 
-主な実装は [object_memory.py](../agent/cognition/object_memory.py)、マスク形式は [region_masks.py](../agent/cognition/region_masks.py)、通常経路との接続は [workflow.py](../agent/cognition/workflow.py)。現行メモリschemaは15。旧14は廃止。
+主な実装は [object_memory.py](../agent/cognition/object_memory.py)、マスク形式は [region_masks.py](../agent/cognition/region_masks.py)、通常経路との接続は [workflow.py](../agent/cognition/workflow.py)。現行の計画メモリschemaは16。15は単一操作の比較実験用。
 
 ## 2. マスクと部品を残す
 

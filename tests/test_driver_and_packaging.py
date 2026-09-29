@@ -77,6 +77,8 @@ class DriverTests(unittest.TestCase):
         for module in ('execution','deliberation','state'):
             self.assertIn(f'agent/cognition/{module}.py', SOURCES)
         self.assertFalse(any(path.startswith('tests/') or '.ipynb_checkpoints' in path for path in SOURCES))
-        self.assertNotIn('agent/cognition/focused_workflow.py', SOURCES)
+        self.assertIn('agent/cognition/focused_workflow.py', SOURCES)
+        self.assertNotIn('agent/cognition/cursor.py', SOURCES)
+        self.assertNotIn('agent/cognition/notebook.py', SOURCES)
         self.assertTrue(all(w.is_file() for w in ADK_WHEELS))
         self.assertIn("google-adk==2.0.0", str(notebook))

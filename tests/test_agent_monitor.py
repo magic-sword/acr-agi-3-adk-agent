@@ -163,23 +163,23 @@ class ReplayTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)
             events=[('observations',{'event':'observation_received','step':0,'grid':[[0]]}),
-                    ('states',{'event':'state_entered','state':'DECIDE','work':'act','input':{}}),
-                    ('states',{'event':'state_exited','state':'DECIDE','work':'act','output':{}}),
-                    ('states',{'event':'state_entered','state':'DECIDE','work':'act','input':{}}),
-                    ('artifacts',{'event':'machine_transition','target':'act','condition':'R'}),
-                    ('states',{'event':'state_entered','state':'RUN','work':'act','input':{}}),
+                    ('states',{'event':'state_entered','state':'DECIDE','work':'execute_step','input':{}}),
+                    ('states',{'event':'state_exited','state':'DECIDE','work':'execute_step','output':{}}),
+                    ('states',{'event':'state_entered','state':'DECIDE','work':'execute_step','input':{}}),
+                    ('artifacts',{'event':'machine_transition','target':'execute_step','condition':'R'}),
+                    ('states',{'event':'state_entered','state':'RUN','work':'execute_step','input':{}}),
                     ('states',{'event':'state_exited','state':'RUN','output':{'result':{'status':'action'}}}),
                     ('execution',{'event':'action_acknowledged','step':0,'action':{'action':'UP'}})]
             for i,(kind,row) in enumerate(events):
                 with (root/f'r.{kind}.jsonl').open('a') as f:f.write(json.dumps(dict(row,sequence=i+1))+'\n')
             t=Timeline(Run(root,'r')).load()
             self.assertEqual([s['machine']['node'] for s in t.snapshots],
-                             ['observe','act','act','act','act','wait','wait','wait'])
+                             ['observe','execute_step','execute_step','execute_step','execute_step','wait','wait','wait'])
             self.assertIn('未送信',t.snapshot(6)['machine']['phase'])
             self.assertIn('次の観測待ち',t.snapshot(7)['machine']['phase'])
             html=state_diagram_html(t.snapshot(3)['machine'])
-            self.assertIn('data-state="act" data-active="true"',html)
-            self.assertNotIn('<script>',state_diagram_html({'node':'act','phase':'<script>x</script>'}))
+            self.assertIn('data-state="execute_step" data-active="true"',html)
+            self.assertNotIn('<script>',state_diagram_html({'node':'execute_step','phase':'<script>x</script>'}))
 
     def test_state_replay_skips_same_state_events_and_caches_the_diagram(self):
         from scripts.notebook_monitor import BenchmarkReplay
@@ -198,4 +198,4 @@ class ReplayTests(unittest.TestCase):
                 diagram.assert_not_called()
                 w.slider.value=3
                 diagram.assert_called_once()
-            self.assertIn('data-state="act"',w.diagram.value)
+            self.assertIn('data-state="execute_step"',w.diagram.value)

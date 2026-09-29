@@ -9,11 +9,12 @@ LABELS = {'act':'結果解釈＋次の1操作'}
 
 def read_structure(root):
     root = Path(root)
-    paths = [root/'agent/cognition'/name for name in ('workflow.py','deliberation.py','execution.py','state.py','machine.py','perception.py','geometry.py','simple_workflow.py')]
+    paths = [root/'agent/cognition'/name for name in ('workflow.py','deliberation.py','execution.py','state.py','machine.py','perception.py','geometry.py','simple_workflow.py','focused_workflow.py','focused_state.py','candidates.py')]
     sources = {str(p.relative_to(root)):p.read_text() for p in paths if p.is_file()}
     if 'agent/cognition/workflow.py' not in sources:
         raise ValueError('この場所には実装ソースが保存されていません')
-    required = ('agent/cognition/simple_workflow.py','agent/cognition/machine.py')
+    runtime_file = 'focused_workflow.py' if 'agent/cognition/focused_workflow.py' in sources else 'simple_workflow.py'
+    required = ('agent/cognition/'+runtime_file,'agent/cognition/machine.py')
     if any(name not in sources for name in required):
         raise ValueError('最新のステートマシン定義がありません')
     machine_tree=ast.parse(sources['agent/cognition/machine.py'])
@@ -23,12 +24,14 @@ def read_structure(root):
     if set(declarations) != {'STATES','TRANSITIONS','GLOBAL_GATES'}:
         raise ValueError('ステート・遷移・共通条件の宣言が不足しています')
     tasks = []
-    source = sources.get('agent/cognition/simple_workflow.py')
+    source = sources.get('agent/cognition/'+runtime_file)
     if source:
         tree = ast.parse(source)
         classes = {n.name:n for n in ast.parse(sources.get('agent/cognition/state.py','')).body if isinstance(n,ast.ClassDef)}
         classes.update({n.name:n for n in tree.body if isinstance(n,ast.ClassDef)})
-        runtime = next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name == 'SimpleRuntime')
+        for filename in ('focused_state.py', 'candidates.py'):
+            classes.update({n.name:n for n in ast.parse(sources.get('agent/cognition/'+filename,'')).body if isinstance(n,ast.ClassDef)})
+        runtime = next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name in ('FocusedRuntime', 'SimpleRuntime'))
         overrides = {n.targets[0].id:n.value for n in runtime.body if isinstance(n,ast.Assign) and isinstance(n.targets[0],ast.Name)}
         registry = overrides['stage_tasks']
         instructions = ast.literal_eval(overrides['stage_instructions'])

@@ -1,4 +1,4 @@
-"""One model decision per action: interpret the last result and choose the next trial."""
+"""Single-action baseline retained for regression comparisons, not the default planner."""
 from copy import deepcopy
 
 from pydantic import Field
@@ -94,7 +94,7 @@ reunderstanding, completion checks, cursor adjustment, or another planning stage
                 if o['observation_id'] == self.obs['observation_id'] and o.get('mask_runs')]
 
     def _machine_transition(self, event):
-        return super()._machine_transition('direct_accepted' if event == 'accepted' else event)
+        self._record('artifacts', 'baseline_transition', transition=event, phase=self.memory.phase)
 
     def _snapshot_extra(self):
         return dict(object_index=objects.index(self.memory.object_memory),

@@ -42,3 +42,10 @@ def answer(model, payload):
 def ack(runtime):
     runtime.record_execution('action_dispatched')
     runtime.record_execution('action_acknowledged')
+
+def skill(name='move', x=None):
+    return {'name':name,'when_to_use':'The target is visible.','effect':'Move the actor to the marked target.',
+        'steps':[{'purpose':'Move the actor into the target.', 'continue_when':'The actor is outside the target.',
+                  'done_when':'The actor is inside the marked target.',
+                  'reconsider_when':'The actor does not move as expected.',
+                  'options':[{'action':({'action':'UP'} if x is None else {'action':'CLICK','target_query':'The marked cell.'}),'expected_effect':'The actor moves into the target.'}]}]}

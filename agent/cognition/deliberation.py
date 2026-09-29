@@ -109,3 +109,8 @@ class DeliberationStages:
         if self.time_left()>0:
             self._machine_transition('invalid_'+work)
             self._stop('stage_output_invalid')
+
+
+def unique(values, name):
+    if len(values) != len(set(values)):
+        raise ValueError("duplicate " + name)

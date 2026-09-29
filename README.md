@@ -1,24 +1,26 @@
-# ARC-AGI-3 single-action agent
+# ARC-AGI-3 planning and fast-execution agent
 
-A local Google ADK 2.0 agent using Qwen3-VL-4B-Instruct. Each model request
-interprets the previous acknowledged result and selects the next single action.
-The host validates controls and current object IDs, and places clicks inside the
-selected object's measured mask. No separate planning, fast control, cursor
-adjustment, or reconciliation loop runs between actions.
+A local Google ADK 2.0 agent using Qwen3-VL-4B-Instruct. The default
+`FocusedRuntime` retains a final goal, compact subgoals, abstract verb-and-target
+candidates, and multi-step procedures. Fast execution translates the current
+procedure into one concrete controller action using a single output token.
+Repeated actions do not rebuild the entire plan.
+
+SAM and programmatic tracking provide revisable object hypotheses. Click coordinates
+are selected by the host inside the current target mask. The obsolete cursor
+adjustment loop and generic memory-reader loop are not used. History keeps the
+intended target's result (including no change or unknown) and actual changes elsewhere.
 
 Start with the [current handoff](docs/visual-recognition-handoff-ja.md),
-[current planning policy](docs/planning-adopted-ja.md), and
+[planning policy](docs/planning-adopted-ja.md),
+[restoration and validation](docs/planning-restoration-ja.md), and
 [evaluation guide](docs/local-evaluation-ja.md).
 
-Recognition uses SAM at episode boundaries, then programmatic pixel tracking and
-revisable object hypotheses. History retains the intended target's result (including
-no change or unknown) and actual changes elsewhere. Unrelated unchanged objects
-are omitted. A model interpretation is not proof of a game rule.
-
-The old multi-stage and comparison runtimes have been removed. Their findings are
-kept in [research history](docs/history/runtime/retired-implementation-ja.md), not as
-alternative execution paths. Without a model, deterministic probes are available
-only for offline harness testing.
+The earlier replacement of planning with a single-action policy went beyond the
+requested simplification and has been corrected. `SimpleRuntime` is a regression
+baseline, not the default. Old comparison runtimes, cursor adjustment, and notebook
+memory navigation remain removed. Without a model, deterministic probes are for
+offline harness testing only.
 
 ## Setup
 
@@ -67,7 +69,7 @@ make visualize                 # outputs/agent-visualization/index.html
 ```
 
 `make benchmark` records a source snapshot, model/environment hashes, official SDK scores,
-actual actions, observations, model requests and single-action decisions under `outputs/evaluations/`.
+actual actions, observations, model requests, plans and fast execution decisions under `outputs/evaluations/`.
 It never uploads or submits to Kaggle. Short public-game runs are not leaderboard estimates.
 
 Set benchmark parameters in `.env` (plain `NAME=value` assignments):
