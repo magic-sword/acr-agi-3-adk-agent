@@ -9,7 +9,8 @@ from textwrap import dedent
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "notebooks" / "submission.ipynb"
 METADATA = ROOT / "notebooks" / "kernel-metadata.json"
-SOURCES = {str(p.relative_to(ROOT)): p for p in sorted((ROOT / "agent").rglob("*.py"))}
+SOURCES = {str(p.relative_to(ROOT)): p for p in sorted((ROOT / "agent").rglob("*.py"))
+           if not any(part.startswith(".") or part == "__pycache__" for part in p.relative_to(ROOT).parts)}
 SOURCES.update({
     "scripts/wait_model.py": ROOT / "scripts" / "wait_model.py",
     "agents/templates/my_agent.py": ROOT / "agent" / "my_agent.py",

@@ -1,6 +1,6 @@
 # 現行エージェントのローカル評価と改善案
 
-> 過去の実装・調査の記録です。現在の仕様・実行コマンドは[現行実装](../skill-learning-runtime-ja.md)を参照してください。旧APIと旧比較コマンドは削除済みです。
+> 過去の実装・調査の記録です。現在の仕様・実行コマンドは[現行実装](runtime/skill-learning-runtime-ja.md)を参照してください。旧APIと旧比較コマンドは削除済みです。
 
 2026-09-24 10:48 UTC（19:48 JST）に `make benchmark` を実行した。モデルはローカルQwen3-VL-4B-Instruct、公開3ゲームを各1試行、最大12操作・1レベル・判断90秒・プロセス110秒で測定した。実行中のエージェント変更はない。
 
@@ -54,9 +54,9 @@ vc33ではlist_skillsとload_skillが各1回、observe_currentが7回。ls20とf
 
 ## 再現用ファイル
 
-- [評価レポート](../../outputs/evaluations/20260924T104852116656Z/report.md)
-- [集計結果](../../outputs/evaluations/20260924T104852116656Z/summary.json)
-- [条件・ソースハッシュ・モデル情報](../../outputs/evaluations/20260924T104852116656Z/manifest.json)
-- [追加集計：操作座標・ツール利用・実画素差分](../../outputs/evaluations/20260924T104852116656Z/analysis-evidence.json)
+- 評価レポート（旧参照 `../../outputs/evaluations/20260924T104852116656Z/report.md`：現作業ツリーに未同梱）
+- 集計結果（旧参照 `../../outputs/evaluations/20260924T104852116656Z/summary.json`：現作業ツリーに未同梱）
+- 条件・ソースハッシュ・モデル情報（旧参照 `../../outputs/evaluations/20260924T104852116656Z/manifest.json`：現作業ツリーに未同梱）
+- 追加集計：操作座標・ツール利用・実画素差分（旧参照 `../../outputs/evaluations/20260924T104852116656Z/analysis-evidence.json`：現作業ツリーに未同梱）
 
 同ディレクトリのpackageに実行ソース、各ゲーム配下にscorecard.json、gateway.jsonl、cognitionの生応答と画像を保存した。outputsはGit管理対象外。この作業では測定と分析文書の追加を行い、エージェントの動作は変更していない。

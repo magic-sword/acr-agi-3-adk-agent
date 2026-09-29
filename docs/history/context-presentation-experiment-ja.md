@@ -1,6 +1,6 @@
 # 共通文脈の提示だけを変える比較実験
 
-> 過去の実装・調査の記録です。現在の仕様・実行コマンドは[現行実装](../skill-learning-runtime-ja.md)を参照してください。旧APIと旧比較コマンドは削除済みです。
+> 過去の実装・調査の記録です。現在の仕様・実行コマンドは[現行実装](runtime/skill-learning-runtime-ja.md)を参照してください。旧APIと旧比較コマンドは削除済みです。
 
 2026-09-25。[先行研究の検討](agent-consistency-research-ja.md)で提案したA/B比較の最初の実装。
 

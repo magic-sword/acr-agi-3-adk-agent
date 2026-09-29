@@ -1,8 +1,8 @@
 # 自律スキル学習への移行・検証記録
 
-> 履歴文書：この時点の設計・検証を保存したものです。現行の仕事分割・APIは[現行仕様](../skill-learning-runtime-ja.md)と[実験ループ](../goal-experiment-loop-design-ja.md)を参照してください。
+> 履歴文書：この時点の設計・検証を保存したものです。現行の仕事分割・APIは[現行仕様](runtime/skill-learning-runtime-ja.md)と[実験ループ](runtime/goal-experiment-loop-design-ja.md)を参照してください。
 
-2026-09-25。[現行仕様](../skill-learning-runtime-ja.md)、[設計理由と参考文献](../autonomous-skill-learning-design-ja.md)、[評価の再現方法](../local-evaluation-ja.md)。
+2026-09-25。[現行仕様](runtime/skill-learning-runtime-ja.md)、[設計理由と参考文献](runtime/autonomous-skill-learning-design-ja.md)、[評価の再現方法](../local-evaluation-ja.md)。
 
 ## 実装した範囲
 
@@ -36,7 +36,7 @@
 
 ## 最終ソースのQwen実走行
 
-出力: [20260925T081750319403Z/report.md](../../outputs/evaluations/20260925T081750319403Z/report.md)。実行条件・ソーススナップショット・モデル設定は同じ出力のmanifest.jsonとpackage/を参照。
+出力: 20260925T081750319403Z/report.md（旧参照 `../../outputs/evaluations/20260925T081750319403Z/report.md`：現作業ツリーに未同梱）。実行条件・ソーススナップショット・モデル設定は同じ出力のmanifest.jsonとpackage/を参照。
 
 `qwen3-vl-4b-instruct`、公開3ゲーム、各12操作・1レベル上限・推論90秒・ワーカー上限110秒。ライブラリなしから開始し学習を有効化。通常の公式ローカルゲートウェイを使用。
 

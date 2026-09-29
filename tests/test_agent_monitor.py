@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from scripts.agent_monitor import read_journal, Timeline, Run, discover_evaluations, discover_runs, dashboard_html, safe_asset, screen_html, implementation_status
-from agent.cognition.workflow import CognitiveRuntime
+from agent.cognition.simple_workflow import SimpleRuntime
 from agent.local_vlm import LocalVisionLlm
 from runtime_helpers import obs, answer
 
@@ -89,7 +89,7 @@ class ReplayTests(unittest.TestCase):
 
     def test_state_entry_is_flushed_before_model_returns(self):
         with tempfile.TemporaryDirectory() as d:
-            r=CognitiveRuntime('test','local/qwen3-vl-4b-instruct',log_dir=d)
+            r=SimpleRuntime('test','local/qwen3-vl-4b-instruct',log_dir=d)
             self.addCleanup(r.close)
             def respond(model,payload):
                 timeline=Timeline(Run(Path(d),r.session_id));timeline.load()
@@ -101,7 +101,7 @@ class ReplayTests(unittest.TestCase):
             timeline=Timeline(Run(Path(d),r.session_id));timeline.load()
             rows=[e for e in timeline.events if e['_journal']=='states']
             self.assertEqual([(e['event'],e['state']) for e in rows],
-                             [('state_entered','DECIDE'),('state_exited','DECIDE')]*5+
+                             [('state_entered','DECIDE'),('state_exited','DECIDE')]*1+
                              [('state_entered','RUN'),('state_exited','RUN')])
             self.assertEqual(r.memory.last_result['status'],'action')
             sequence=[e['sequence'] for e in timeline.events]
@@ -158,28 +158,28 @@ class ReplayTests(unittest.TestCase):
             self.assertIsNone(s['output'])  # Later snapshots must not mutate the past.
             self.assertIs(s,w.timeline.snapshot(1))
 
-    def test_diagram_tracks_fast_work_and_driver_wait_without_future_leak(self):
+    def test_diagram_tracks_action_work_and_driver_wait_without_future_leak(self):
         from scripts.state_diagram import state_diagram_html
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)
             events=[('observations',{'event':'observation_received','step':0,'grid':[[0]]}),
-                    ('states',{'event':'state_entered','state':'DECIDE','work':'understand','input':{}}),
-                    ('states',{'event':'state_exited','state':'DECIDE','work':'understand','output':{}}),
-                    ('states',{'event':'state_entered','state':'DECIDE','work':'execute_step','input':{}}),
-                    ('artifacts',{'event':'machine_transition','target':'understand','condition':'R'}),
-                    ('states',{'event':'state_entered','state':'RUN','work':'execute_step','input':{}}),
+                    ('states',{'event':'state_entered','state':'DECIDE','work':'act','input':{}}),
+                    ('states',{'event':'state_exited','state':'DECIDE','work':'act','output':{}}),
+                    ('states',{'event':'state_entered','state':'DECIDE','work':'act','input':{}}),
+                    ('artifacts',{'event':'machine_transition','target':'act','condition':'R'}),
+                    ('states',{'event':'state_entered','state':'RUN','work':'act','input':{}}),
                     ('states',{'event':'state_exited','state':'RUN','output':{'result':{'status':'action'}}}),
                     ('execution',{'event':'action_acknowledged','step':0,'action':{'action':'UP'}})]
             for i,(kind,row) in enumerate(events):
                 with (root/f'r.{kind}.jsonl').open('a') as f:f.write(json.dumps(dict(row,sequence=i+1))+'\n')
             t=Timeline(Run(root,'r')).load()
             self.assertEqual([s['machine']['node'] for s in t.snapshots],
-                             ['observe','understand','understand','execute_step','understand','wait','wait','wait'])
+                             ['observe','act','act','act','act','wait','wait','wait'])
             self.assertIn('未送信',t.snapshot(6)['machine']['phase'])
             self.assertIn('次の観測待ち',t.snapshot(7)['machine']['phase'])
             html=state_diagram_html(t.snapshot(3)['machine'])
-            self.assertIn('data-state="execute_step" data-active="true"',html)
-            self.assertNotIn('<script>',state_diagram_html({'node':'understand','phase':'<script>x</script>'}))
+            self.assertIn('data-state="act" data-active="true"',html)
+            self.assertNotIn('<script>',state_diagram_html({'node':'act','phase':'<script>x</script>'}))
 
     def test_state_replay_skips_same_state_events_and_caches_the_diagram(self):
         from scripts.notebook_monitor import BenchmarkReplay
@@ -198,4 +198,4 @@ class ReplayTests(unittest.TestCase):
                 diagram.assert_not_called()
                 w.slider.value=3
                 diagram.assert_called_once()
-            self.assertIn('execute_step',w.diagram.value)
+            self.assertIn('data-state="act"',w.diagram.value)

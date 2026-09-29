@@ -102,7 +102,7 @@ ft09では、どの条件でも過去の白い領域へのクリック計画が�
 
 ## 実装・再実行
 
-[比較ランタイム](../../../agent/cognition/action_update_comparison.py)、[試走スクリプト](../../../scripts/benchmark_action_update.py)、[同一状態の再計画スクリプト](../../../scripts/probe_action_update_frozen.py)、[監査スクリプト](../../../scripts/analyze_action_update.py)、[単体テスト](../../../tests/test_action_update_comparison.py)。
+[比較ランタイム](../runtime/retired-implementation-ja.md)、[試走スクリプト](../runtime/retired-implementation-ja.md)、[同一状態の再計画スクリプト](../runtime/retired-implementation-ja.md)、[監査スクリプト](../../../scripts/analyze_action_update.py)、[単体テスト](../runtime/retired-implementation-ja.md)。
 
 ```bash
 docker compose run --rm --no-deps -T \

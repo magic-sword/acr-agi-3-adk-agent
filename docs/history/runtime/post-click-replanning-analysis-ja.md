@@ -1,3 +1,5 @@
+> 廃止済み方式の検証・設計記録です。現在の実装は[引き継ぎ](../../visual-recognition-handoff-ja.md)を参照してください。
+
 # 無反応の確認後に理解と計画を反復する原因
 
 2026-09-27。対象は `20260926T161902574015Z` のft09。
@@ -6,8 +8,8 @@
 
 ## 確認できた経路
 
-実モデルの[判断ログ](../outputs/evaluations/20260926T161902574015Z/ft09-0d8bbf25/cognition/3f52019938df40c184e140711e084e58.model.jsonl)
-と[実際の要求](../outputs/evaluations/20260926T161902574015Z/ft09-0d8bbf25/cognition/3f52019938df40c184e140711e084e58.requests.jsonl)が根拠。
+実モデルの判断ログ（旧参照 `../../../outputs/evaluations/20260926T161902574015Z/ft09-0d8bbf25/cognition/3f52019938df40c184e140711e084e58.model.jsonl`：現作業ツリーに未同梱）
+と実際の要求（旧参照 `../../../outputs/evaluations/20260926T161902574015Z/ft09-0d8bbf25/cognition/3f52019938df40c184e140711e084e58.requests.jsonl`：現作業ツリーに未同梱）が根拠。
 
 |段階|記録された事実|
 |---|---|
@@ -36,7 +38,7 @@ last_result、recent_trials、previous_understanding、concept_catalogueが含�
 Jupyterのノートブックはログの表示用で、モデルが自発的に読みに行くものではない。
 したがって「読取ツールを使わないため無反応を知らなかった」という説明はこの記録には合わない。
 
-一方、[deliberation.py](../agent/cognition/deliberation.py)の `_accept_stage` は
+一方、[deliberation.py](../../../agent/cognition/deliberation.py)の `_accept_stage` は
 understandとreconcileの両方に同じ因果メモの置換権限を与えている。
 これは結果から得た知識が、再解釈によって後退できる実装上の問題。
 実測結果と照合履歴そのものは残るので、「すべての証拠が消えた」という意味ではない。
@@ -46,8 +48,8 @@ understandとreconcileの両方に同じ因果メモの置換権限を与えて�
 
 同じ画像・同じモデル・temperature=0・同じ提出スキーマを使用。
 各条件1回で、攻略性能の比較実験ではない。最後の2条件は指示文も変えている。
-[再実行スクリプト](../outputs/analysis/ft09-understanding-inputs/run.py)、
-[実要求の変更点と生応答](../outputs/analysis/ft09-understanding-inputs/results.jsonl)。
+[再実行スクリプト](../../../outputs/analysis/ft09-understanding-inputs/run.py)、
+[実要求の変更点と生応答](../../../outputs/analysis/ft09-understanding-inputs/results.jsonl)。
 
 |条件|入力トークン|観測された応答|
 |---|---:|---|

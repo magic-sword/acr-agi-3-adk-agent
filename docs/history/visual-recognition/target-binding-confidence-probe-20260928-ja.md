@@ -44,7 +44,7 @@
 
 **現在の構成で試せる次の方式**
 
-[`fast_choice.py`](../../../agent/fast_choice.py)は既に1トークン＋logprobsを取得している。[llama.cpp公式仕様](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)にも確率の取得方法がある。確率の取得位置、許可候補外のトークン、上位件数による欠落は確認して扱う。
+[`fast_choice.py`](../runtime/retired-implementation-ja.md)は既に1トークン＋logprobsを取得している。[llama.cpp公式仕様](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)にも確率の取得方法がある。確率の取得位置、許可候補外のトークン、上位件数による欠落は確認して扱う。
 
 次の測定候補は、候補ごとに「一致／不一致／情報不足」を1トークンで判定し、その確率も保存する方式。候補が入力に指定されていれば、出力に候補IDを再生成する必要はない。候補間の一致評価は独立に持ち、コード側で単一／複数／該当なし／保留へ集約する。画像と共通情報のプレフィックスを再利用する余地はあるが、現在の1スロット構成でJevの並列出力と同じ速度になるとは仮定しない。
 

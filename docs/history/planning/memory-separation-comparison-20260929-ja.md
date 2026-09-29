@@ -109,7 +109,7 @@ ft09のseparatedは各巡で同じ位置を5回クリックした。位置は1�
 
 ## 実装と再実行
 
-[比較ランタイム](../../../agent/cognition/memory_comparison.py)は、`COGNITION_PLANNING_COMPARISON=B`に加えて`COGNITION_MEMORY_COMPARISON=mixed`または`separated`を指定して選ぶ。通常設定への適用は行っていない。
+[比較ランタイム](../runtime/retired-implementation-ja.md)は、`COGNITION_PLANNING_COMPARISON=B`に加えて`COGNITION_MEMORY_COMPARISON=mixed`または`separated`を指定して選ぶ。通常設定への適用は行っていない。
 
 ```bash
 docker compose run --rm --no-deps \
@@ -119,8 +119,8 @@ docker compose run --rm --no-deps \
   --games ls20,vc33,ft09 --repeats 2 --steps 12 --seconds 90 --hard-seconds 110
 ```
 
-[実行ドライバー](../../../scripts/benchmark_memory_comparison.py)は既存出力先への上書きを拒否し、全試走のコードハッシュ一致を確認する。[照合根拠の抽出](../../../scripts/audit_memory_comparison.py)は`python3 scripts/audit_memory_comparison.py outputs/memory-comparison-new-run`で実行する。
+[実行ドライバー](../runtime/retired-implementation-ja.md)は既存出力先への上書きを拒否し、全試走のコードハッシュ一致を確認する。[照合根拠の抽出](../runtime/retired-implementation-ja.md)は`python3 scripts/audit_memory_comparison.py outputs/memory-comparison-new-run`で実行する。
 
-全251テスト成功。[追加テスト](../../../tests/test_memory_comparison.py)は、両条件の指示・契約・画像の一致、今回の予測の固定、未実行試行への過去結果の非混入、境界での短期情報の解除と知識保持、無効な知識更新の原子性、明示的な構成選択を確認した。[テストログ](../../../outputs/memory-comparison-20260929/tests.log)。単体テストでは実SAM初期化を抑え、実SAMは試走で別途検証する。
+全251テスト成功。[追加テスト](../runtime/retired-implementation-ja.md)は、両条件の指示・契約・画像の一致、今回の予測の固定、未実行試行への過去結果の非混入、境界での短期情報の解除と知識保持、無効な知識更新の原子性、明示的な構成選択を確認した。[テストログ](../../../outputs/memory-comparison-20260929/tests.log)。単体テストでは実SAM初期化を抑え、実SAMは試走で別途検証する。
 
 知識を長く蓄積した場合の関連検索、長い遅延を伴う因果推論、別ゲームへの転移、プロセス再起動後の知識復元は今回の評価範囲に含まない。知識自体は全件保持するが、モデルへ提示するのは直近8件であり、本番の長期記憶検索を完成させた実装ではない。

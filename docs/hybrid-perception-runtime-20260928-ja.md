@@ -169,7 +169,7 @@ Kaggleでは公開NotebookとPrivate Datasetを組み合わせること自体は
 ## 保存資料と再検証
 
 - 実装：[初回SAM](../agent/cognition/sam_proposals.py)、[画素追跡](../agent/cognition/proposal_tracking.py)、[測定スキーマへの接続](../agent/cognition/hybrid_perception.py)、[既存の意味質問](../agent/cognition/perception.py)
-- [再生検証スクリプト](../scripts/verify_hybrid_runtime.py)、[結合テスト](../tests/test_hybrid_perception.py)
+- [再生検証スクリプト](history/runtime/retired-implementation-ja.md)、[結合テスト](../tests/test_hybrid_perception.py)
 - [保存SAMによる一致検証](../outputs/hybrid-runtime-20260928/recorded/summary.json)、[実GPUによる再生結果](../outputs/hybrid-runtime-20260928/live/summary.json)、[全測定ログ](../outputs/hybrid-runtime-20260928/live/measurements.jsonl)
 - [実Qwenの要求・応答](../outputs/hybrid-runtime-20260928/qwen-smoke.json)、[全206テストのログ](../outputs/hybrid-runtime-20260928/tests-final.log)
 - [実SDK・複製コードによる2操作確認](../outputs/hybrid-runtime-20260928/gateway-smoke/report.md)、[設定・資材ハッシュ](../outputs/hybrid-runtime-20260928/gateway-smoke/manifest.json)

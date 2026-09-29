@@ -1,35 +1,24 @@
-# ARC-AGI-3 fast/slow agent
+# ARC-AGI-3 single-action agent
 
-A local Google ADK 2.0 agent with two decision speeds using Qwen3-VL-4B-Instruct.
-The default workflow observes relevant targets, generates one compact subgoal,
-proposes up to three semantic action candidates, grounds the chosen procedure,
-and reconciles its actual results. Candidate generation is a replaceable provisional
-provider. Planning receives purpose, candidates and scoped evidence; it does not
-reread a shared notebook. The fast path repeats controller actions and aligns clicks
-with one output token. `7` proposes step completion; `8` requests reconciliation.
-Probes may span several actions; completing a probe does not confirm the goal.
-Without a model the driver uses deterministic smoke probes.
+A local Google ADK 2.0 agent using Qwen3-VL-4B-Instruct. Each model request
+interprets the previous acknowledged result and selects the next single action.
+The host validates controls and current object IDs, and places clicks inside the
+selected object's measured mask. No separate planning, fast control, cursor
+adjustment, or reconciliation loop runs between actions.
 
-See the [current design and limits](docs/fast-slow-runtime-ja.md),
-[latency investigation](docs/fast-slow-runtime-research-ja.md), and
-[evaluation guide](docs/local-evaluation-ja.md). Earlier attention and
-skill-learning documents describe superseded policies.
+Start with the [current handoff](docs/visual-recognition-handoff-ja.md),
+[current planning policy](docs/planning-adopted-ja.md), and
+[evaluation guide](docs/local-evaluation-ja.md).
 
-Start with [物体認識の採用構成・検証結果・参考資料](docs/visual-recognition-adopted-ja.md)
-for the current design, measurement summary, open decisions, and validation logs.
-The default uses SAM once per episode to supplement proposals, then tracks pixels
-with the program; Qwen interprets small measured changes with one-token questions.
-See the [runtime specification](docs/hybrid-perception-runtime-20260928-ja.md) for
-configuration, the [handoff](docs/visual-recognition-handoff-ja.md) for outstanding work,
-and the [research history](docs/history/visual-recognition/README.md) for brief lessons
-and archived experiments. `COGNITION_PROPOSALS=program` retains the previous sensor.
-Preprocessing choices remain subject to their effect on downstream planning and
-causal reasoning; recognition scores alone do not establish the best input or amount of detail.
+Recognition uses SAM at episode boundaries, then programmatic pixel tracking and
+revisable object hypotheses. History retains the intended target's result (including
+no change or unknown) and actual changes elsewhere. Unrelated unchanged objects
+are omitted. A model interpretation is not proof of a game rule.
 
-For the adopted planning direction and supporting experiments, see
-[行動計画の採用方針と検証根拠](docs/planning-adopted-ja.md): three planning inputs
-and compact backward planning for subgoal generation, including the default workflow,
-provider interface, validation results and remaining limitations in section 6.
+The old multi-stage and comparison runtimes have been removed. Their findings are
+kept in [research history](docs/history/runtime/retired-implementation-ja.md), not as
+alternative execution paths. Without a model, deterministic probes are available
+only for offline harness testing.
 
 ## Setup
 
@@ -64,7 +53,7 @@ one-token choice and returns to deliberation. Playback defaults to state transit
 action and full-event modes are also available. Click **測定・計画を読む** to inspect
 the recorded causal hypotheses, procedures, memory navigation and selected working set at that point in time.
 Deliberation appends evidence and interpretations; one-token memory navigation selects the records
-for the next question. See the [memory retrieval design](docs/memory-retrieval-runtime-ja.md).
+for the next question. See the [memory retrieval design](docs/history/runtime/memory-retrieval-runtime-ja.md).
 Playback reads only the selected game, updates images only when needed, and opens detailed logs on demand.
 It does not launch evaluations or poll for updates. See the [replay guide](docs/agent-monitor-ja.md).
 
@@ -78,7 +67,7 @@ make visualize                 # outputs/agent-visualization/index.html
 ```
 
 `make benchmark` records a source snapshot, model/environment hashes, official SDK scores,
-actual actions, observations, model requests and fast/slow decisions under `outputs/evaluations/`.
+actual actions, observations, model requests and single-action decisions under `outputs/evaluations/`.
 It never uploads or submits to Kaggle. Short public-game runs are not leaderboard estimates.
 
 Set benchmark parameters in `.env` (plain `NAME=value` assignments):
@@ -120,7 +109,7 @@ CLICK first selects a quadrant with one token (1–4), then enters a cursor loop
 1–4 move, 5/6 change stride, 7 clicks, 8 returns to
 reconciliation. Host previews include a local zoom; cursor moves do not operate the game.
 Bindings expire at the next observation. Directional controls bypass the cursor.
-See [semantic targeting and cursor execution](docs/semantic-cursor-runtime-ja.md).
+See [semantic targeting and cursor execution](docs/history/runtime/semantic-cursor-runtime-ja.md).
 
 Level/reset boundaries clear scene instances, goals, the plan and active step. Concepts, causal notes and
 procedures remain available to deliberation for re-grounding. Fast calls receive the current small goal, semantic targets, baseline, step, options

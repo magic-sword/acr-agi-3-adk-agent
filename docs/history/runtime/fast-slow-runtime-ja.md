@@ -1,6 +1,8 @@
+> 廃止済み方式の検証・設計記録です。現在の実装は[引き継ぎ](../../visual-recognition-handoff-ja.md)を参照してください。
+
 # 段階別の熟考と1トークン実行
 
-2026-09-29：通常の実行経路を `FocusedRuntime` に変更した。現在の工程・入力契約・候補生成の差し替え方法は [採用方針 §6](planning-adopted-ja.md#6-通常ワークフローへの実装) を参照。以下は過去の比較を再現する `CognitiveRuntime` の仕様であり、通常経路の汎用ノート巡回・長い目標階層・重複するスキル選択は廃止した。認識・照準・受付記録の基盤は共用している。
+2026-09-29：通常の実行経路を `FocusedRuntime` に変更した。現在の工程・入力契約・候補生成の差し替え方法は [採用方針 §6](../../planning-adopted-ja.md#6-通常ワークフローへの実装) を参照。以下は過去の比較を再現する `CognitiveRuntime` の仕様であり、通常経路の汎用ノート巡回・長い目標階層・重複するスキル選択は廃止した。認識・照準・受付記録の基盤は共用している。
 
 2026-09-28の旧仕様。意味による対象指定と照準合わせに、物体候補の測定と意味質問を統合した。
 [VCGT・先行研究に基づく設計](deliberation-state-machine-design-ja.md)を、同じQwenを呼び分ける
@@ -57,7 +59,7 @@ active / confirmed / unknownを判断する。confirmedもモデルによる小�
 元画素の変化と候補対応をホストが記録し、変更候補と期待効果の関係だけを最大4問、1トークンで質問する。未処理・曖昧な対応は照合へ残す。
 初回理解・照準・測定に保留がある場合は画像を使い、比較可能な測定記録で足りる経路では画像を省く。
 結果照合の文章は引き続きモデル仮説であり、測定記録を保持できることと、推論が正しいことは別である。
-構成、制限、比較結果は[画面認識の統合資料](visual-recognition-adopted-ja.md)を参照。
+構成、制限、比較結果は[画面認識の統合資料](../../visual-recognition-adopted-ja.md)を参照。
 
 ## 記憶と観測
 
@@ -112,10 +114,10 @@ Jevの学習済み並列予測機構ではない。モデルの確率は成功�
 
 ## 実モデル評価
 
-行動計画の工程削減は[2026-09-29のA/B比較](history/planning/planning-comparison-20260929-ja.md)を参照。`COGNITION_PLANNING_COMPARISON=A/B`で比較用構成を選べる。未指定なら本ページの通常構成。Bは初手を短縮したが、予測・対象・観測の混同が残り、精度改善は未確認のため通常構成へ採用していない。
+行動計画の工程削減は[2026-09-29のA/B比較](../planning/planning-comparison-20260929-ja.md)を参照。`COGNITION_PLANNING_COMPARISON=A/B`で比較用構成を選べる。未指定なら本ページの通常構成。Bは初手を短縮したが、予測・対象・観測の混同が残り、精度改善は未確認のため通常構成へ採用していない。
 
-同じBの工程を固定した[記憶分離比較](history/planning/memory-separation-comparison-20260929-ja.md)は、さらに`COGNITION_MEMORY_COMPARISON=mixed/separated`で選べる。指示・出力契約・知識更新規則を共通にして入力構成を比較した。古い候補参照による拒否は減ったが、誤った観測説明と無変化操作の反復が残り、こちらも通常構成へ採用していない。
+同じBの工程を固定した[記憶分離比較](../planning/memory-separation-comparison-20260929-ja.md)は、さらに`COGNITION_MEMORY_COMPARISON=mixed/separated`で選べる。指示・出力契約・知識更新規則を共通にして入力構成を比較した。古い候補参照による拒否は減ったが、誤った観測説明と無変化操作の反復が残り、こちらも通常構成へ採用していない。
 
-最新の構成・実測・残課題は[物体認識の統合資料](visual-recognition-adopted-ja.md)を参照。SAM導入前のステートマシン統合評価は[採用経緯の履歴](history/visual-recognition/measured-perception-adoption-20260928-ja.md)に保存した。
+最新の構成・実測・残課題は[物体認識の統合資料](../../visual-recognition-adopted-ja.md)を参照。SAM導入前のステートマシン統合評価は[採用経緯の履歴](../visual-recognition/measured-perception-adoption-20260928-ja.md)に保存した。
 参考として、カーソル導入前の2026-09-26の短時間評価でも、根拠のない移動説明と再計画の反復が見られ、3ゲームとも到達レベルは0だった。
 測定方式への統一後も、証拠に基づく照合・計画と実ゲームでの進展は別に検証する。

@@ -1,6 +1,6 @@
 # QwenとADKのツール呼び出し境界
 
-> 過去の実装・調査の記録です。現在の仕様・実行コマンドは[現行実装](../skill-learning-runtime-ja.md)を参照してください。旧APIと旧比較コマンドは削除済みです。
+> 過去の実装・調査の記録です。現在の仕様・実行コマンドは[現行実装](runtime/skill-learning-runtime-ja.md)を参照してください。旧APIと旧比較コマンドは削除済みです。
 
 Qwen3-VL-4B-Instructの[公式テンプレート](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct/blob/main/chat_template.json)は、`<tool_call>`で囲んだJSONをツール呼び出しとして出力する。これはHTMLではなく、モデルのチャット書式に含まれる区切りである。[Qwen公式資料](https://qwen.readthedocs.io/en/latest/framework/function_call.html)ではHermes形式と呼ばれており、Qwenだけの専用形式ではない。Qwen3-Coderの別の構文とは区別する。
 
@@ -25,7 +25,7 @@ ADK FunctionDeclaration / FunctionResponse
 - 打ち切られた生成、未登録ツール、不正なJSONは実行しない。ゲーム操作の`CLICK`などを勝手にツールへ読み替えない。
 - `tool_choice=none`で返された呼び出しは、正しいネイティブ構文でも`ToolCallNotAllowedError`とする。変換器は予算やホストの実行制約を変更しない。
 
-後続の完了ツール設計では、認知Workflowの最終枠を`none`から変更した。状態専用の完了ツールだけを公開し、`required`で提出を要求する。Qwen形式の呼び出しを受理・検証したら、追加の最終JSONを要求せずに状態を完了する。上の`none`検査は一般的な変換器の制約として残す。[現行の完了契約](../skill-learning-runtime-ja.md)を参照。
+後続の完了ツール設計では、認知Workflowの最終枠を`none`から変更した。状態専用の完了ツールだけを公開し、`required`で提出を要求する。Qwen形式の呼び出しを受理・検証したら、追加の最終JSONを要求せずに状態を完了する。上の`none`検査は一般的な変換器の制約として残す。[現行の完了契約](runtime/skill-learning-runtime-ja.md)を参照。
 
 生応答に加えて`tool_choice`、`decoded_protocol`、`normalized_tool_calls`をログへ残す。集計はネイティブ形式で受理した要求も数え、構造化形式との二重計上を避ける。
 

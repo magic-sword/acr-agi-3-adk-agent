@@ -3,10 +3,10 @@ import unittest
 from unittest.mock import patch
 
 from agent.cognition.hybrid_perception import HybridPerception
-from agent.cognition.perception import context_record, questions, without_masks
-from agent.cognition.workflow import CognitiveRuntime
+from agent.cognition.perception import context_record, without_masks
+from agent.cognition.simple_workflow import SimpleRuntime
 from agent.local_vlm import LocalVisionLlm
-from runtime_helpers import obs, context, answer, token, ack, understanding
+from runtime_helpers import obs, context, answer, token, ack
 
 
 def cross(x=12, color=9):
@@ -46,10 +46,6 @@ class HybridTests(unittest.TestCase):
         self.assertEqual(change['before']['track_id'], change['after']['track_id'])
         self.assertNotEqual(change['before']['id'], change['after']['id'])
         self.assertEqual(record['target_correspondence'][0]['current_candidate_refs'], [change['after']['id']])
-        outcome = dict(acknowledged=True, prediction='The cross moves right.', decision_id='d0')
-        queue, _ = questions(record, outcome, None)
-        self.assertEqual(queue[0]['change'], without_masks(change))
-        self.assertEqual(queue[0]['target_correspondence'][0]['status'], 'tracked')
         sensor.measure(cross(15), cross(15), before_id='o1', after_id='o2')
         self.assertEqual(proposer.calls, 1)
 
@@ -112,68 +108,11 @@ class HybridTests(unittest.TestCase):
             r = s.measure(cross(), deepcopy(cross()), before_id='a', after_id='b')
         self.assertFalse(r['changes']); self.assertFalse(r['requires_review'])
 
-    def test_actual_workflow_passes_whole_region_to_one_token_semantic_step(self):
-        p = Proposer()
-        r = CognitiveRuntime('test', 'local/qwen3-vl-4b-instruct', proposal_mode='sam_initial', sam_proposer=p)
-        self.addCleanup(r.close)
-        seen = []
-        def respond(model, payload):
-            c = context(payload)
-            if c['work']=='understand':
-                from runtime_helpers import call
-                data = understanding(c)
-                sam = next(row for row in c['measured_objects']['candidate_index'] if 'sam' in row[3])
-                data['targets'][0]['candidate_refs'] = [sam[0]]
-                return call('submit_understanding', data)
-            if c['work']=='answer_question':
-                seen.append(c)
-                self.assertEqual(payload['max_tokens'], 1)
-                return token('8')
-            return answer(model, payload)
-        with patch.object(LocalVisionLlm, '_complete', respond):
-            r.decide(obs(grid=cross())); ack(r); r.decide(obs(1, cross(15)))
-        self.assertTrue(seen)
-        self.assertIn('sam', seen[0]['change']['after']['sources'])
-        self.assertEqual(seen[0]['change']['delta_xy'], [3,0])
-        self.assertEqual(seen[0]['target_correspondence'][0]['status'], 'tracked')
-        self.assertEqual(p.calls, 1)
-        self.assertEqual(r.semantic_answers[0]['interpretation'], 'unknown')
 
-    def test_late_inventory_reference_is_valid_but_stale_reference_is_rejected(self):
-        from agent.cognition.state import Understanding
-        p = Proposer(boxes=[[x,y,x+2,y+2] for y in range(0,32,4) for x in range(0,32,4)])
-        r = CognitiveRuntime('test', 'local/qwen3-vl-4b-instruct', proposal_mode='sam_initial', sam_proposer=p)
-        self.addCleanup(r.close)
-        with patch.object(LocalVisionLlm, '_complete', answer):
-            r.decide(obs(grid=cross()))
-        data = understanding(dict(observation_id=r.obs['observation_id']))
-        late = r.perception['candidates'][-1]['id']
-        data['targets'][0]['candidate_refs'] = [late]
-        r.validate_stage('understand', Understanding.model_validate(data))
-        ack(r)
-        with patch.object(LocalVisionLlm, '_complete', answer): r.decide(obs(1, cross()))
-        data['observation_id'] = r.obs['observation_id']
-        with self.assertRaisesRegex(ValueError, 'unknown current'):
-            r.validate_stage('understand', Understanding.model_validate(data))
 
-    def test_actual_workflow_reconciles_recolor_instead_of_claiming_motion(self):
-        r = CognitiveRuntime('test', 'local/qwen3-vl-4b-instruct',
-                             proposal_mode='sam_initial', sam_proposer=Proposer())
-        self.addCleanup(r.close)
-        reviews=[]; semantic=[]
-        def respond(model, payload):
-            c=context(payload)
-            if c['work']=='reconcile': reviews.append(c['review']['trigger'])
-            if c['work']=='answer_question': semantic.append(c)
-            return answer(model, payload)
-        with patch.object(LocalVisionLlm, '_complete', respond):
-            r.decide(obs(grid=cross())); ack(r); r.decide(obs(1,cross(color=12)))
-        self.assertIn('perception_uncertain', reviews)
-        self.assertFalse(semantic)
-        self.assertFalse(r.perception['changes'])
 
     def test_actual_observation_duplicate_and_reset_do_not_reuse_old_identity(self):
-        p=Proposer(); r=CognitiveRuntime('test',proposal_mode='sam_initial',sam_proposer=p)
+        p=Proposer(); r=SimpleRuntime('test',proposal_mode='sam_initial',sam_proposer=p)
         self.addCleanup(r.close)
         self.assertTrue(r._receive(obs(grid=cross())))
         old={c['track_id'] for c in r.perception['candidates']}

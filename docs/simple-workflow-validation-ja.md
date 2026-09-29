@@ -22,7 +22,7 @@
 
 後続変更として、履歴保存時点で「計画対象の結果（無変化・不明を含む）」と「別対象の実測された変化」に絞った。無関係な無変化や対象ごとの重複説明は蓄積しない。[履歴軽量化の検証](compact-history-validation-ja.md)を参照。
 
-候補生成器を明示注入した利用者には従来の `FocusedRuntime` を残し、既存の比較設定も維持する。通常実行の既定は新経路である。
+後続の整理で旧 `FocusedRuntime` と比較用設定、候補生成器注入を廃止した。現行は `SimpleRuntime` のみで、旧クラスへの継承依存も削除した。[削除一覧](history/runtime/retired-implementation-ja.md)を参照。
 
 ## 検証
 

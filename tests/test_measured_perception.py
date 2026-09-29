@@ -1,10 +1,10 @@
 from copy import deepcopy
 import unittest
 from unittest.mock import patch
-from agent.cognition.perception import measure,questions
-from agent.cognition.workflow import CognitiveRuntime
+from agent.cognition.perception import measure
+from agent.cognition.simple_workflow import SimpleRuntime
 from agent.local_vlm import LocalVisionLlm
-from runtime_helpers import obs,context,answer,token,ack,understanding
+from runtime_helpers import obs,context,answer,token,ack
 
 
 def board(x=14):
@@ -37,55 +37,9 @@ class MeasuredPerceptionTests(unittest.TestCase):
         r=measure(b,a,after_id='ambiguous')
         self.assertTrue(r['unresolved']);self.assertFalse(r['changes'])
 
-    def test_question_limits_preserve_pending_and_do_not_ask_about_unchanged(self):
-        r=measure(board(),board(),after_id='same')
-        outcome=dict(acknowledged=True,prediction='Move the blue square.',decision_id='decision')
-        self.assertEqual(questions(r,outcome,None),([],0))
-        r=measure(board(),board(15),after_id='changed');r['changes']*=6
-        q,pending=questions(r,outcome,None)
-        self.assertEqual((len(q),pending),(4,2))
-        self.assertEqual(q[0]['observation_id'],'changed')
-        self.assertEqual(q[0]['choices']['8']['kind'],'unknown')
 
-    def test_actual_runtime_routes_one_token_question_and_keeps_measured_fact(self):
-        r=CognitiveRuntime('test','local/qwen3-vl-4b-instruct')
-        self.addCleanup(r.close);requests=[]
-        def respond(m,p):
-            c=context(p);requests.append(c['work'])
-            if c['work']=='answer_question':
-                self.assertEqual(p['max_tokens'],1)
-                self.assertTrue(all(x['type']=='text' for x in p['messages'][1]['content']))
-                self.assertTrue(c['change']['changed']['position'])
-                return token('8')
-            if c['work']=='reconcile':
-                self.assertEqual(c['semantic_answers'][0]['interpretation'],'unknown')
-                self.assertTrue(c['measured_objects']['changes'][0]['changed']['position'])
-            return answer(m,p)
-        with patch.object(LocalVisionLlm,'_complete',respond):
-            r.decide(obs(grid=board()));ack(r);r.decide(obs(1,board(15)))
-        self.assertEqual(requests.count('answer_question'),1)
-        self.assertIn('reconcile',requests)
-        self.assertTrue(r.perception['changes'][0]['changed']['position'])
 
-    def test_no_change_still_reconciles_an_acknowledged_probe(self):
-        r=CognitiveRuntime('test','local/qwen3-vl-4b-instruct')
-        self.addCleanup(r.close)
-        with patch.object(LocalVisionLlm,'_complete',answer):r.decide(obs(grid=board()))
-        r.memory.plan['intent']='probe';ack(r)
-        works=[]
-        def respond(m,p):
-            works.append(context(p)['work']);return answer(m,p)
-        with patch.object(LocalVisionLlm,'_complete',respond):r.decide(obs(1,board()))
-        self.assertIn('reconcile',works);self.assertNotIn('answer_question',works)
 
-    def test_target_reference_must_be_supplied_current_candidate(self):
-        from agent.cognition.state import Understanding
-        r=CognitiveRuntime('test');self.addCleanup(r.close)
-        r.decide(obs(grid=board()))
-        value=understanding(dict(observation_id=r.obs['observation_id']))
-        value['targets'][0]['candidate_refs']=['a999']
-        with self.assertRaisesRegex(ValueError,'unknown current'):
-            r.validate_stage('understand',Understanding.model_validate(value))
 
 
 if __name__=='__main__':unittest.main()

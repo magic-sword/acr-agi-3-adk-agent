@@ -1,8 +1,10 @@
+> 廃止済み方式の検証・設計記録です。現在の実装は[引き継ぎ](../../visual-recognition-handoff-ja.md)を参照してください。
+
 # 自律スキル学習の実装
 
 > 旧実装の記録です。現行仕様は[段階別の熟考と高速実行](fast-slow-runtime-ja.md)を参照してください。
 
-2026-09-26時点の仕様。対象と疑問の記憶は[世界記憶の設計・参考文献](object-world-memory-design-ja.md)。設計理由は[判断を限定したタスクへの設計](focused-task-refactor-design-ja.md)、スキル学習の背景は[初期設計](autonomous-skill-learning-design-ja.md)。
+2026-09-26時点の仕様。対象と疑問の記憶は[世界記憶の設計・参考文献](../../object-world-memory-design-ja.md)。設計理由は[判断を限定したタスクへの設計](focused-task-refactor-design-ja.md)、スキル学習の背景は[初期設計](autonomous-skill-learning-design-ja.md)。
 
 ## 実行
 
@@ -76,8 +78,8 @@ ADK Workflowの制御骨格は `DECIDE → RUN → 必要時DECIDE`。モデル�
 
 ## ログと互換性
 
-[評価ガイド](local-evaluation-ja.md)のログから、モデルへの実入力、判断更新、実操作、候補の根拠、試行、評価、登録を追跡できる。`task_opened`は実際に渡した限定入力、`plan_delta`はホスト比較、`task_rejected`は差し戻し理由と回復回数を保存する。状態図と表示は新タスクに対応し、旧ログも再生できる。
+[評価ガイド](../../local-evaluation-ja.md)のログから、モデルへの実入力、判断更新、実操作、候補の根拠、試行、評価、登録を追跡できる。`task_opened`は実際に渡した限定入力、`plan_delta`はホスト比較、`task_rejected`は差し戻し理由と回復回数を保存する。状態図と表示は新タスクに対応し、旧ログも再生できる。
 
-この節は当時の検証記録。旧コントローラとその互換テストは現在削除済み。現行の構成・検証は[画面認識の統合資料](visual-recognition-adopted-ja.md)を参照。
+この節は当時の検証記録。旧コントローラとその互換テストは現在削除済み。現行の構成・検証は[画面認識の統合資料](../../visual-recognition-adopted-ja.md)を参照。
 
 実モデルでの成功率やステージクリアは自動テストとは別に扱う。比較実走の結果・残る制約は[設計書の実装記録](focused-task-refactor-design-ja.md)を参照する。

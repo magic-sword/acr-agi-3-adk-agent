@@ -1,6 +1,6 @@
 # ローカル評価
 
-現行エージェントは[熟考と1トークン実行を分けるループ](fast-slow-runtime-ja.md)。
+現行エージェントは[1操作1判断のループ](simple-workflow-validation-ja.md)。現在の構成・再実行条件は[引き継ぎ](visual-recognition-handoff-ja.md)を参照する。
 
 画面・操作・状態の入出力を並べて調べる場合は、[JupyterLab観測ノートブック](../notebooks/agent_observatory.ipynb)を使う。[評価IDを選択して再生する手順](agent-monitor-ja.md)。
 

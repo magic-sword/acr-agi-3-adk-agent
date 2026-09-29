@@ -6,7 +6,7 @@ from google.genai import types
 
 from agent.controls import ACTION_TO_BUTTON, controller_context
 from .deliberation import StageTool
-from .focused_workflow import FocusedRuntime
+from .workflow import CognitiveRuntime
 from .state import Contract
 from .validation import validate_intent
 from .region_masks import decode
@@ -72,7 +72,7 @@ class NextActionTool(StageTool):
                                          parameters_json_schema={'anyOf': variants})
 
 
-class SimpleRuntime(FocusedRuntime):
+class SimpleRuntime(CognitiveRuntime):
     stage_tool = NextActionTool
     slow_tasks = ('act',)
     stage_tasks = {'act': ('submit_next_action', NextAction)}
@@ -102,12 +102,10 @@ reunderstanding, completion checks, cursor adjustment, or another planning stage
 
     def _on_observation(self, boundary):
         m = self.memory
-        m.cursor = None
         self._measure_observation(boundary)
         if boundary:
             m.episode += 1
             m.trial_ledger.clear()
-            m.causal_knowledge.clear()
             m.plan = m.active_skill = None
         elif self.outcome:
             target_ids = list((m.plan or {}).get('object_ids', []))

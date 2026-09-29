@@ -33,9 +33,7 @@ def cognition_settings():
     sam = default_proposer()
     return {**{k: os.getenv(k, default) for k, default in [
         ('COGNITION_REPAIR_ATTEMPTS', '1'), ('COGNITION_MAX_RESETS', '2'),
-        ('COGNITION_DECISION_SECONDS', '45'), ('COGNITION_PROPOSALS', 'sam_initial'),
-        ('COGNITION_PLANNING_COMPARISON', ''), ('COGNITION_MEMORY_COMPARISON', ''),
-        ('COGNITION_ACTION_UPDATE_COMPARISON', '')]},
+        ('COGNITION_DECISION_SECONDS', '45'), ('COGNITION_PROPOSALS', 'sam_initial')]},
         'COGNITION_SAM_CHECKPOINT': str(sam.checkpoint.resolve()),
         'COGNITION_SAM_SOURCE': str(sam.source.resolve()), 'COGNITION_SAM_DEVICE': sam.device}
 

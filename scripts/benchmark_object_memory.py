@@ -15,11 +15,11 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from agent.cognition.focused_workflow import FocusedRuntime
+from agent.cognition.simple_workflow import SimpleRuntime
 from agent.cognition import object_memory as objects
 from agent.cognition.region_masks import decode
 from agent.cognition.sam_proposals import default_proposer
-from scripts.verify_hybrid_runtime import RecordedProposer
+from scripts.recorded_proposer import RecordedProposer
 
 
 class CachedMasks:
@@ -55,7 +55,7 @@ def replay(source, output, sam, mask_cache=None):
         for sequence in sequences:
             proposer = (default_proposer() if sam == 'live' else CachedMasks(cached[sequence['name']]) if sam == 'cached'
                         else RecordedProposer(detections[sequence['name']]))
-            runtime = FocusedRuntime(sequence['name'], proposal_mode='sam_initial', sam_proposer=proposer,
+            runtime = SimpleRuntime(sequence['name'], proposal_mode='sam_initial', sam_proposer=proposer,
                                      seconds=600, decision_seconds=120, log_dir=None)
             totals = Counter(); elapsed = []; previous = {}; ledger = []; labels = {}
             try:
@@ -97,9 +97,9 @@ def replay(source, output, sam, mask_cache=None):
                         sam_status=runtime.perception['sam']['status'],
                         matched=matched, gold=len(frame['gold']), history=dict(history_counts),
                         object_kinds=dict(Counter(o['kind'] for o in state['objects'])),
-                        understand_context_bytes=len(json.dumps(runtime._context('understand'))),
+                        act_context_bytes=len(json.dumps(runtime._context('act'))),
                         objects=state)
-                    totals['max_context_bytes'] = max(totals['max_context_bytes'], row['understand_context_bytes'])
+                    totals['max_context_bytes'] = max(totals['max_context_bytes'], row['act_context_bytes'])
                     stream.write(json.dumps(row)+'\n'); stream.flush()
                     previous = matched
                 summary = dict(sequence=sequence['name'], kind=sequence['kind'], frames=len(elapsed), **totals,

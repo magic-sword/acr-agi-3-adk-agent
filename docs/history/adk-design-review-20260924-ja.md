@@ -1,8 +1,8 @@
 # ADK 2.0 スキル・状態機械の設計再確認
 
-> 過去の実装・調査の記録です。現在の仕様・実行コマンドは[現行実装](../skill-learning-runtime-ja.md)を参照してください。旧APIと旧比較コマンドは削除済みです。
+> 過去の実装・調査の記録です。現在の仕様・実行コマンドは[現行実装](runtime/skill-learning-runtime-ja.md)を参照してください。旧APIと旧比較コマンドは削除済みです。
 
-確認日: 2026-09-24。以下は再設計前のレビュー記録。対応後の現行仕様は[スキル接続と責務](../skill-learning-runtime-ja.md)を参照。対象はレビュー時の作業ツリー、同梱・実行中の `google-adk==2.0.0`、Google公式資料と公式リポジトリ。今回は設計レビューであり、実行コード・スキル本文の変更は行っていない。
+確認日: 2026-09-24。以下は再設計前のレビュー記録。対応後の現行仕様は[スキル接続と責務](runtime/skill-learning-runtime-ja.md)を参照。対象はレビュー時の作業ツリー、同梱・実行中の `google-adk==2.0.0`、Google公式資料と公式リポジトリ。今回は設計レビューであり、実行コード・スキル本文の変更は行っていない。
 
 **判定: 状態機械の基本構造はADK 2.0に沿っている。一方、スキルの分類・内容には状態の指示やホスト制御との混同が残る。「15個の認知能力を実装済み」と評価できる状態ではない。**
 
@@ -40,7 +40,7 @@
 
 ### 3. 公開されたスクリプト実行ツールが実行基盤に接続されていない
 
-[skills.py](../../agent/cognition/skills.py) の `SkillToolset` と [workflow.py](../../agent/cognition/workflow.py) の `LlmAgent` は、どちらも `code_executor` 未設定。それでも標準の `run_skill_script` はモデルに公開される。
+skills.py（旧参照 `../../agent/cognition/skills.py`：現作業ツリーに未同梱） の `SkillToolset` と [workflow.py](../../agent/cognition/workflow.py) の `LlmAgent` は、どちらも `code_executor` 未設定。それでも標準の `run_skill_script` はモデルに公開される。
 
 実行環境のADK 2.0.0で、PLANのtoolsetから `action-grounding/scripts/controls.py` を指定して呼び出すと、`error_code=NO_CODE_EXECUTOR` が返ることを確認した。公式2.0.0実装も、toolsetとagentの両方にexecutorがなければこのエラーを返す。[公式実装](https://github.com/google/adk-python/blob/v2.0.0/src/google/adk/tools/skill_toolset.py)
 
@@ -50,9 +50,9 @@
 
 ### 4. 段階的ロードが判断予算を圧迫している
 
-[instruction()](../../agent/cognition/skills.py) は、状態別の課題と多数の共通規則を既に渡したうえで、各判断に `list_skills` → `load_skill` を指示する。`include_contents="none"` により、以前の判断でロードした本文が次の判断にそのまま引き継がれる構成でもない。
+instruction()（旧参照 `../../agent/cognition/skills.py`：現作業ツリーに未同梱） は、状態別の課題と多数の共通規則を既に渡したうえで、各判断に `list_skills` → `load_skill` を指示する。`include_contents="none"` により、以前の判断でロードした本文が次の判断にそのまま引き継がれる構成でもない。
 
-保存済みの [12:39 UTCのモデルログ](../../outputs/evaluations/20260924T123912417412Z/ls20-9607627b/cognition/c24fb7ae24f145829935d90e47fded9e.model.jsonl) では、PLANとPROBEがそれぞれ8 HTTP要求を使い切っている。PLANは一覧・本文2件・共通参照の計4要求、PROBEは一覧・本文3件の計4要求を使っていた。「最大2スキル」は指示であり、PROBEで3件ロードした事実からも強制上限ではない。
+保存済みの 12:39 UTCのモデルログ（旧参照 `../../outputs/evaluations/20260924T123912417412Z/ls20-9607627b/cognition/c24fb7ae24f145829935d90e47fded9e.model.jsonl`：現作業ツリーに未同梱） では、PLANとPROBEがそれぞれ8 HTTP要求を使い切っている。PLANは一覧・本文2件・共通参照の計4要求、PROBEは一覧・本文3件の計4要求を使っていた。「最大2スキル」は指示であり、PROBEで3件ロードした事実からも強制上限ではない。
 
 これらは過去の測定であり、今回の性能再評価ではない。またロードだけが停止の原因と断定できない。ただし、専門的な情報が増えない読み込みに予算を使う構成は改善対象になる。
 

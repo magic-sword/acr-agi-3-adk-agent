@@ -102,3 +102,48 @@ class SimpleWorkflowTests(unittest.TestCase):
                 'COGNITION_MEMORY_COMPARISON':'', 'COGNITION_ACTION_UPDATE_COMPARISON':''}):
             r = create_runtime('test'); self.addCleanup(r.close)
         self.assertIsInstance(r, SimpleRuntime)
+
+    def test_invalid_output_repairs_once_without_sending_an_invalid_action(self):
+        r = self.runtime(); calls = []
+        def respond(model, payload):
+            c = context(payload); calls.append(c)
+            return call('submit_next_action', dict(observation_id=c['observation_id'],
+                interpretation='', question='Move?', action='DOWN' if len(calls) == 1 else 'UP',
+                object_id=None, expected_effect='May move.'))
+        with patch.object(LocalVisionLlm, '_complete', respond):
+            result = r.decide(obs())
+        self.assertEqual(result['action'], 'ACTION1')
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(r.memory.pending['action']['action'], 'ACTION1')
+
+    def test_expired_model_result_is_not_dispatched(self):
+        r = self.runtime()
+        def respond(model, payload):
+            c = context(payload); r.turn_deadline = 0
+            return call('submit_next_action', dict(observation_id=c['observation_id'],
+                interpretation='', question='Move?', action='UP', object_id=None, expected_effect='May move.'))
+        with patch.object(LocalVisionLlm, '_complete', respond):
+            result = r.decide(obs())
+        self.assertEqual(result['status'], 'stop')
+        self.assertIsNone(r.memory.pending)
+
+    def test_boundary_clears_trial_history_and_terminal_skips_model(self):
+        from runtime_helpers import answer
+        r = self.runtime()
+        with patch.object(LocalVisionLlm, '_complete', answer):
+            r.decide(obs()); ack(r); r.decide(obs(1)); ack(r)
+            self.assertTrue(r.memory.trial_ledger)
+            boundary = obs(2); boundary['levels_completed'] = 1
+            r.decide(boundary)
+            self.assertEqual(r.memory.trial_ledger, [])
+            ack(r)
+            final = obs(3); final.update(state='WIN', levels_completed=1)
+            calls = r.memory.model_calls
+            self.assertEqual(r.decide(final)['reason'], 'win')
+            self.assertEqual(r.memory.model_calls, calls)
+
+    def test_retired_comparison_setting_is_not_silently_ignored(self):
+        from agent.adk_policy import create_runtime
+        with patch.dict('os.environ', {'COGNITION_PLANNING_COMPARISON':'B'}):
+            with self.assertRaisesRegex(ValueError, 'removed'):
+                create_runtime('test')

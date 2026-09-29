@@ -4,16 +4,16 @@ import hashlib
 from html import escape
 from pathlib import Path
 
-LABELS = {'understand':'状況理解', 'backchain':'前提条件の逆算', 'candidates':'暫定候補生成', 'ground':'実行手順への具体化', 'reconcile':'結果照合・更新', 'choose_skill':'旧：高速スキル選択', 'execute_step':'高速手順実行', 'aim':'高速照準合わせ', 'read_memory':'旧：高速記憶選択', 'answer_question':'高速：測定変化の意味を質問'}
+LABELS = {'act':'結果解釈＋次の1操作'}
 
 
 def read_structure(root):
     root = Path(root)
-    paths = [root/'agent/cognition'/name for name in ('workflow.py','deliberation.py','execution.py','tasks.py','state.py','machine.py','cursor.py','notebook.py','perception.py','geometry.py','focused_workflow.py','focused_state.py','candidates.py','simple_workflow.py')]
+    paths = [root/'agent/cognition'/name for name in ('workflow.py','deliberation.py','execution.py','state.py','machine.py','perception.py','geometry.py','simple_workflow.py')]
     sources = {str(p.relative_to(root)):p.read_text() for p in paths if p.is_file()}
     if 'agent/cognition/workflow.py' not in sources:
         raise ValueError('この場所には実装ソースが保存されていません')
-    required = ('agent/cognition/tasks.py','agent/cognition/machine.py')
+    required = ('agent/cognition/simple_workflow.py','agent/cognition/machine.py')
     if any(name not in sources for name in required):
         raise ValueError('最新のステートマシン定義がありません')
     machine_tree=ast.parse(sources['agent/cognition/machine.py'])
@@ -23,31 +23,16 @@ def read_structure(root):
     if set(declarations) != {'STATES','TRANSITIONS','GLOBAL_GATES'}:
         raise ValueError('ステート・遷移・共通条件の宣言が不足しています')
     tasks = []
-    source = sources.get('agent/cognition/tasks.py')
+    source = sources.get('agent/cognition/simple_workflow.py')
     if source:
         tree = ast.parse(source)
-        assignments = {n.targets[0].id:n.value for n in tree.body if isinstance(n,ast.Assign)
-                       and isinstance(n.targets[0],ast.Name)}
-        instructions = ast.literal_eval(assignments['INSTRUCTIONS']) if 'INSTRUCTIONS' in assignments else {}
         classes = {n.name:n for n in ast.parse(sources.get('agent/cognition/state.py','')).body if isinstance(n,ast.ClassDef)}
         classes.update({n.name:n for n in tree.body if isinstance(n,ast.ClassDef)})
-        registry = assignments.get('TASKS')
-        if not isinstance(registry,ast.Dict):
-            raise ValueError('TASKS宣言を静的に読み取れません')
+        runtime = next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name == 'SimpleRuntime')
+        overrides = {n.targets[0].id:n.value for n in runtime.body if isinstance(n,ast.Assign) and isinstance(n.targets[0],ast.Name)}
+        registry = overrides['stage_tasks']
+        instructions = ast.literal_eval(overrides['stage_instructions'])
         entries = {ast.literal_eval(k):v for k,v in zip(registry.keys,registry.values)}
-        # Read the default subclass as source data, retaining legacy-only stages
-        # for replay of archived comparison logs. Never import model/runtime code.
-        for filename in ('focused_state.py','candidates.py','simple_workflow.py'):
-            classes.update({n.name:n for n in ast.parse(sources.get('agent/cognition/'+filename,'')).body
-                            if isinstance(n,ast.ClassDef)})
-        focused = ast.parse(sources.get('agent/cognition/focused_workflow.py','') + '\n' + sources.get('agent/cognition/simple_workflow.py',''))
-        for node in focused.body:
-            if isinstance(node,ast.ClassDef) and node.name in ('FocusedRuntime', 'SimpleRuntime'):
-                overrides = {n.targets[0].id:n.value for n in node.body if isinstance(n,ast.Assign)
-                             and isinstance(n.targets[0],ast.Name)}
-                new_registry = overrides['stage_tasks']
-                entries.update({ast.literal_eval(k):v for k,v in zip(new_registry.keys,new_registry.values)})
-                instructions.update(ast.literal_eval(overrides['stage_instructions']))
         for name,value in entries.items():
             if not isinstance(value,ast.Tuple) or len(value.elts)!=2 or not isinstance(value.elts[1],ast.Name):
                 raise ValueError('未対応のタスク宣言です: '+str(name))

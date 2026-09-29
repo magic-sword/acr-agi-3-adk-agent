@@ -5,7 +5,6 @@ from unittest.mock import patch
 
 from agent.qwen_protocol import QwenToolCallAdapter, ToolProtocolError, ToolCallNotAllowedError
 from agent.local_vlm import LocalVisionLlm
-from agent.cognition.workflow import CognitiveRuntime
 
 
 def native(name='observe_current', arguments=None):

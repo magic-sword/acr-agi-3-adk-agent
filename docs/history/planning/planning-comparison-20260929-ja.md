@@ -101,7 +101,7 @@ ft09のBは、1巡目4回・2巡目3回すべて(15,15)をクリックし、毎�
 
 ## 実装・再実行
 
-[比較ランタイム](../../../agent/cognition/planning_comparison.py)を`COGNITION_PLANNING_COMPARISON=A`または`B`で選ぶ。未指定なら通常ランタイム。通常設定には先行の遷移整合修正を維持し、比較用の工程削減は適用しない。[比較ドライバー](../../../scripts/benchmark_planning_comparison.py)は既存出力先への上書きを拒否し、各試走のコードハッシュ一致を確認する。
+[比較ランタイム](../runtime/retired-implementation-ja.md)を`COGNITION_PLANNING_COMPARISON=A`または`B`で選ぶ。未指定なら通常ランタイム。通常設定には先行の遷移整合修正を維持し、比較用の工程削減は適用しない。[比較ドライバー](../runtime/retired-implementation-ja.md)は既存出力先への上書きを拒否し、各試走のコードハッシュ一致を確認する。
 
 ```bash
 docker compose run --rm --no-deps \
@@ -113,4 +113,4 @@ docker compose run --rm --no-deps \
 
 既存のローカルモデルサービスとSAM重みが必要。今回の正式結果は`outputs/planning-ab-final-20260929`のみ。先行した`planning-comparison-20260929`と`planning-comparison-final-20260929`は、それぞれ比較用クリックschema・変換時の文字数制約に不整合が見つかったため中断し、パイロットとして除外した。修正後の同一コードで12試走すべてを取り直した。
 
-全245テスト成功。[比較テスト](../../../tests/test_planning_comparison.py)は入力の共通化、測定辞書の復元、無変化時の照合、既存照準、古い参照の拒否、境界リセット、構成選択、操作schema、文字数上限の変換を確認。[テストログ](../../../outputs/planning-ab-final-20260929/tests.log)。単体テストでは`COGNITION_SAM_CHECKPOINT=/tmp/unit-tests-no-sam-checkpoint`で実SAMの初期化を抑え、実SAMは上記12試走で別途確認した。
+全245テスト成功。[比較テスト](../runtime/retired-implementation-ja.md)は入力の共通化、測定辞書の復元、無変化時の照合、既存照準、古い参照の拒否、境界リセット、構成選択、操作schema、文字数上限の変換を確認。[テストログ](../../../outputs/planning-ab-final-20260929/tests.log)。単体テストでは`COGNITION_SAM_CHECKPOINT=/tmp/unit-tests-no-sam-checkpoint`で実SAMの初期化を抑え、実SAMは上記12試走で別途確認した。

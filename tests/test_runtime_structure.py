@@ -12,26 +12,23 @@ class StructureTests(unittest.TestCase):
     def test_registry_and_contracts_are_read_from_current_source(self):
         data=read_structure(ROOT)
         tasks={t['id']:t for t in data['tasks']}
-        self.assertEqual(set(tasks), {'act','understand','backchain','candidates','ground','reconcile','choose_skill','execute_step','aim','read_memory','answer_question'})
+        self.assertEqual(set(tasks), {'act'})
         self.assertEqual(tasks['act']['tool'], 'submit_next_action')
-        self.assertEqual(tasks['ground']['tool'], 'submit_plan_choice')
-        self.assertIn('desired_state', tasks['backchain']['fields'])
-        self.assertIn('candidates', tasks['candidates']['fields'])
-        self.assertIn('targets', tasks['understand']['fields'])
+        self.assertIn('object_id', tasks['act']['fields'])
         self.assertEqual(data['edges'][0],['START','DECIDE'])
 
     def test_changed_registry_appears_without_execution_or_display_changes(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);p=root/'agent/cognition';p.mkdir(parents=True)
             (p/'workflow.py').write_text("raise RuntimeError('must not execute')\nWorkflow(edges=[('START', decide),(decide,run)])")
-            (p/'tasks.py').write_text("raise RuntimeError('must not execute')\nclass NewAnswer:\n    reason: str\nTASKS={'new_task':('submit_new',NewAnswer)}\nINSTRUCTIONS={'new_task':'<script>untrusted</script>'}")
+            (p/'simple_workflow.py').write_text("raise RuntimeError('must not execute')\nclass NewAnswer:\n    reason: str\nclass SimpleRuntime:\n    stage_tasks={'new_task':('submit_new',NewAnswer)}\n    stage_instructions={'new_task':'<script>untrusted</script>'}")
             (p/'machine.py').write_text("STATES={'new_task':('New','llm',0,0)}\nTRANSITIONS={}\nGLOBAL_GATES=[]")
             data=read_structure(root)
             self.assertEqual([t['id'] for t in data['tasks']],['new_task'])
             html=structure_html(data)
             self.assertIn('new_task',html);self.assertNotIn('<script>',html)
             before=data['hash']
-            (p/'tasks.py').write_text((p/'tasks.py').read_text().replace('submit_new','submit_other'))
+            (p/'simple_workflow.py').write_text((p/'simple_workflow.py').read_text().replace('submit_new','submit_other'))
             self.assertNotEqual(read_structure(root)['hash'],before)
 
     def test_failure_navigation_and_visible_prefix_do_not_infer_causes(self):
@@ -104,7 +101,7 @@ class StructureTests(unittest.TestCase):
         self.assertIn('<svg',html)
         for task in data['tasks']:
             self.assertIn('data-state="'+task['id']+'"',html)
-        for event in ('next_observation','repair_ground','invalid_ground'):
+        for event in ('direct_received','repair_act','invalid_act'):
             self.assertIn('data-transition="'+event+'"',html)
 
     def test_missing_machine_definition_is_an_error(self):
@@ -118,5 +115,5 @@ class StructureTests(unittest.TestCase):
         from agent.cognition.machine import destination, TRANSITIONS
         data=read_structure(ROOT)
         self.assertEqual(data['transitions'],TRANSITIONS)
-        self.assertEqual(destination('repair_ground'), 'ground')
-        self.assertEqual(destination('invalid_ground'), 'stop')
+        self.assertEqual(destination('repair_act'), 'act')
+        self.assertEqual(destination('invalid_act'), 'stop')

@@ -72,10 +72,11 @@ class DriverTests(unittest.TestCase):
             if cell["cell_type"] == "code":
                 compile(cell["source"], f"cell_{i}", "exec")
         self.assertIn("agent/cognition/workflow.py", SOURCES)
-        self.assertIn("agent/fast_choice.py", SOURCES)
+        self.assertIn("agent/cognition/simple_workflow.py", SOURCES)
         self.assertNotIn("agent/cognition/attention.py", SOURCES)
-        for module in ('execution','tasks','state'):
+        for module in ('execution','deliberation','state'):
             self.assertIn(f'agent/cognition/{module}.py', SOURCES)
-        self.assertFalse(any(path.startswith('tests/') for path in SOURCES))
+        self.assertFalse(any(path.startswith('tests/') or '.ipynb_checkpoints' in path for path in SOURCES))
+        self.assertNotIn('agent/cognition/focused_workflow.py', SOURCES)
         self.assertTrue(all(w.is_file() for w in ADK_WHEELS))
         self.assertIn("google-adk==2.0.0", str(notebook))

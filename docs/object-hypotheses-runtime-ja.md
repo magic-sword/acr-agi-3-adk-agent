@@ -1,8 +1,8 @@
 # 領域から対象仮説への統合と対象別の試行履歴
 
-実装日：2026-09-29。通常の `FocusedRuntime` に、領域候補より上の対象仮説と履歴対応を追加した。**元の候補を保持し、部品・全体・連動する集合を併存させる。対象の同一性が曖昧なら、過去結果の対応も曖昧なものとして提示する。**
+実装日：2026-09-29。対象認識処理に、領域候補より上の対象仮説と履歴対応を追加した。**元の候補を保持し、部品・全体・連動する集合を併存させる。対象の同一性が曖昧なら、過去結果の対応も曖昧なものとして提示する。**
 
-これは認識・記憶の実装方針であり、未知ゲームの攻略性能や物理的な物体認識の正しさを保証するものではない。行動計画の3要素と交換可能な `CandidateGenerator` は維持する。
+これは認識・記憶の実装方針であり、未知ゲームの攻略性能や物理的な物体認識の正しさを保証するものではない。通常経路は後続の単純化で `SimpleRuntime` に統一した。以下の対象統合・対応の研究機能すべてが現在のモデル入力に使われるわけではない。現在の入力と履歴は[引き継ぎ](visual-recognition-handoff-ja.md)を参照。
 
 ## 1. データの流れ
 
@@ -15,7 +15,7 @@ SAMマスク・プログラム領域・元の連結成分
   → 実行、対象自身と別対象の変化を分けた結果照合
 ```
 
-主な実装は [object_memory.py](../agent/cognition/object_memory.py)、マスク形式は [region_masks.py](../agent/cognition/region_masks.py)、通常経路との接続は [focused_workflow.py](../agent/cognition/focused_workflow.py)。メモリschemaは14。
+主な実装は [object_memory.py](../agent/cognition/object_memory.py)、マスク形式は [region_masks.py](../agent/cognition/region_masks.py)、通常経路との接続は [workflow.py](../agent/cognition/workflow.py)。現行メモリschemaは15。旧14は廃止。
 
 ## 2. マスクと部品を残す
 
@@ -77,7 +77,7 @@ SAMマスク・プログラム領域・元の連結成分
 
 ## 6. 検証方法と範囲
 
-回帰テストは [test_object_memory.py](../tests/test_object_memory.py) と [test_focused_workflow.py](../tests/test_focused_workflow.py) を中心に、マスクの穴、同じ矩形の別マスク、部品保持、色変化、同形コピー、分割・統合、相対配置の変化、境界、別対象への効果、古い履歴検索、出力スキーマ、既知スキルの誤転用を確認する。
+対象認識の回帰テストは [test_object_memory.py](../tests/test_object_memory.py)、現行経路は [test_simple_workflow.py](../tests/test_simple_workflow.py) を参照する。マスクの穴、同じ矩形の別マスク、部品保持、色変化、同形コピー、分割・統合、相対配置の変化、境界、別対象への効果、履歴の縮約を確認する。旧FocusedRuntime専用の出力契約・スキル再利用テストは、当該実装の廃止とともに削除した。
 
 保存済みの合成6系列66フレーム・実画面3系列23フレームは [benchmark_object_memory.py](../scripts/benchmark_object_memory.py) で再生する。正解注釈は認識処理の後にだけ使用する。マスクIoU 0.9以上で対象を照合し、対象×フレームの回収、照合対象IDの切替、履歴対応、入力サイズ、処理時間を記録する。
 

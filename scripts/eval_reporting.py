@@ -103,7 +103,7 @@ def diagnostics(directory: Path) -> dict:
                 'latency_p50':percentile([c['seconds'] for c in selected if 'seconds' in c],.5),
                 'latency_p95':percentile([c['seconds'] for c in selected if 'seconds' in c],.95),
                 'completion_tokens':sum((c.get('usage') or {}).get('completion_tokens',0) for c in selected)}
-                for work in ('act','understand','backchain','candidates','ground','reconcile','choose_skill','execute_step','aim','read_memory')
+                for work in sorted({c['work'] for c in calls if c.get('work')})
                 for selected in [[c for c in calls if c.get('work')==work]]}},
         'committed_actions':len(actions), 'hints':hints}
 

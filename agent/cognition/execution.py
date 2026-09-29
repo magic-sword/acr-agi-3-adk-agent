@@ -1,4 +1,4 @@
-"""Game boundary, receipts, evidence and journals shared by the two decision speeds."""
+"""Game boundary, receipts, evidence and journals for single-action decisions."""
 import asyncio
 import base64
 from copy import deepcopy
@@ -48,7 +48,7 @@ class ExecutionRuntime:
         self.trace, self.errors, self.tool_executions = [], [], []
         self.job = self.result = self.submission = None
         self.initialized = self.closed = False
-        self.work = 'understand'
+        self.work = 'act'
         self.workflow = self._build_graph()
         self.runner = Runner(agent=self.workflow, app_name=APP_NAME, session_service=self.service)
 

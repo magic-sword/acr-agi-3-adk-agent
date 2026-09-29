@@ -1,6 +1,6 @@
 # 初回の短時間ローカル評価（2026-09-24）
 
-> 過去の実装・調査の記録です。現在の仕様・実行コマンドは[現行実装](../skill-learning-runtime-ja.md)を参照してください。旧APIと旧比較コマンドは削除済みです。
+> 過去の実装・調査の記録です。現在の仕様・実行コマンドは[現行実装](runtime/skill-learning-runtime-ja.md)を参照してください。旧APIと旧比較コマンドは削除済みです。
 
 公開3ゲームを公式SDKのローカルHTTPゲートウェイ経由で実行した。Kaggleへの提出・アップロードは行っていない。各ゲームは最大12操作、1レベルクリア、判断時間90秒のいずれかで停止し、プロセス上限は110秒。モデルはローカルQwen3-VL-4B、ADKは2.0.0、arc-agiは0.9.9。評価途中で判断方針は変更していない。
 
@@ -21,9 +21,9 @@
 
 ## 成果物と再実行
 
-- [詳細レポート](../../outputs/evaluations/20260924-first-model-evaluation/report.md)
-- [実行条件・ソースハッシュ](../../outputs/evaluations/20260924-first-model-evaluation/manifest.json)
-- [機械可読サマリー](../../outputs/evaluations/20260924-first-model-evaluation/summary.json)
+- 詳細レポート（旧参照 `../../outputs/evaluations/20260924-first-model-evaluation/report.md`：現作業ツリーに未同梱）
+- 実行条件・ソースハッシュ（旧参照 `../../outputs/evaluations/20260924-first-model-evaluation/manifest.json`：現作業ツリーに未同梱）
+- 機械可読サマリー（旧参照 `../../outputs/evaluations/20260924-first-model-evaluation/summary.json`：現作業ツリーに未同梱）
 - [実行ガイド](../local-evaluation-ja.md)
 
 出力ディレクトリはGit管理対象外。各ゲームの`cognition/`にモデル入力記憶・生応答・状態遷移・PNG・色ID配列、`gateway.jsonl`に実際の操作応答、`scorecard.json`に生スコアを保存した。評価したエージェントソースも`package/`に固定している。レポートは保存済みログから診断項目を追加集計したもので、ゲームやモデルの再実行はしていない。
