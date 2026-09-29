@@ -21,6 +21,9 @@ from .workflow import CognitiveRuntime
 from . import object_memory as objects
 
 
+GAME_OBJECTIVE = 'Complete the current game level, then the remaining levels to win the game.'
+
+
 class FocusedTool(StageTool):
     def _get_declaration(self):
         # Reuse the controller schema restrictions, but not legacy goal-tree rules.
@@ -46,10 +49,29 @@ class FocusedTool(StageTool):
         if 'ActionIntent' in definitions:
             from agent.controls import ACTION_TO_BUTTON
             allowed = [ACTION_TO_BUTTON[a] for a in self.runtime.obs['available_actions'] if a in ACTION_TO_BUTTON and a != 'RESET']
-            definitions['ActionIntent']['properties']['action']['enum'] = allowed
-            if allowed == ['CLICK']:
-                definitions['ActionIntent']['properties']['target_query']['minLength'] = 1
-                definitions['ActionIntent']['required'] = ['action', 'target_query']
+            variants = []
+            for action in allowed:
+                branch = deepcopy(definitions['ActionIntent'])
+                branch['properties']['action']['enum'] = [action]
+                if action == 'CLICK':
+                    branch['properties']['target_query']['minLength'] = 1
+                    branch['required'] = ['action', 'target_query']
+                else:
+                    branch['properties']['target_query']['enum'] = ['']
+                variants.append(branch)
+            definitions['ActionIntent'] = {'anyOf': variants}
+            if 'ActionOption' in definitions:
+                options = []
+                for intent in variants:
+                    option = deepcopy(definitions['ActionOption'])
+                    option['properties']['action'] = intent
+                    if intent['properties']['action']['enum'] != ['CLICK']:
+                        option['properties']['target_object_id'] = {'type': 'null'}
+                    options.append(option)
+                definitions['ActionOption'] = {'anyOf': options}
+        if self.work == 'backchain' and self.runtime._unexecuted_returns:
+            schema['properties']['intent']['enum'] = ['probe']
+            schema['properties']['question']['minLength'] = 1
         if self.work == 'reconcile':
             schema['properties']['goal_id']['enum'] = [self.runtime.memory.plan['goal_id']]
             if not any(t['acknowledged'] for t in self.runtime._attempt_results()):
@@ -87,6 +109,8 @@ class FocusedTool(StageTool):
             variants.append(branch)
             schema = {'anyOf': variants, '$defs': definitions}
         if self.work == 'candidates':
+            if self.runtime._intervention_possible():
+                schema['properties']['candidates']['minItems'] = 1
             schema['properties']['goal_id']['enum'] = [self.runtime.memory.selected_goal_id]
             verbs = list(DEFAULT_VERBS) + [r['verb'] for r in self.runtime.memory.supported_skills.values()]
             schema['$defs']['Candidate']['properties']['verb']['enum'] = list(dict.fromkeys(verbs))
@@ -117,13 +141,16 @@ class FocusedRuntime(CognitiveRuntime):
         'execute_step': '''Translate the current abstract operation and procedure step
 into ONE offered controller action for the current scene. Do not generate a new plan.
 Return one offered digit. Use 7 only when the specified step is complete and offered.
-Use 8 if target/control grounding is invalid. Unknown effects alone do not justify
+Use 8 if target/control grounding is invalid or this step was already satisfied
+before this invocation acted. Unknown effects alone do not justify
 returning: probes must act to obtain evidence. A prior invocation does not prove this
 one complete. Repetition is allowed while useful. Pixel change alone is not success.''',
         'understand': '''Describe only the current relations and at most four useful targets.
 Use concept as a short object name; do not build a concept taxonomy. Roles are hypotheses.
-Identify a plausible final goal; earlier trial records are historical, not current pixels.
-The final goal is an observable game outcome, not 'identify relations' or 'explore'.
+The supplied final_goal is the game objective. goal_hypothesis is a revisable
+hypothesis about the visible win condition, never a replacement for that objective.
+Earlier trial records are historical, not current pixels. Propose an observable
+game outcome, not 'identify relations' or 'explore'.
 Candidate indices, captions and measurement tables are host metadata, not game objects.
 Use current measured references if available; leave references empty if unresolved.
 Select object_id from object_index when supported, with candidate_refs=[]: the host
@@ -154,7 +181,10 @@ Missing effects can be probed; ambiguous grouping can motivate inspect with a
 discriminating expected observation. Inspect means an intervention on one visible
 target followed by comparison, not merely looking at the same image again. Unknown
 effects are not missing targets. Missing targets should produce an empty list
-with missing_info. Submit submit_candidates.''',
+with missing_info only when no current target can be tested with the available controls.
+An already-described scene is not a completed game. When intervention_required is
+true, propose at least one useful intervention even if its effect is unknown.
+Submit submit_candidates.''',
         'ground': '''Use only purpose, candidates and evidence to choose one candidate and
 implement it as a short procedure. Compare relevant past failures and results with
 the expected effect. Repetition needs a reason why it remains useful; never assume
@@ -190,6 +220,8 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
         self.candidate_generator = candidate_generator if candidate_generator is not None else ModelCandidateGenerator()
         self._after_scene = 'backchain'
         self._goal_sequence = 0
+        self._planning_visits = {}
+        self._unexecuted_returns = 0
         super().__init__(*args, **kwargs)
         self.memory = FocusedMemory(**self.memory.model_dump(exclude={'schema_version', 'phase'}))
         self.recent_trials = []
@@ -295,15 +327,19 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
         if self.rejection:
             common['correction'] = self.rejection
         if work == 'understand':
-            common.update(measured_objects=context_record(self.perception, inventory=True) if self.perception else None,
+            common.update(final_goal=GAME_OBJECTIVE,
+                          measured_objects=context_record(self.perception, inventory=True) if self.perception else None,
                           object_index=objects.index(m.object_memory),
                           previous_trial=[objects.trial_card(t) for t in m.trial_ledger[-1:]], question=m.handoff_question)
         elif work == 'backchain':
             common.update(final_goal=m.final_goal, current_scene=m.understanding,
                           evidence=self._evidence(), known_skills=self._skill_cards())
+            if self._unexecuted_returns:
+                common['unexecuted_procedure'] = m.handoff_question
         elif work == 'candidates':
             common.update(purpose=m.subgoal, goal_id=m.selected_goal_id,
                           targets=self._targets(),
+                          intervention_required=self._intervention_possible(),
                           evidence=self._evidence(), known_skills=self._skill_cards())
         elif work == 'ground':
             cards = deepcopy((m.candidate_batch or {}).get('candidates', []))
@@ -342,6 +378,28 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
                 missing_object_ids=sorted(set(selected)-{o['object_id'] for o in current}),
                 note='Current measured grounding for selected IDs. Masks may have holes; confirm the acted part in the current image.')
         return controller_context(common)
+
+
+    def _intervention_possible(self):
+        """Whether current target hypotheses admit a legal test, not a known effect."""
+        scene = self.memory.understanding or {}
+        if scene.get('observation_id') != self.obs['observation_id'] or not scene.get('targets'):
+            return False
+        from agent.controls import ACTION_TO_BUTTON
+        allowed = set(self.obs['available_actions']) & (set(ACTION_TO_BUTTON) - {'RESET'})
+        if allowed - {'ACTION6'}:
+            return True
+        if 'ACTION6' not in allowed:
+            return False
+        ids = {t.get('object_id') for t in scene['targets']}
+        for obj in self.memory.object_memory['objects']:
+            if obj['object_id'] in ids and obj['observation_id'] == self.obs['observation_id']:
+                try:
+                    click_point(obj, self.obs)
+                    return True
+                except ValueError:
+                    pass
+        return False
 
 
 
@@ -386,6 +444,8 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
                         not set(t.candidate_refs) <= objects.allowed_refs(m.object_memory, t.object_id)):
                     raise ValueError('unknown object or incompatible target references')
         elif work == 'backchain':
+            if self._unexecuted_returns and value.intent != 'probe':
+                raise ValueError('an unexecuted procedure requires a useful probe, not another assumed achievement')
             if value.intent == 'probe' and not value.question.strip():
                 raise ValueError('probe requires a discriminating question')
         elif work == 'candidates':
@@ -426,6 +486,9 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
                     raise ValueError('proposed candidate cannot claim a supported skill')
             if not value.candidates and not value.missing_info.strip():
                 raise ValueError('empty candidates require missing_info')
+            if not value.candidates and self._intervention_possible():
+                raise ValueError('current targets and controls permit an intervention; propose a test, '
+                                 'not an empty batch because the scene is already described or effects are unknown')
         elif work == 'ground':
             if value.next != 'execute':
                 if value.blocked_by is None:
@@ -479,8 +542,9 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
             m.understanding = data
             if self.proposal_perception is not None:
                 self.proposal_perception.bind_targets(data)
-            if not m.final_goal:
-                m.final_goal = value.goal_hypothesis
+            # The model may revise the win-condition hypothesis in understanding;
+            # it cannot replace the game objective with a description task.
+            m.final_goal = GAME_OBJECTIVE
             m.phase = self._after_scene
             self._after_scene = 'backchain'
             self._machine_transition('scene_candidates' if m.phase == 'candidates' else 'understood')
@@ -603,6 +667,8 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
 
     def _on_observation(self, boundary):
         m = self.memory
+        self._planning_visits.clear()
+        self._unexecuted_returns = 0
         self._measure_observation(boundary)
         if boundary:
             m.episode += 1
@@ -670,7 +736,7 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
 
     async def _fast(self, options):
         self.work = 'execute_step'
-        options = {**options, '8':dict(kind='reconsider', meaning='Target/control unavailable or grounding contradicted')}
+        options = {**options, '8':dict(kind='reconsider', meaning='Target/control unavailable, grounding contradicted, or step already satisfied before acting')}
         context = self._context('execute_step')
         context['choices'] = controller_context(options)
         instruction = self.stage_instructions['execute_step']
@@ -688,6 +754,28 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
         choice = options[record['label']]
         self._record('artifacts', 'fast_selected', work=self.work, label=record['label'], selection=choice)
         if choice['kind'] == 'reconsider':
+            if not self._attempt_results():
+                # There is no action result to reconcile. Keep the current scene
+                # and ask for a useful test, with at most one such recovery.
+                self._unexecuted_returns += 1
+                if self._unexecuted_returns > 1:
+                    self._stop('planning_no_progress')
+                    return None
+                candidate = self.memory.selected_candidate or {}
+                self.memory.handoff_question = (
+                    f'The procedure {candidate.get("verb")}({candidate.get("target_query")}) was not executed: '
+                    'its target/control was invalid or its condition was already satisfied. '
+                    'Choose a different useful intervention on a current visible target; '
+                    'unknown effects should be probed.')
+                self.memory.plan = None
+                self.memory.selected_candidate = None
+                self.memory.active_skill = None
+                self.memory.active_target_binding = None
+                self.memory.candidate_batch = None
+                self.memory.phase = 'backchain'
+                self._machine_transition('unexecuted_replan')
+                self._snapshot()
+                return None
             self._queue_review('grounding_invalid', 'Check target/control grounding against the actual evidence.', 'step_reconsider')
             return None
         return choice
@@ -696,28 +784,43 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
         m = self.memory
         while self.result is None and self.job is None and self.time_left() > 0:
             if m.phase in self.slow_tasks:
+                visits = self._planning_visits.get(m.phase, 0)
+                if visits >= 2:
+                    self._record('artifacts', 'planning_stalled', phase=m.phase, visits=visits,
+                                 reason='Repeated planning without a new observation')
+                    self._stop('planning_no_progress')
+                    break
+                self._planning_visits[m.phase] = visits + 1
                 await self._run_slow_stage(ctx, m.phase)
                 continue
             active = m.active_skill
             step = m.skills[active['name']]['steps'][active['index']]
             options = {str(i+1):dict(kind='action', **o) for i,o in enumerate(step['options'])}
-            if m.plan['intent'] == 'achieve' or active['action_count'] > 0:
+            if active['step_action_count'] > 0:
                 options['7'] = dict(kind='advance', meaning='The current step done_when is satisfied')
             choice = await self._fast(options)
             if choice is None:
                 continue
             if choice['kind'] == 'action':
+                binding_started = False
                 try:
                     intent = validate_intent(choice['action'], self.obs)
                     job = dict(action={'action':intent.action}, expected_effect=choice['expected_effect'])
                     if intent.action == 'ACTION6':
+                        binding_started = True
+                        self._machine_transition('click_requested')
                         obj = self._click_object(choice)
                         x,y = click_point(obj, self.obs)
                         job['action'].update(x=x,y=y)
                         job['binding'] = dict(observation_id=self.obs['observation_id'], object_id=obj['object_id'],
-                            x=x,y=y,method='current_mask_centroid_pixel',confirmed=True)
+                            x=x,y=y,method='current_mask_centroid_pixel',confirmed=True,
+                            candidate_refs=list(obj.get('candidate_refs', [])),
+                            confirmation_scope='inside_current_mask', target_contact='unknown')
+                        self._record('artifacts', 'click_mask_bound', binding=job['binding'])
+                        self._machine_transition('click_bound')
                 except ValueError as exc:
-                    self._queue_review('grounding_invalid', str(exc), 'step_reconsider')
+                    self._queue_review('grounding_invalid', str(exc),
+                                       'click_binding_invalid' if binding_started else 'step_reconsider')
                     continue
                 self.job = job
                 self._record('artifacts', 'concrete_action_selected', job=job, abstract_action=m.selected_candidate)

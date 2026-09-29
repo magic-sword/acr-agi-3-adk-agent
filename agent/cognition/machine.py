@@ -6,9 +6,13 @@ STATES = {'observe': ('画面・受付・実測', 'host', 40, 50),
  'ground': ('熟考：実行手順へ具体化', 'llm', 1030, 50),
  'reconcile': ('熟考：結果照合・更新', 'llm', 370, 300),
  'execute_step': ('高速：操作 / 7 / 8', 'llm', 700, 530),
+ 'bind_click': ('現在マスクからクリック点', 'host', 1030, 530),
  'wait': ('操作送信・観測待ち', 'host', 40, 300),
  'stop': ('終了・期限・受付による停止', 'terminal', 40, 530)}
-TRANSITIONS = {'compact_backchained': ('backchain', 'candidates', '小目標から抽象操作候補へ', 'normal'),
+TRANSITIONS = {'click_requested': ('execute_step', 'bind_click', 'CLICK：現在の対象マスクを検証', 'normal'),
+ 'click_bound': ('bind_click', 'execute_step', 'マスク内点を確定（ゲームへの命中は未検証）', 'normal'),
+ 'click_binding_invalid': ('bind_click', 'reconcile', '対象消失・古い観測・空マスク', 'recovery'),
+ 'compact_backchained': ('backchain', 'candidates', '小目標から抽象操作候補へ', 'normal'),
  'scene_candidates': ('understand', 'candidates', '現在の対象を再取得', 'normal'),
  'candidates_ready': ('candidates', 'ground', '最大3候補から行動計画', 'normal'),
  'candidates_missing': ('candidates', 'understand', '対象情報の不足', 'recovery'),
@@ -20,6 +24,7 @@ TRANSITIONS = {'compact_backchained': ('backchain', 'candidates', '小目標か�
  'ground_backchain': ('ground', 'backchain', '前提条件の修正が必要', 'recovery'),
  'probe_observed': ('observe', 'reconcile', '試行結果を取得（達成とは別）', 'normal'),
  'step_reconsider': ('execute_step', 'reconcile', '8：予想外／判断不能', 'recovery'),
+ 'unexecuted_replan': ('execute_step', 'backchain', '未操作：結果照合せず検証を再計画', 'recovery'),
  'step_done': ('execute_step', 'execute_step', '7：手続き内の次の段階', 'normal'),
  'procedure_done': ('execute_step', 'reconcile', '7：小目標の完了候補', 'normal'),
  'review_understand': ('reconcile', 'understand', '対象・目標解釈を更新', 'recovery'),
@@ -38,7 +43,7 @@ GLOBAL_GATES = ['SAM・追跡から対象仮説を得て、最終目標・小目
  '高速実行は現在の手順から1トークンで具体的な1アクションを選ぶ',
  'クリック座標は現在マスク内で決定。カーソル調整・汎用記憶読み出しは使わない',
  '操作対象の無変化・不明と、別対象の実測変化だけを履歴に残す',
- '未実行の検証を完了扱いしない。実行受付と次の観測を待つ']
+ '各手順は実行受付と次の観測まで完了不可。各計画工程は同じ観測で最大2回']
 
 
 def destination(event):

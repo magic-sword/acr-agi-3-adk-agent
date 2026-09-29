@@ -5,7 +5,7 @@ import jsonschema
 
 from agent.cognition.candidates import CandidateBatch
 from agent.cognition.focused_state import Scene, Subgoal, PlanChoice
-from agent.cognition.focused_workflow import FocusedRuntime, FocusedTool
+from agent.cognition.focused_workflow import FocusedRuntime, FocusedTool, GAME_OBJECTIVE
 from agent.cognition.state import Reconciliation
 from agent.local_vlm import LocalVisionLlm
 from runtime_helpers import obs, context, call, token, skill, ack
@@ -92,11 +92,21 @@ class FocusedWorkflowTests(unittest.TestCase):
 
     def test_click_uses_mask_without_cursor_model(self):
         r = self.runtime(); works = []
-        with patch.object(LocalVisionLlm, '_complete', self.response(works, click=True)):
-            result = r.decide(obs())
+        with patch.object(r, '_machine_transition', wraps=r._machine_transition) as transitions:
+            with patch.object(LocalVisionLlm, '_complete', self.response(works, click=True)):
+                result = r.decide(obs())
         self.assertEqual(result['action'], 'ACTION6', r.errors)
         self.assertNotIn('aim', works)
-        self.assertTrue(r.memory.pending['binding']['confirmed'])
+        binding = r.memory.pending['binding']
+        self.assertTrue(binding['confirmed'])
+        self.assertEqual(binding['confirmation_scope'], 'inside_current_mask')
+        self.assertEqual(binding['target_contact'], 'unknown')
+        events = [c.args[0] for c in transitions.call_args_list]
+        self.assertLess(events.index('click_requested'), events.index('click_bound'))
+        self.assertLess(events.index('click_bound'), events.index('direct_accepted'))
+        from agent.cognition.region_masks import decode
+        obj = next(o for o in r.memory.object_memory['objects'] if o['object_id'] == binding['object_id'])
+        self.assertIn((result['x'], result['y']), decode(obj['mask_runs']))
 
     def test_abstract_procedure_keeps_steps_and_fast_selects_concrete_action(self):
         r = self.runtime(); works = []
@@ -117,6 +127,8 @@ class FocusedWorkflowTests(unittest.TestCase):
                 self.assertEqual(c['abstract_action']['verb'], 'move_to')
                 if c['active_skill']['action_count'] == 0:
                     return token('1')
+                if c['active_skill']['index'] == 1:
+                    self.assertNotIn('7', c['choices'])
                 return token('7' if c['active_skill']['index'] == 0 else '2')
             return ordinary(model, payload)
         a = obs(); a['available_actions'].append('ACTION2')
@@ -145,6 +157,24 @@ class FocusedWorkflowTests(unittest.TestCase):
         jsonschema.validate(plan(c), schema)
         for change in (dict(procedure=None), dict(next='understand')):
             with self.assertRaises(jsonschema.ValidationError): jsonschema.validate({**plan(c), **change}, schema)
+
+    def test_ground_schema_separates_click_targets_from_direction_controls(self):
+        r = self.runtime(); self.prepare(r)
+        schema = FocusedTool(r, 'ground')._get_declaration().parameters_json_schema
+        data = plan(r._context('ground'))
+        action = data['procedure']['steps'][0]['options'][0]['action']
+        jsonschema.validate(data, schema)
+        action['target_query'] = 'the blue square at the top center'
+        with self.assertRaises(jsonschema.ValidationError): jsonschema.validate(data, schema)
+        action['action'] = 'CLICK'
+        jsonschema.validate(data, schema)
+        action['target_query'] = ''
+        with self.assertRaises(jsonschema.ValidationError): jsonschema.validate(data, schema)
+        action['action'] = 'UP'
+        data['procedure']['steps'][0]['options'][0]['target_object_id'] = 'some-object'
+        with self.assertRaises(jsonschema.ValidationError): jsonschema.validate(data, schema)
+        action.update(action='CLICK', target_query='the blue square')
+        jsonschema.validate(data, schema)
 
     def test_scene_schema_prevents_stale_refs_and_duplicate_id_binding(self):
         r = self.runtime(); r._receive(obs())
@@ -183,10 +213,17 @@ class FocusedWorkflowTests(unittest.TestCase):
         with self.assertRaises(ValueError): r._accept_stage('ground', PlanChoice.model_validate(p))
         self.assertIsNone(r.memory.active_skill)
 
-    def test_empty_candidates_request_missing_information(self):
+    def test_empty_candidates_require_no_testable_target(self):
         r = self.runtime(); self.prepare(r)
         value = dict(observation_id=r.obs['observation_id'], goal_id=r.memory.selected_goal_id,
                      candidates=[], missing_info='Which region is the exit?')
+        schema = FocusedTool(r, 'candidates')._get_declaration().parameters_json_schema
+        with self.assertRaises(jsonschema.ValidationError): jsonschema.validate(value, schema)
+        with self.assertRaisesRegex(ValueError, 'permit an intervention'):
+            r._accept_stage('candidates', CandidateBatch.model_validate(value))
+        r.memory.understanding['targets'] = []
+        schema = FocusedTool(r, 'candidates')._get_declaration().parameters_json_schema
+        jsonschema.validate(value, schema)
         r._accept_stage('candidates', CandidateBatch.model_validate(value))
         self.assertEqual(r.memory.phase, 'understand')
         self.assertEqual(r.memory.handoff_question, value['missing_info'])
@@ -242,18 +279,88 @@ class FocusedWorkflowTests(unittest.TestCase):
                     r.decide(obs(1))  # Identical pixels are still a valid result.
                 self.assertEqual('7' in choices[-1], acknowledged)
 
-    def test_achieve_offers_completion_without_action(self):
+    def test_achieve_completion_requires_receipt_and_post_action_observation(self):
         r = self.runtime(); works = []
+        offered = []
         ordinary = self.response(works)
         def respond(model, payload):
             c = context(payload)
             if c['work'] == 'execute_step':
-                self.assertIn('7', c['choices'])
-                self.assertEqual(r.memory.active_skill['action_count'], 0)
+                offered.append(c['choices'])
             return ordinary(model, payload)
         with patch.object(LocalVisionLlm, '_complete', respond):
             r.decide(obs())
-        self.assertIn('execute_step', works)
+            self.assertNotIn('7', offered[-1])
+            ack(r)
+            self.assertEqual(r.memory.active_skill['step_action_count'], 0)
+            r.decide(obs(1))
+        self.assertIn('7', offered[-1])
+
+    def test_scene_description_cannot_replace_objective_and_hypothesis_can_change(self):
+        r = self.runtime(); r._receive(obs())
+        data = scene(r._context('understand'))
+        data['goal_hypothesis'] = 'Identify the current state of the game board and its visible components.'
+        r._accept_stage('understand', Scene.model_validate(data))
+        self.assertEqual(r._context('backchain')['final_goal'], GAME_OBJECTIVE)
+        data['goal_hypothesis'] = 'Reach the marked exit.'
+        r._accept_stage('understand', Scene.model_validate(data))
+        self.assertEqual(r.memory.understanding['goal_hypothesis'], data['goal_hypothesis'])
+        self.assertEqual(r.memory.final_goal, GAME_OBJECTIVE)
+
+    def test_empty_candidates_loop_is_bounded_without_new_observation(self):
+        r = self.runtime(); works = []
+        ordinary = self.response(works)
+        def respond(model, payload):
+            c = context(payload)
+            if c['work'] == 'understand':
+                works.append('understand')
+                data = scene(c); data['targets'] = []
+                return call('submit_scene', data)
+            if c['work'] == 'candidates':
+                works.append('candidates')
+                return call('submit_candidates', dict(observation_id=c['observation_id'],
+                    goal_id=c['goal_id'], candidates=[], missing_info='No visible target.'))
+            return ordinary(model, payload)
+        with patch.object(LocalVisionLlm, '_complete', respond):
+            result = r.decide(obs())
+        self.assertEqual(result, {'status': 'stop', 'reason': 'planning_no_progress'})
+        self.assertEqual(works, ['understand', 'backchain', 'candidates'] * 2)
+        self.assertIsNone(r.memory.pending)
+
+    def test_unexecuted_return_replans_probe_without_reconciling_or_reunderstanding(self):
+        for recover in (True, False):
+            with self.subTest(recover=recover):
+                r = self.runtime(); works = []; fast_calls = []
+                ordinary = self.response(works)
+                def respond(model, payload):
+                    c = context(payload)
+                    if c['work'] == 'backchain' and fast_calls:
+                        works.append('backchain')
+                        self.assertIn('not executed', c['unexecuted_procedure'])
+                        self.assertIn('move_to', c['unexecuted_procedure'])
+                        data = subgoal(c, 'probe')
+                        schema = FocusedTool(r, 'backchain')._get_declaration().parameters_json_schema
+                        jsonschema.validate(data, schema)
+                        with self.assertRaises(ValueError):
+                            r.validate_stage('backchain', Subgoal.model_validate(subgoal(c, 'achieve')))
+                        return call('submit_subgoal', data)
+                    if c['work'] == 'execute_step':
+                        works.append('execute_step'); fast_calls.append(c)
+                        self.assertNotIn('7', c['choices'])
+                        return token('1' if recover and len(fast_calls) > 1 else '8')
+                    return ordinary(model, payload)
+                with patch.object(LocalVisionLlm, '_complete', respond):
+                    result = r.decide(obs())
+                self.assertEqual(works.count('understand'), 1)
+                self.assertNotIn('reconcile', works)
+                self.assertEqual(len(fast_calls), 2)
+                self.assertEqual(r.memory.trial_ledger, [])
+                if recover:
+                    self.assertEqual(result['action'], 'ACTION1')
+                    self.assertEqual(r.memory.plan['intent'], 'probe')
+                else:
+                    self.assertEqual(result, {'status': 'stop', 'reason': 'planning_no_progress'})
+                    self.assertIsNone(r.memory.pending)
 
     def test_probe_limit_reviews_no_change_then_refreshes_targets_before_replanning(self):
         r = self.runtime(); works = []
@@ -307,7 +414,7 @@ class FocusedWorkflowTests(unittest.TestCase):
         self.assertEqual(r.memory.phase, 'understand')
         self.assertIsNone(r.memory.candidate_batch)
         self.assertEqual(r.memory.trial_ledger[-1]['actual_trials'][0]['action'], 'ACTION1')
-        self.assertEqual(r.memory.final_goal, 'Reach the exit.')
+        self.assertEqual(r.memory.final_goal, GAME_OBJECTIVE)
 
     def test_custom_provider_failure_stops_before_execution(self):
         class Bad:
