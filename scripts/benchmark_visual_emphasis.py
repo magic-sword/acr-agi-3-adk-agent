@@ -16,13 +16,14 @@ import statistics
 import sys
 import time
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFilter
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.preview_change_emphasis import masks, displayed_color, rgb
 from scripts.benchmark_parallel import digest, read_lines
 from scripts.benchmark_recognition import encode, save_json, validate
 from scripts.benchmark_attention_selection import http
+from scripts.fonts import ui_font
 
 ARMS = ('original', 'white', 'outline', 'blur', 'numbered')
 TARGETS = ('orange_blue', 'white_cross', 'yellow_strip')
@@ -91,7 +92,7 @@ def render(frame, palette, arm, mask, title):
     for x in (0,8,16,24,32,40,48,56,63): draw.text((ox+x*SCALE,oy-16), str(x), fill='white')
     for y in (0,8,16,24,32,40,48,56,63): draw.text((3,oy+y*SCALE), str(y), fill='white')
     if arm in ('outline', 'numbered'):
-        font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 13)
+        font = ui_font(13)
         for index, (l,t,r,b) in enumerate(mask_boxes(mask), 1):
             # Outer two display pixels, separated from preserved pixels by a gap.
             box = [ox+l*SCALE-3, oy+t*SCALE-3, ox+(r+1)*SCALE+2, oy+(b+1)*SCALE+2]

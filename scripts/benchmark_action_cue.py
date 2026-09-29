@@ -8,10 +8,11 @@ from pathlib import Path
 import random
 import sys
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from scripts.agent_monitor import PALETTE
+from scripts.fonts import ui_font
 from scripts.benchmark_attention_selection import http, now
 from scripts.benchmark_parallel import digest, read_lines
 from scripts.benchmark_recognition import encode, save_json
@@ -77,7 +78,7 @@ def render_board(case,frame,template):
 
 def overlay(before,action,controls,marked):
     im=before.copy();d=ImageDraw.Draw(im)
-    font=ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',16)
+    font=ui_font(16)
     d.text((50,761),'INPUT OVERLAY — BEFORE',font=font,fill='#ffffff')
     d.text((50,785),'Glow / ring = recorded input',font=font,fill='#b8eaf2')
     if not marked:return im
