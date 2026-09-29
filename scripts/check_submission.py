@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from agent.submission_runtime import configure_sam, warmup
 from scripts.build_notebook import build, OUT
+from scripts.build_adk_bundle import OUT as ADK_OUT, manifest as adk_manifest
 from scripts.build_sam_bundle import sha256
 
 
@@ -21,7 +22,9 @@ def remote_check(manifest):
     metadata = json.loads((ROOT / 'notebooks/kernel-metadata.json').read_text())
     sam_id = metadata['id'].split('/')[0] + '/arc-agi-3-sam-vit-b'
     qwen = json.loads((ROOT / '.cache/kaggle-qwen-bundle/qwen-bundle.json').read_text())
+    adk_id = metadata['id'].split('/')[0] + '/arc-agi-3-adk-wheels'
     bundles = {sam_id: ('sam-bundle.json', manifest),
+               adk_id: ('adk-bundle.json', adk_manifest()),
                'magicsword001/arc-agi-3-qwen3-vl-4b': ('qwen-bundle.json', qwen)}
     for dataset, (manifest_name, expected) in bundles.items():
         required = (set(expected['files']) | {manifest_name}) - {'dataset-metadata.json'}
@@ -56,6 +59,9 @@ def main():
             compile(cell['source'], f'cell_{index}', 'exec')
     if json.loads(OUT.read_text()) != notebook:
         raise RuntimeError('Generated notebook is stale; run make notebook')
+    size = OUT.stat().st_size
+    if size >= 1_000_000:
+        raise RuntimeError(f'Notebook is {size:,} bytes; Kaggle rejects kernel sources of 1 MB or more')
     manifest = json.loads((ROOT / 'config/sam-bundle.json').read_text())
     qwen_root = ROOT / '.cache/kaggle-qwen-bundle'
     qwen = json.loads((qwen_root / 'qwen-bundle.json').read_text())
@@ -63,6 +69,11 @@ def main():
         if sha256(qwen_root / name) != digest:
             raise ValueError(f'Qwen asset checksum mismatch: {name}')
     print('Local Qwen bundle checksums: OK')
+    adk = adk_manifest()
+    for name, digest in adk['files'].items():
+        if sha256(ADK_OUT / name) != digest:
+            raise ValueError(f'ADK wheel checksum mismatch: {name}')
+    print('Local ADK wheel checksums: OK')
     with tempfile.TemporaryDirectory(prefix='sam-submission-') as directory:
         configure_sam(manifest, ROOT / '.cache/kaggle-sam-bundle', Path(directory))
         print('Local notebook, SAM source and checkpoint checksums: OK')

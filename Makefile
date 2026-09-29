@@ -17,7 +17,7 @@ PYTHON ?= python3
 FRAMEWORK_REPO := https://github.com/arcprize/ARC-AGI-3-Agents.git
 FRAMEWORK_DIR := vendor/ARC-AGI-3-Agents
 
-.PHONY: help build cache-dir repair-perms setup lab down logs shell gpu check auth eval verify notebook push status clean model-download model-up model-check eval-model model-runtime test benchmark benchmark-prepare sam-bundle submission-ready submission-smoke sam-upload sam-upload-version submission-remote-check
+.PHONY: help build cache-dir repair-perms setup lab down logs shell gpu check auth eval verify notebook push status clean model-download model-up model-check eval-model model-runtime test benchmark benchmark-prepare sam-bundle submission-ready submission-smoke sam-upload sam-upload-version submission-remote-check adk-bundle adk-upload adk-upload-version
 
 help:
 	@printf '%s\n' \
@@ -43,6 +43,8 @@ help:
 	  'make sam-upload            Create the private SAM dataset (first upload)' \
 	  'make qwen-upload           Create the private Qwen dataset (first upload)' \
 	  'make sam-upload-version    Upload a new SAM dataset version when assets change' \
+	  'make adk-upload            Create the private ADK wheels dataset (first upload)' \
+	  'make adk-upload-version    Upload a new ADK wheels dataset version when wheels change' \
 	  'make push                  Build and push a Kaggle Notebook version' \
 	  'make status                Check latest Kaggle kernel run' \
 	  'make down                  Stop JupyterLab'
@@ -111,7 +113,7 @@ notebook: cache-dir
 sam-bundle:
 	$(PYTHON) scripts/build_sam_bundle.py
 
-submission-ready: sam-bundle qwen-bundle notebook
+submission-ready: sam-bundle qwen-bundle adk-bundle notebook
 	$(PYTHON) scripts/check_submission.py
 
 submission-smoke: submission-ready model-check
@@ -123,6 +125,15 @@ sam-upload: sam-bundle
 
 sam-upload-version: sam-bundle
 	$(RUN) bash -ec 'IFS= read -r KAGGLE_API_TOKEN < .kaggle/access_token || true; test -n "$$KAGGLE_API_TOKEN"; export KAGGLE_API_TOKEN; kaggle datasets version -p .cache/kaggle-sam-bundle --keep-tabular -m "Pinned SAM ViT-B offline runtime"'
+
+adk-bundle:
+	$(PYTHON) scripts/build_adk_bundle.py
+
+adk-upload: adk-bundle
+	$(RUN) bash -ec 'IFS= read -r KAGGLE_API_TOKEN < .kaggle/access_token || true; test -n "$$KAGGLE_API_TOKEN"; export KAGGLE_API_TOKEN; kaggle datasets create -p .cache/kaggle-adk-bundle --keep-tabular'
+
+adk-upload-version: adk-bundle
+	$(RUN) bash -ec 'IFS= read -r KAGGLE_API_TOKEN < .kaggle/access_token || true; test -n "$$KAGGLE_API_TOKEN"; export KAGGLE_API_TOKEN; kaggle datasets version -p .cache/kaggle-adk-bundle --keep-tabular -m "Pinned Google ADK offline wheels"'
 
 submission-remote-check: submission-ready
 	$(RUN) python scripts/check_submission.py --remote

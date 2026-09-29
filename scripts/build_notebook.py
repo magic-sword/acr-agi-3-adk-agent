@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import json
-import base64
 from pathlib import Path
+import sys
 from textwrap import dedent
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from scripts.build_adk_bundle import WHEELS as ADK_WHEELS, manifest as adk_manifest
 OUT = ROOT / "notebooks" / "submission.ipynb"
 METADATA = ROOT / "notebooks" / "kernel-metadata.json"
 SOURCES = {str(p.relative_to(ROOT)): p for p in sorted((ROOT / "agent").rglob("*.py"))
@@ -15,10 +17,6 @@ SOURCES.update({
     "scripts/wait_model.py": ROOT / "scripts" / "wait_model.py",
     "agents/templates/my_agent.py": ROOT / "agent" / "my_agent.py",
 })
-ADK_WHEELS = [ROOT / "third_party/wheels" / name for name in (
-    "google_adk-2.0.0-py3-none-any.whl", "google_genai-1.72.0-py3-none-any.whl",
-    "google_auth-2.49.2-py3-none-any.whl",
-)]
 
 COMP = "/kaggle/input/competitions/arc-prize-2026-arc-agi-3"
 
@@ -40,6 +38,9 @@ def build() -> dict:
     sam_id = metadata['id'].split('/')[0] + '/arc-agi-3-sam-vit-b'
     if sam_id not in metadata.get('dataset_sources', []):
         raise ValueError(f'Attach {sam_id} via dataset_sources')
+    adk_id = metadata['id'].split('/')[0] + '/arc-agi-3-adk-wheels'
+    if adk_id not in metadata.get('dataset_sources', []):
+        raise ValueError(f'Attach {adk_id} via dataset_sources')
     sam_manifest = json.loads((ROOT / 'config/sam-bundle.json').read_text())
     write_files = "from pathlib import Path\n"
     for rel, src in SOURCES.items():
@@ -48,11 +49,28 @@ def build() -> dict:
         target = Path("/tmp/arc_adk") / rel
         write_files += f"p = Path({str(target)!r})\np.parent.mkdir(parents=True, exist_ok=True)\n_ = p.write_text({src.read_text()!r})\n"
 
-    # Embed the small runtime wheels so hidden reruns need no package download.
-    bundled_wheels = "import base64\nfrom pathlib import Path\n"
-    for wheel in ADK_WHEELS:
-        payload = base64.b64encode(wheel.read_bytes()).decode("ascii")
-        bundled_wheels += f"p = Path('/tmp/arc_adk_wheels/{wheel.name}')\np.parent.mkdir(parents=True, exist_ok=True)\np.write_bytes(base64.b64decode({payload!r}))\n"
+    # Kaggle rejects kernel sources over 1 MB, so the wheels come from a dataset.
+    bundled_wheels = dedent(f'''\
+        import hashlib
+        import json
+        from pathlib import Path
+
+        expected = {adk_manifest()!r}
+        wheel_dir = Path("/tmp/arc_adk_wheels")
+        if Path("/kaggle/input").is_dir():
+            matches = [p.parent for p in sorted(Path("/kaggle/input").rglob("adk-bundle.json"))
+                       if json.loads(p.read_text()) == expected]
+            if not matches:
+                raise FileNotFoundError("Attach the prepared arc-agi-3-adk-wheels dataset (matching adk-bundle.json)")
+            wheel_dir.mkdir(parents=True, exist_ok=True)
+            for name, digest in expected["files"].items():
+                data = (matches[0] / name).read_bytes()
+                if hashlib.sha256(data).hexdigest() != digest:
+                    raise ValueError(f"ADK wheel checksum mismatch: {{name}}")
+                (wheel_dir / name.removesuffix(".bin")).write_bytes(data)
+        else:
+            print("Local notebook: the development image already includes Google ADK")
+    ''')
 
     install = dedent(f'''\
         from pathlib import Path
@@ -70,10 +88,11 @@ def build() -> dict:
             import arc_agi
             import dotenv
             print("Local ARC dependencies: OK")
-        subprocess.run([
-            sys.executable, "-m", "pip", "install", "--no-index", "--no-deps",
-            "--find-links", "/tmp/arc_adk_wheels", "google-adk==2.0.0", "google-genai==1.72.0", "google-auth==2.49.2",
-        ], check=True)
+        if Path("/tmp/arc_adk_wheels").is_dir():
+            subprocess.run([
+                sys.executable, "-m", "pip", "install", "--no-index", "--no-deps",
+                "--find-links", "/tmp/arc_adk_wheels", "google-adk==2.0.0", "google-genai==1.72.0", "google-auth==2.49.2",
+            ], check=True)
     ''')
 
     start_model = dedent(f'''\

@@ -162,15 +162,19 @@ parent directory. The commands below use each folder's `dataset-metadata.json`.
 make auth                      # credentials in ignored .kaggle/access_token
 make qwen-upload               # first time only: create the private Qwen Dataset
 make sam-upload                # first time only: create the private SAM Dataset
-# Wait until Kaggle finishes processing both Datasets.
+make adk-upload                # first time only: create the private ADK wheels Dataset
+# Wait until Kaggle finishes processing all three Datasets.
 make push                      # verify attached assets, then upload the private Notebook
 make status                    # inspect Save & Run status
 ```
 
 After changing SAM assets, use `make sam-upload-version` instead of `make sam-upload`.
 Use `make qwen-upload-version` after changing Qwen weights or its runtime.
-Agent-only changes need only `make push`. `make submission-remote-check` checks both
-remote manifests and required SAM/Qwen files without uploading. A failed check
+Use `make adk-upload-version` after changing the pinned ADK wheels. Kaggle rejects
+Notebook sources of 1 MB or more, so the wheels ship as a Dataset rather than being
+embedded in the Notebook.
+Agent-only changes need only `make push`. `make submission-remote-check` checks all
+remote manifests and required SAM/Qwen/ADK files without uploading. A failed check
 stops `make push`; it does not upload a Notebook with missing assets. The
 Qwen Dataset must include both GGUFs, `llama-server`, and its runtime libraries.
 
