@@ -43,6 +43,8 @@ class StageTool(BaseTool):
 
 
 class DeliberationStages:
+    accept_late_results = False
+
     def _agent(self, work):
         if work not in self.planners:
             tool_name=self.stage_tasks[work][0]
@@ -85,7 +87,8 @@ class DeliberationStages:
                     await ctx.run_node(agent,node_input=types.Content(role='user',parts=parts))
                 if self.submission is None:
                     raise ValueError(self.rejection or 'no stage result submitted')
-                if self.time_left()<=0:
+                # A late result is kept only by runtimes whose fallback can execute it.
+                if self.time_left()<=0 and not self.accept_late_results:
                     return
                 if accept_result:
                     self._accept_stage(work,self.submission)
@@ -108,7 +111,10 @@ class DeliberationStages:
                 self._machine_transition('repair_'+work)
         if self.time_left()>0:
             self._machine_transition('invalid_'+work)
-            self._stop('stage_output_invalid')
+            self._stage_invalid(work)
+
+    def _stage_invalid(self, work):
+        self._stop('stage_output_invalid')
 
 
 def unique(values, name):

@@ -94,7 +94,7 @@ Use `make benchmark` for score measurement and comparison reports.
 
 - `COGNITION_REPAIR_ATTEMPTS=1`: one repair for a malformed deliberation output; `0` disables it.
 - `COGNITION_SECONDS=600`: total per-game reasoning deadline.
-- `COGNITION_DECISION_SECONDS=45`: time allowed to obtain the next action, including replanning.
+- `COGNITION_DECISION_SECONDS=45`: time allowed to obtain the next action, including replanning. When it runs out, or a stage output stays invalid, the host sends a fallback action (continue the active procedure, else the least-tried control) and planning resumes on the next observation; only `COGNITION_SECONDS` ends the game.
 - `COGNITION_MAX_RESETS=2`: host-owned episode restarts.
 - `COGNITION_LOG_DIR=outputs/cognition`: logging location; empty disables persistence.
 - `VLM_API_BASE=http://vlm:8080/v1`: local model endpoint.

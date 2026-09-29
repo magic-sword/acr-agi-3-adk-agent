@@ -116,4 +116,4 @@ class StructureTests(unittest.TestCase):
         data=read_structure(ROOT)
         self.assertEqual(data['transitions'],TRANSITIONS)
         self.assertEqual(destination('repair_ground'), 'ground')
-        self.assertEqual(destination('invalid_ground'), 'stop')
+        self.assertEqual(destination('invalid_ground'), 'fallback')

@@ -99,7 +99,7 @@ class CognitiveRuntime(DeliberationStages, ExecutionRuntime):
             self.trace.append('RUN')
             self._record('states','state_entered',state='RUN',work=self.work,input={'job':self.job})
             if self.result is None:
-                if self.time_left()<=0:
+                if self.game_time_left()<=0:
                     self._stop('budget_exhausted')
                 else:
                     self._select(self.job['action'],self.job['expected_effect'])

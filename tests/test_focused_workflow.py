@@ -307,7 +307,7 @@ class FocusedWorkflowTests(unittest.TestCase):
         self.assertEqual(r.memory.understanding['goal_hypothesis'], data['goal_hypothesis'])
         self.assertEqual(r.memory.final_goal, GAME_OBJECTIVE)
 
-    def test_empty_candidates_loop_is_bounded_without_new_observation(self):
+    def test_empty_candidates_loop_falls_back_to_one_host_action(self):
         r = self.runtime(); works = []
         ordinary = self.response(works)
         def respond(model, payload):
@@ -323,9 +323,11 @@ class FocusedWorkflowTests(unittest.TestCase):
             return ordinary(model, payload)
         with patch.object(LocalVisionLlm, '_complete', respond):
             result = r.decide(obs())
-        self.assertEqual(result, {'status': 'stop', 'reason': 'planning_no_progress'})
+        self.assertEqual(result['status'], 'action')
+        self.assertEqual(result['action'], 'ACTION1')
+        self.assertEqual(r.memory.lifecycle, 'AWAIT_FRAME')
         self.assertEqual(works, ['understand', 'backchain', 'candidates'] * 2)
-        self.assertIsNone(r.memory.pending)
+        self.assertIsNone(r.memory.pending['skill'])
 
     def test_unexecuted_return_replans_probe_without_reconciling_or_reunderstanding(self):
         for recover in (True, False):
@@ -359,8 +361,9 @@ class FocusedWorkflowTests(unittest.TestCase):
                     self.assertEqual(result['action'], 'ACTION1')
                     self.assertEqual(r.memory.plan['intent'], 'probe')
                 else:
-                    self.assertEqual(result, {'status': 'stop', 'reason': 'planning_no_progress'})
-                    self.assertIsNone(r.memory.pending)
+                    # No planned action remains; the host tries a control instead of ending the game.
+                    self.assertEqual(result['action'], 'ACTION1')
+                    self.assertIsNone(r.memory.pending['skill'])
 
     def test_probe_limit_reviews_no_change_then_refreshes_targets_before_replanning(self):
         r = self.runtime(); works = []
@@ -369,8 +372,10 @@ class FocusedWorkflowTests(unittest.TestCase):
             c = context(payload)
             if c['work'] != 'reconcile': return ordinary(model, payload)
             works.append('reconcile')
-            self.assertEqual(len(c['attempt_results']), 2)
+            # Movement probes run at least MIN_MOVEMENT_PROBE_ACTIONS before review.
+            self.assertEqual(len(c['attempt_results']), 3)
             self.assertTrue(all(t['acknowledged'] and t['changed_cell_count'] == 0 for t in c['attempt_results']))
+            self.assertTrue(all(t['measured_outcome'] == 'ACTION1: no cell changed.' for t in c['attempt_results']))
             return call('submit_reconciliation', dict(observation_id=c['observation_id'], goal_id=c['plan']['goal_id'],
                 assessment='probe_result', evidence='Two actions produced no change.', goal_status='unknown',
                 causal_notes='UP did not move the actor in this context.', next='ground',
@@ -378,8 +383,10 @@ class FocusedWorkflowTests(unittest.TestCase):
         with patch.object(LocalVisionLlm, '_complete', respond):
             r.decide(obs()); ack(r)
             r.decide(obs(1)); ack(r)
-            result = r.decide(obs(2))
+            r.decide(obs(2)); ack(r)
+            result = r.decide(obs(3))
         self.assertEqual(result['action'], 'ACTION1', r.errors)
+        self.assertEqual(r.memory.plan['probe_action_limit'], 3)
         self.assertEqual(works[-5:], ['reconcile', 'understand', 'candidates', 'ground', 'execute_step'])
         self.assertEqual(r.memory.supported_skills, {})
         self.assertEqual(r.memory.causal_knowledge[-1]['status'], 'conditional_model_interpretation')
@@ -411,10 +418,141 @@ class FocusedWorkflowTests(unittest.TestCase):
         r.recent_trials[0]['skill']['invocation_id'] = r.memory.active_skill['invocation_id']
         r._accept_stage('reconcile', self.review(r))
         self.assertIn('move', r.memory.supported_skills)
-        self.assertEqual(r.memory.phase, 'understand')
+        # The scene of this observation is current, so review goes straight to a new subgoal.
+        self.assertEqual(r.memory.phase, 'backchain')
         self.assertIsNone(r.memory.candidate_batch)
         self.assertEqual(r.memory.trial_ledger[-1]['actual_trials'][0]['action'], 'ACTION1')
         self.assertEqual(r.memory.final_goal, GAME_OBJECTIVE)
+
+    def test_duplicate_semantic_candidates_are_dropped_not_rejected(self):
+        r = self.runtime(); works = []
+        ordinary = self.response(works)
+        def respond(model, payload):
+            c = context(payload)
+            if c['work'] == 'candidates':
+                works.append('candidates')
+                v = batch(c); v['candidates'].append(deepcopy(v['candidates'][0]))
+                return call('submit_candidates', v)
+            return ordinary(model, payload)
+        with patch.object(LocalVisionLlm, '_complete', respond):
+            result = r.decide(obs())
+        self.assertEqual(result['action'], 'ACTION1', r.errors)
+        self.assertEqual(works.count('candidates'), 1)
+        self.assertEqual(len(r.memory.candidate_batch['candidates']), 1)
+
+    def test_unoffered_reuse_and_long_ids_become_proposals(self):
+        r = self.runtime(); works = []
+        ordinary = self.response(works)
+        def respond(model, payload):
+            c = context(payload)
+            if c['work'] == 'candidates':
+                works.append('candidates')
+                schema = FocusedTool(r, 'candidates')._get_declaration().parameters_json_schema
+                self.assertEqual(schema['$defs']['Candidate']['properties']['source']['enum'], ['proposed'])
+                v = batch(c); v['candidates'][0].update(id='x'*60, source='reuse', skill_name='activate')
+                return call('submit_candidates', v)
+            if c['work'] == 'ground':
+                works.append('ground')
+                return call('submit_plan_choice', {**plan(c), 'candidate_id': c['candidates'][0]['id']})
+            return ordinary(model, payload)
+        with patch.object(LocalVisionLlm, '_complete', respond):
+            result = r.decide(obs())
+        self.assertEqual(result['action'], 'ACTION1', r.errors)
+        self.assertEqual(works.count('candidates'), 1)
+        self.assertEqual(r.memory.selected_candidate['source'], 'proposed')
+        self.assertEqual(r.memory.selected_candidate['id'], 'c1')
+
+    def test_candidate_timeout_falls_back_instead_of_stopping(self):
+        import time
+        r = self.runtime(); works = []
+        ordinary = self.response(works)
+        def respond(model, payload):
+            c = context(payload)
+            if c['work'] == 'candidates':
+                r.turn_deadline = time.monotonic()
+                raise TimeoutError()
+            return ordinary(model, payload)
+        with patch.object(LocalVisionLlm, '_complete', respond):
+            result = r.decide(obs())
+        self.assertEqual(result['status'], 'action')
+        self.assertEqual(r.memory.stop_reason, '')
+
+    def test_invalid_stage_output_sends_host_action_and_resumes_planning(self):
+        r = self.runtime(); works = []
+        ordinary = self.response(works)
+        def respond(model, payload):
+            c = context(payload)
+            if c['work'] == 'understand' and c['observation_id'].split(':')[1] == '0':
+                works.append('understand')
+                return call('submit_scene', {**scene(c), 'observation_id': 'stale'})
+            return ordinary(model, payload)
+        with patch.object(LocalVisionLlm, '_complete', respond):
+            result = r.decide(obs())
+            self.assertEqual(result['action'], 'ACTION1')
+            self.assertEqual(works, ['understand', 'understand'])  # one repair, then fallback
+            self.assertEqual(r.memory.lifecycle, 'AWAIT_FRAME')
+            ack(r)
+            self.assertEqual(r.decide(obs(1))['action'], 'ACTION1', r.errors)
+        self.assertEqual(works[2:], ['understand', 'backchain', 'candidates', 'ground', 'execute_step'])
+        self.assertEqual(r._action_counts, {('ACTION1', None): 1})
+
+    def test_deadline_after_grounding_executes_the_plan_instead_of_stopping(self):
+        import time
+        r = self.runtime(); works = []
+        ordinary = self.response(works)
+        def respond(model, payload):
+            c = context(payload)
+            if c['work'] == 'ground':
+                r.turn_deadline = time.monotonic()  # The plan arrives as the turn expires.
+            return ordinary(model, payload)
+        with patch.object(LocalVisionLlm, '_complete', respond):
+            result = r.decide(obs())
+        self.assertEqual(result['action'], 'ACTION1')
+        self.assertNotIn('execute_step', works)
+        self.assertEqual(r.memory.pending['skill']['invocation_id'], r.memory.active_skill['invocation_id'])
+
+    def test_decision_deadline_without_plan_explores_untried_controls(self):
+        import time
+        r = self.runtime(); works = []
+        ordinary = self.response(works)
+        def respond(model, payload):
+            r.turn_deadline = time.monotonic()
+            return ordinary(model, payload)
+        a = obs(); a['available_actions'] = ['ACTION1', 'ACTION2']
+        b = obs(1); b['available_actions'] = ['ACTION1', 'ACTION2']
+        with patch.object(LocalVisionLlm, '_complete', respond):
+            first = r.decide(a); ack(r)
+            second = r.decide(b)
+        self.assertEqual([first['action'], second['action']], ['ACTION1', 'ACTION2'])
+        self.assertEqual(r.memory.stop_reason, '')
+
+    def test_review_reuses_tracked_scene_instead_of_reunderstanding(self):
+        r = self.runtime(); works = []
+        ordinary = self.response(works, intent='probe', click=True)
+        def respond(model, payload):
+            c = context(payload)
+            if c['work'] != 'reconcile': return ordinary(model, payload)
+            works.append('reconcile')
+            self.assertIn('cells changed', c['attempt_results'][0]['measured_outcome'] + 'cells changed')
+            return call('submit_reconciliation', dict(observation_id=c['observation_id'], goal_id=c['plan']['goal_id'],
+                assessment='probe_result', evidence='Clicks produced no change.', goal_status='unknown',
+                causal_notes='', next='ground', reason='Try another operation.', next_question='What else?'))
+        with patch.object(LocalVisionLlm, '_complete', respond):
+            r.decide(obs()); ack(r)
+            r.decide(obs(1)); ack(r)
+            self.assertEqual(r.decide(obs(2))['action'], 'ACTION6', r.errors)
+        self.assertEqual(works.count('understand'), 1)
+        self.assertEqual(works[-4:], ['reconcile', 'candidates', 'ground', 'execute_step'])
+        self.assertEqual(r.memory.understanding['observation_id'], r.obs['observation_id'])
+
+    def test_measured_outcome_names_directions_and_changes(self):
+        from agent.cognition.focused_workflow import measured_outcome
+        trial = dict(acknowledged=True, action={'action': 'ACTION1'}, changed_cell_count=52,
+                     object_observations=[dict(object_id='a', delta_xy=[0, -5], changed_pixels_on_previous_support=2),
+                                          dict(object_id='b', delta_xy=[0, 0], changed_pixels_on_previous_support=0)])
+        self.assertEqual(measured_outcome(trial, ['b']),
+                         'ACTION1: 52 cells changed; object a moved up by (0,-5); target b: unchanged.')
+        self.assertEqual(measured_outcome({**trial, 'changed_cell_count': 0}), 'ACTION1: no cell changed.')
 
     def test_custom_provider_failure_stops_before_execution(self):
         class Bad:

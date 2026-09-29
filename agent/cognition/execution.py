@@ -55,6 +55,10 @@ class ExecutionRuntime:
     def time_left(self):
         return max(0, min(self.deadline, self.turn_deadline)-time.monotonic())
 
+    def game_time_left(self):
+        # A spent decision budget ends deliberation for this observation, not the game.
+        return max(0, self.deadline-time.monotonic())
+
     def _record(self, kind, event, **data):
         self.event_sequence += 1
         append_record(self.log_dir, self.session_id, kind, {
