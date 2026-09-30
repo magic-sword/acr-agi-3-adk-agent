@@ -96,6 +96,20 @@ def build_skills(rules, stats=None):
             instructions=('Measured effect of the last click on this appearance: ' + '; '.join(effects) + '. '
                           'The effect may depend on the board state; predict_effect(control="CLICK", object_id=...) '
                           'returns the learned effect for a current object.\n' + validation)))
+    for key, rec in rules.schemas.items():
+        if not rules.confirmed(key):
+            continue
+        kind, trigger, target = key
+        name = _kebab(f"{kind}-{color_name(target[0])}-{len(target[1])}-by-{color_name(trigger[0])}-{len(trigger[1])}")
+        if any(k.name == name for k in skills):
+            continue
+        skills.append(models.Skill(
+            frontmatter=models.Frontmatter(
+                name=name, description=rules.schema_text(key)[:1000]),
+            instructions=('Contact rule learned from a change no other rule explained, and checked on every later '
+                          f"contact: {rec['hits']} of {rec['trials']} contacts showed it. "
+                          + ('The program plans pushes; a pushed object stops at walls.' if kind == 'pushed' else
+                             'Reaching the trigger is a way to cause this change.'))))
     for (sa, oa), (sb, ob), moved in rules.inverse_pairs():
         what = ', '.join(f"the {color_name(m[0])} object by {d}" for m, d in moved.items())
         skills.append(models.Skill(

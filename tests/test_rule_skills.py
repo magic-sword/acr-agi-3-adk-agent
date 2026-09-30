@@ -85,6 +85,28 @@ class RuleSkillTests(unittest.TestCase):
         rules.learn(g, g, 'ACTION6', (2, 2))      # no effect again: the latest outcome
         self.assertIsNone(rules.predict_outcome(g, 'ACTION6', (2, 2))['recolor'])
 
+    def test_a_direction_that_failed_once_stays_assumed_elsewhere(self):
+        rules = RuleLearner()
+        rules.learn(board((1, 1)), board((2, 1)), 'ACTION4')   # RIGHT moves
+        rules.learn(board((2, 1)), board((2, 1)), 'ACTION1')   # UP at the top edge: nothing moved
+        self.assertIn('ACTION1', rules.assumed_deltas(rules.movers(), list(MOVES)))
+        self.assertIn(('ACTION1', (2, 1)), rules.stuck)          # remembered as a fact about that place
+        self.assertEqual(rules.plan_path(board((2, 3)), (2, 1, 3, 2), available=list(MOVES)), ['ACTION1', 'ACTION1'])
+
+    def test_a_controllable_object_that_changes_its_look_is_still_followed(self):
+        def turned(pos, facing):
+            g = [[3]*12 for _ in range(12)]
+            x, y = pos
+            g[y][x] = g[y][x+1] = g[y+1][x] = 12
+            if facing == 'right':
+                g[y+1][x+1] = 12
+            return g
+        rules = RuleLearner()
+        rules.learn(turned((1, 1), 'left'), turned((2, 1), 'left'), 'ACTION4')
+        rules.learn(turned((2, 1), 'left'), turned((3, 1), 'right'), 'ACTION4')   # moved and turned
+        self.assertEqual(len(rules.movers()), 2)
+        self.assertEqual(rules.predict(turned((3, 1), 'right'), 'ACTION4'), {next(s for s in rules.movers() if len(s[1]) == 4): (1, 0)})
+
     def test_self_target_is_rejected_and_untried_directions_are_assumed(self):
         rules = RuleLearner()
         rules.learn(board((1, 1)), board((1, 2)), 'ACTION2')  # only DOWN has been tried

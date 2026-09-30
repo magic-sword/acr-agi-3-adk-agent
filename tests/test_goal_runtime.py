@@ -148,6 +148,48 @@ class PlannerTests(unittest.TestCase):
         from agent.cognition.skill_library import build_skills
         self.assertTrue(any(k.name.startswith('opposite-blue-blue') for k in build_skills(rules)))
 
+    def test_pushing_is_learned_from_contact_and_planned(self):
+        def world(player, a, b=(3, 8)):
+            # Floor 3; orange player; two identical green blocks; a red mark at column 6.
+            g = [[3]*10 for _ in range(10)]
+            g[0][6] = 8
+            g[a[1]][a[0]] = g[b[1]][b[0]] = 14
+            g[player[1]][player[0]] = 12
+            return g
+        rules = RuleLearner()
+        rules.learn(world((1, 5), (3, 5)), world((2, 5), (3, 5)), 'ACTION4')   # a free step
+        rules.learn(world((2, 5), (3, 5)), world((3, 5), (4, 5)), 'ACTION4')   # walks into a block: it moves on
+        self.assertEqual(len(rules.pushable()), 1)
+        rules.learn(world((3, 5), (4, 5)), world((4, 5), (5, 5)), 'ACTION4')   # and again: confirmed
+        grid = world((4, 5), (5, 5))
+        block = {(5, 5)}
+        objects = {'block': block, 'mark': cells_of(grid, 8), 'player': cells_of(grid, 12)}
+        planner = Planner(rules, grid, objects, list(MOVES))
+        plan = planner.plan([dict(relation='same_column', a='block', b='mark')])
+        self.assertEqual([a for a, _ in plan], ['ACTION4'])
+        from agent.cognition.skill_library import build_skills
+        self.assertTrue(any(k.name.startswith('pushed-') for k in build_skills(rules)))
+
+    def test_a_change_caused_by_touching_an_object_becomes_a_schema(self):
+        def world(player, lamp):
+            g = [[3]*10 for _ in range(10)]
+            g[1][5] = 0                        # a white switch
+            g[4][5] = lamp                     # a lamp away from the switch, off the edge band
+            g[player[1]][player[0]] = 12
+            return g
+        rules = RuleLearner()
+        rules.learn(world((3, 1), 9), world((4, 1), 9), 'ACTION4')
+        rules.learn(world((4, 1), 9), world((5, 1), 8), 'ACTION4')   # onto the switch: the lamp turns red
+        rules.learn(world((5, 1), 8), world((4, 1), 8), 'ACTION3')
+        rules.learn(world((4, 1), 8), world((5, 1), 9), 'ACTION4')   # again: it turns back
+        key = next(k for k in rules.schemas if k[0] == 'restyled' and k[2][0] == 9)
+        self.assertEqual((key[1][0], rules.schemas[key]['effect'][0]), (0, 8))
+        self.assertEqual(len([k for k in rules.schemas if rules.confirmed(k)]), 0)   # each change seen once
+        rules.learn(world((5, 1), 9), world((4, 1), 9), 'ACTION3')
+        rules.learn(world((4, 1), 9), world((5, 1), 8), 'ACTION4')
+        self.assertTrue(rules.confirmed(key))
+        self.assertIn('turns the', rules.schema_text(key))
+
     def test_unaffected_conditions_are_the_missing_links(self):
         rules, pos = trained()
         grid = board(pos)
@@ -392,6 +434,15 @@ class GoalRuntimeTests(unittest.TestCase):
         self.assertEqual(works, ['hypothesize'])
         self.assertIn(result['action'], MOVES)
         self.assertEqual(r._experiments, 1)
+
+    def test_rare_objects_stay_listed_when_repeated_ones_exceed_the_limit(self):
+        r = self.runtime()
+        dots = [dict(id=f'd{i}', colors=['white'], bbox=[i % 60, i // 60, i % 60, i // 60], cells=1) for i in range(70)]
+        goal = dict(id='g', colors=['green'], bbox=[45, 60, 47, 62], cells=9)   # last in screen order
+        rows = r._fit_rows(dots + [goal])
+        self.assertEqual(len(rows), 64)
+        self.assertIn('g', [x['id'] for x in rows])
+        self.assertEqual(r._omitted, {'white objects of 1 cells': 7})
 
     def test_hypothesis_follows_an_object_whose_id_changed(self):
         r = self.runtime()

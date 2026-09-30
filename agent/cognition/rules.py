@@ -5,6 +5,8 @@ same-colour components; an appearance is (colour, shape). Nothing here calls a m
 """
 from collections import Counter, defaultdict, deque
 
+from .perception import COLORS as COLOR_NAMES
+
 # Components larger than this are backgrounds and walls, not movable objects.
 MAX_OBJECT_CELLS = 400
 # Status bars sit along the frame edge; lines this close to it may be masked as counters.
@@ -52,6 +54,37 @@ def moves(before, after):
         d = (o[0]-c['origin'][0], o[1]-c['origin'][1])
         if d != (0, 0):
             out[c['sig']] = d
+    return out
+
+
+def object_changes(before, after, ignore=()):
+    """Per-object changes between two component lists, identical-looking objects included.
+
+    Returns [(kind, before component, detail)] with kind 'moved' (detail: delta), 'restyled'
+    (detail: the after component at the same place) or 'vanished'. Objects of one appearance
+    that stayed put match themselves; the remaining ones pair with the nearest unmatched
+    instance of the same appearance, else with an overlapping new component.
+    """
+    small = lambda cs: [c for c in cs if len(c['cells']) <= MAX_OBJECT_CELLS and c['sig'] not in ignore]
+    before, after = small(before), small(after)
+    fixed = {(c['sig'], c['origin']) for c in after}
+    gone = [c for c in before if (c['sig'], c['origin']) not in fixed]
+    kept = {(c['sig'], c['origin']) for c in before}
+    new = [c for c in after if (c['sig'], c['origin']) not in kept]
+    out, used = [], set()
+    for c in gone:
+        same = [i for i, n in enumerate(new) if i not in used and n['sig'] == c['sig']]
+        if same:
+            i = min(same, key=lambda i: abs(new[i]['origin'][0]-c['origin'][0]) + abs(new[i]['origin'][1]-c['origin'][1]))
+            used.add(i)
+            out.append(('moved', c, (new[i]['origin'][0]-c['origin'][0], new[i]['origin'][1]-c['origin'][1])))
+            continue
+        over = [i for i, n in enumerate(new) if i not in used and len(n['cells'] & c['cells']) * 2 >= len(c['cells'])]
+        if over:
+            used.add(over[0])
+            out.append(('restyled', c, new[over[0]]))
+        else:
+            out.append(('vanished', c, None))
     return out
 
 
@@ -108,6 +141,11 @@ class RuleLearner:
         # (action, mover top-left) where a learned move did nothing: a wall the colours cannot tell
         # (walls and floor may share a colour), so the position itself is the condition.
         self.stuck = set()
+        # Contact schemas learned from changes no other rule explains: (kind, trigger appearance,
+        # changed appearance) -> dict(effect, hits, trials). kind 'pushed' (moves with the mover),
+        # 'moved', 'restyled' or 'vanished'; the trigger is what the mover entered or tried to enter,
+        # or the clicked object. Validated like every rule: trials count each later contact.
+        self.schemas = {}
 
     # --- learning -----------------------------------------------------------------
     def learn(self, before, after, action, xy=None):
@@ -148,17 +186,23 @@ class RuleLearner:
             self.effective[action] += effect
             by = {c['sig']: c for c in comps}
             place = self._mover_origin(comps)
-            if place is not None and any((action, s) in self.move_delta for s in self.movers()):
+            learned_here = any((action, s) in self.move_delta for s in self.movers())
+            if place is not None and (learned_here or action in DIRECTION_PRIOR):
                 if any(s in real for s in self.movers()):
                     self.stuck.discard((action, place))
                 else:
+                    # A press that moved nothing is a fact about this place (a wall), not about the control.
                     self.stuck.add((action, place))
+            self._follow_restyled_mover(comps, components(after), action, real)
+            self._learn_attached_parts(comps, components(after), action, real)
             for sig, d in real.items():
                 self.move_delta[(action, sig)] = d
                 self.enter[(action, sig)] |= destination_colors(before, by[sig]['cells'], d)
             for (a, sig), d in list(self.move_delta.items()):
                 if a == action and sig in by and sig not in real:
                     self.block[(a, sig)] |= destination_colors(before, by[sig]['cells'], d) - self.enter[(a, sig)]
+        # Changes a contact explains are not a counter (the edge band, where status bars live, excepted).
+        explained |= self._learn_schemas(before, after, comps, action, xy, explained)
         residual = cells - explained
         self.tick_steps += 1
         self.ticked += bool(residual)
@@ -167,6 +211,141 @@ class RuleLearner:
         self.tick_rows.update({y for _, y in residual})
         self.tick_cols.update({x for x, _ in residual})
         return effect
+
+    def _follow_restyled_mover(self, comps, after_comps, action, real):
+        """A controllable object whose look changes (it turns to face its direction, say) stays the
+        controllable object: a new appearance where a mover was, or moved to, inherits its rules."""
+        sigs = self.movers()
+        if not sigs:
+            return
+        after_sigs = {c['sig'] for c in after_comps}
+        before_keys = {(c['sig'], c['origin']) for c in comps}
+        for c in comps:
+            if c['sig'] not in sigs or c['sig'] in after_sigs:
+                continue
+            d = self.move_delta.get((action, c['sig']), (0, 0))
+            places = [c['cells'], {(x+d[0], y+d[1]) for x, y in c['cells']}]
+            new = [n for n in after_comps if (n['sig'], n['origin']) not in before_keys and n['sig'] not in sigs
+                   and len(n['cells']) <= MAX_OBJECT_CELLS and any(len(n['cells'] & p) * 2 >= len(n['cells']) for p in places)]
+            if len(new) != 1:
+                continue
+            for (a, s), delta in list(self.move_delta.items()):
+                if s == c['sig']:
+                    self.move_delta.setdefault((a, new[0]['sig']), delta)
+                    self.enter[(a, new[0]['sig'])] |= self.enter[(a, s)]
+                    self.block[(a, new[0]['sig'])] |= self.block[(a, s)]
+
+    def _learn_attached_parts(self, comps, after_comps, action, real):
+        """Parts that moved with the core, touching it but not ahead of it, belong to the body (even
+        when identical parts exist elsewhere, which the unique-appearance move detection skips)."""
+        sigs = self.movers()
+        d = next((real[s] for s in sigs if s in real), None)
+        if d is None:
+            return
+        core = {p for c in comps if c['sig'] in sigs for p in c['cells']}
+        near = {(x+dx, y+dy) for x, y in core for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))} - core
+        ahead = {(x+d[0], y+d[1]) for x, y in core} - core
+        for kind, c, delta in object_changes(comps, after_comps, ignore=sigs):
+            if kind == 'moved' and delta == d and c['cells'] & near and not c['cells'] & ahead:
+                self.move_delta.setdefault((action, c['sig']), d)
+
+    def _contact(self, comps, action, xy):
+        """(trigger components, mover cells, attempted delta) of one action."""
+        if action == 'ACTION6':
+            return [c for c in comps if xy in c['cells']], set(), None
+        sigs = self.movers()
+        deltas = self.direction_deltas(sigs)
+        if action not in deltas:
+            return [], set(), None
+        mover = {p for c in self.controllable(comps) for p in c['cells']}
+        d = deltas[action]
+        front = {(x+d[0], y+d[1]) for x, y in mover} - mover
+        return [c for c in comps if c['cells'] & front and c['sig'] not in sigs
+                and len(c['cells']) <= MAX_OBJECT_CELLS], mover, d
+
+    def _learn_schemas(self, before, after, comps, action, xy, explained):
+        triggers, mover, d = self._contact(comps, action, xy)
+        if not triggers:
+            return set()
+        triggers.sort(key=lambda t: len(t['cells']))   # the most specific thing touched first
+        sigs = self.movers()
+        after_comps = components(after)
+        changes = object_changes(comps, after_comps, ignore=sigs)
+        tick = self.tick_region()
+        moved_to = {p for c in after_comps if c['sig'] in sigs for p in c['cells']}
+        real = []
+        for kind, c, detail in changes:
+            if kind == 'moved':
+                dest = {(x+detail[0], y+detail[1]) for x, y in c['cells']}
+                # An identical dot covered here and uncovered where the mover stood is not a move.
+                if dest <= mover or c['cells'] <= tick:
+                    continue
+            real.append((kind, c, detail))
+        # Cells accounted for without a new rule: the counter, where movers and moved objects were
+        # and are (a floor re-outlined around them, an object they now cover).
+        trace = set(explained) | tick | mover | moved_to
+        for kind, c, detail in real:
+            if kind == 'moved':
+                trace |= c['cells'] | {(x+detail[0], y+detail[1]) for x, y in c['cells']}
+        observed, attributed = set(), set()
+        for kind, c, detail in real:
+            if kind == 'restyled':
+                diff = (c['cells'] ^ detail['cells']) if detail['color'] == c['color'] else (c['cells'] | detail['cells'])
+                if diff <= trace:
+                    continue
+            elif kind == 'vanished' and c['cells'] <= trace:
+                continue
+            if action == 'ACTION6' and c in triggers and kind != 'vanished':
+                continue    # the clicked object's own move or colour is a click rule already
+            touched = next((t for t in triggers if t is c), None) or triggers[0]
+            if kind == 'moved' and detail == d and touched is not c:
+                continue    # moved along with the controls without contact: a control effect, not a contact one
+            if kind == 'moved':
+                kind, effect = ('pushed', 'moves with the controllable object') if (
+                    touched is c and detail == d) else ('moved', detail)
+            elif kind == 'restyled':
+                effect = (detail['color'], detail['sig'][1] != c['sig'][1])
+            else:
+                effect = None
+            h, w = len(before), len(before[0])
+            attributed |= {(x, y) for x, y in c['cells'] | (detail['cells'] if kind == 'restyled' else set())
+                           if EDGE_BAND <= x < w - EDGE_BAND and EDGE_BAND <= y < h - EDGE_BAND}
+            key = (kind, touched['sig'], c['sig'])
+            rec = self.schemas.setdefault(key, dict(effect=effect, hits=0, trials=0, action=action))
+            rec['effect'] = effect
+            observed.add(key)
+        touched = {t['sig'] for t in triggers}
+        for key, rec in self.schemas.items():
+            if key[1] in touched and (action == 'ACTION6') == (rec['action'] == 'ACTION6'):
+                rec['trials'] += 1
+                rec['hits'] += key in observed
+        return attributed
+
+    def schema_text(self, key, name=None):
+        """One-line description of a contact schema; name(sig) names an appearance."""
+        name = name or (lambda sig: f'{COLOR_NAMES[sig[0]]} object of {len(sig[1])} cells')
+        kind, trigger, target = key
+        rec = self.schemas[key]
+        cause = f"clicking the {name(trigger)}" if rec['action'] == 'ACTION6' else f"moving the controllable object into the {name(trigger)}"
+        if kind == 'pushed':
+            what = f"pushes it: it moves with the controllable object"
+        elif kind == 'moved':
+            what = f"moves the {name(target)} by {rec['effect']}"
+        elif kind == 'restyled':
+            colour, reshaped = rec['effect']
+            what = f"turns the {name(target)} {COLOR_NAMES[colour]}" + (' and changes its shape' if reshaped else '')
+        else:
+            what = f"removes the {name(target)}"
+        return f"{cause} {what} ({rec['hits']} of {rec['trials']} contacts)"
+
+    def confirmed(self, key):
+        """A contact schema seen at least twice and on at least half of the contacts."""
+        r = self.schemas[key]
+        return r['hits'] >= 2 and r['hits'] * 2 >= r['trials']
+
+    def pushable(self):
+        """Appearances the mover pushes: a 'pushed' schema confirmed at least as often as refuted."""
+        return {k[2] for k, r in self.schemas.items() if k[0] == 'pushed' and r['hits'] * 2 >= r['trials']}
 
     # --- derived knowledge ------------------------------------------------------------
     def movers(self):
@@ -310,14 +489,35 @@ class RuleLearner:
         return hits / checked if checked else None
 
     # --- tools over a current frame ---------------------------------------------------
-    def _mover_origin(self, comps):
+    def controllable(self, comps):
+        """Components of the controllable object: the parts every direction control moves (the
+        core), plus touching parts that some direction control has moved. A body that changes
+        its look with the direction (tu93 turns to face its way) moves under one control per look,
+        so the core alone can be a single eye cell, and paths planned for it pass gaps the body cannot."""
         sigs = self.movers()
-        cells = [p for c in comps if c['sig'] in sigs for p in c['cells']]
+        core = [c for c in comps if c['sig'] in sigs]
+        if not core:
+            return []
+        moved = {s for (_, s) in self.move_delta}
+        body, cells = list(core), {p for c in core for p in c['cells']}
+        grown = True
+        while grown:
+            grown = False
+            near = {(x+dx, y+dy) for x, y in cells for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))}
+            for c in comps:
+                if c in body or c['sig'] not in moved or len(c['cells']) > MAX_OBJECT_CELLS or not (c['cells'] & near):
+                    continue
+                body.append(c)
+                cells |= c['cells']
+                grown = True
+        return body
+
+    def _mover_origin(self, comps):
+        cells = [p for c in self.controllable(comps) for p in c['cells']]
         return bbox(cells)[:2] if cells else None
 
     def mover_cells(self, grid):
-        sigs = self.movers()
-        return {cell for c in components(grid) if c['sig'] in sigs for cell in c['cells']}, sigs
+        return {cell for c in self.controllable(components(grid)) for cell in c['cells']}, self.movers()
 
     def predict(self, grid, action):
         """One press from the current frame: which learned objects move, or stay blocked."""
@@ -343,9 +543,11 @@ class RuleLearner:
         if not learned:
             return {}
         step = max(max(abs(dx), abs(dy)) for dx, dy in learned.values())
-        # Only never-pressed controls get the prior: a press that moved nothing refutes it.
+        # A control that moved nothing keeps the prior until it failed at several places: a single
+        # failure is usually a wall there (recorded in stuck), not a dead control (tu93 starts boxed in).
+        failed_at = Counter(a for a, _ in self.stuck)
         return {a: (dx*step, dy*step) for a, (dx, dy) in DIRECTION_PRIOR.items()
-                if a in available and a not in learned and not self.tries[a]}
+                if a in available and a not in learned and not self.effective[a] and failed_at[a] < 3}
 
     def plan_path(self, grid, target_box, limit=4000, available=()):
         """Shortest direction sequence that brings the mover inside (or over) target_box.

@@ -192,7 +192,28 @@ class GoalRuntime(FocusedRuntime):
             rows.append(dict(id=o['object_id'], colors=color_names(o['color_ids']), bbox=o['bbox'], cells=len(cells), kind=o['kind'],
                              controllable=bool(mover_cells) and len(cells & mover_cells) * 2 > len(cells)))
         rows.sort(key=lambda r: (r['bbox'][1], r['bbox'][0]))   # screen order, as in V7
-        return rows[:OBJECT_LIMIT]
+        return self._fit_rows(rows)
+
+    def _fit_rows(self, rows):
+        """At most OBJECT_LIMIT rows, dropping from the most repeated appearance first.
+
+        A cut in screen order dropped tu93's single green goal behind 61 wall dots; repeated
+        appearances (dots, tiles) lose instances, a rare object is always kept.
+        """
+        self._omitted = {}
+        if len(rows) <= OBJECT_LIMIT:
+            return rows
+        groups = {}
+        for r in rows:
+            groups.setdefault((tuple(r['colors']), r['cells']), []).append(r)
+        keep = {k: len(v) for k, v in groups.items()}
+        for _ in range(len(rows) - OBJECT_LIMIT):
+            k = max(keep, key=lambda k: keep[k])
+            keep[k] -= 1
+        kept = [r for k, v in groups.items() for r in v[:keep[k]]]
+        self._omitted = {f"{', '.join(k[0])} objects of {k[1]} cells": len(v) - keep[k]
+                         for k, v in groups.items() if len(v) > keep[k]}
+        return sorted(kept, key=lambda r: (r['bbox'][1], r['bbox'][0]))
 
     def _object_cells(self):
         return {o['object_id']: decode(o.get('mask_runs', [])) for o in self._current_objects()}
@@ -269,10 +290,13 @@ class GoalRuntime(FocusedRuntime):
                 if recolor is not None:
                     parts.append(f'turned it {COLORS[recolor]}')
                 facts.append(f"clicking {name(key)} ({COLORS[key[0][0]]}): " + ('; '.join(parts) or 'no visible effect'))
+        for key in self.rules.schemas:
+            if self.rules.confirmed(key):
+                facts.append(self.rules.schema_text(key))
         for a, b, _ in self.rules.inverse_pairs():
             facts.insert(0, f"{name(a)} and {name(b)} are opposite controls: they move the same objects in opposite directions")
         facts += [f'known from earlier levels: {k}' for k in self.knowhow]
-        return facts[:12]
+        return facts[:14]
 
     def _orient_step(self):
         """Next orientation test, or None when the level's controls are understood enough."""
@@ -353,6 +377,7 @@ class GoalRuntime(FocusedRuntime):
                 frozenset((sig, frozenset(self.rules.click_affects[sig])) for sig, o in self.rules.click_outcomes.items()
                           if any(m or r is not None for _, m, r in o)),
                 frozenset(k for k, o in self.rules.click_at.items() if any(m or r is not None for _, m, r in o)),
+                frozenset(k for k in self.rules.schemas if self.rules.confirmed(k)),
                 frozenset(self.rules.blocking_colors(movers)) if movers else frozenset())
 
     def _experiment_step(self):
@@ -535,6 +560,8 @@ class GoalRuntime(FocusedRuntime):
             common.update(objects=model_rows, relations=RELATIONS,
                           controls=[ACTION_TO_BUTTON.get(a, a) for a in self.obs['available_actions'] if a != 'RESET'],
                           measured_effects=self._measured_facts(), falsified_hypotheses=self.falsified[-6:])
+            if getattr(self, '_omitted', None):
+                common['omitted_repeated_objects'] = self._omitted
         else:
             goal = self._active()
             common.update(goal_hypothesis=[describe(a) for a in goal['atoms']],

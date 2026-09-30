@@ -27,7 +27,8 @@ class Planner:
         self.comps = components(grid)
         self.members = object_components(self.comps, objects)
         movers = rules.movers()
-        self.mover_idx = [i for i, c in enumerate(self.comps) if c['sig'] in movers]
+        body = rules.controllable(self.comps)
+        self.mover_idx = [i for i, c in enumerate(self.comps) if any(c is b for b in body)]
         self.deltas = {}
         if self.mover_idx:
             learned = rules.direction_deltas(movers)
@@ -36,7 +37,11 @@ class Planner:
         affected = set().union(*rules.click_affects.values()) if rules.click_affects else set()
         self.click_idx = [i for i, c in enumerate(self.comps)
                           if len(c['cells']) <= MAX_OBJECT_CELLS and rules.click_outcomes.get(c['sig'])]
-        self.mutable = sorted(set(self.mover_idx) | set(self.click_idx) |
+        # Objects the mover pushes (a learned contact schema) move in the plan too.
+        pushable = rules.pushable() if self.mover_idx else set()
+        self.push_idx = [i for i, c in enumerate(self.comps) if c['sig'] in pushable]
+        self.push_start = set().union(*(self.comps[i]['cells'] for i in self.push_idx))
+        self.mutable = sorted(set(self.mover_idx) | set(self.click_idx) | set(self.push_idx) |
                               {i for i, c in enumerate(self.comps) if c['sig'] in affected})
 
     # state: tuple over self.mutable of (dx, dy, colour)
@@ -71,13 +76,26 @@ class Planner:
             return None
         h, w = len(self.grid), len(self.grid[0])
         start_mover = set().union(*(self.comps[i]['cells'] for i in self.mover_idx))
+        # Cells where pushable objects started are judged by where those objects are now.
+        free = lambda c, own: (c in own or c in start_mover or c in self.push_start
+                               or self.grid[c[1]][c[0]] not in self.blocking)
         for x, y in mover:
             nx, ny = x+delta[0], y+delta[1]
-            if not (0 <= nx < w and 0 <= ny < h):
-                return None
-            if (nx, ny) not in mover and (nx, ny) not in start_mover and self.grid[ny][nx] in self.blocking:
+            if not (0 <= nx < w and 0 <= ny < h) or not free((nx, ny), mover):
                 return None
         s = list(state)
+        ahead = {(x+delta[0], y+delta[1]) for x, y in mover}
+        pushed = [i for i in self.push_idx if self.cells(state, i) & ahead]
+        others = set().union(*(self.cells(state, j) for j in self.push_idx if j not in pushed))
+        for i in pushed:
+            cells = self.cells(state, i)
+            for x, y in cells:
+                c = (x+delta[0], y+delta[1])
+                if not (0 <= c[0] < w and 0 <= c[1] < h) or c in others or not free(c, cells | mover):
+                    return None
+            k = self.mutable.index(i)
+            dx, dy, col = s[k]
+            s[k] = (dx+delta[0], dy+delta[1], col)
         for i in self.mover_idx:
             k = self.mutable.index(i)
             dx, dy, col = s[k]
