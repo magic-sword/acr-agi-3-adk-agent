@@ -1,0 +1,125 @@
+# 引き継ぎ：止まらない判断ループから、実測スキルの作成と修正まで（2026-09-30）
+
+2026-09-29〜30 に行った改善と検証の要約。個別の詳細は各節のリンク先にある。以前の方針（SAM マスクによるクリック）は [visual-recognition-handoff-ja.md](visual-recognition-handoff-ja.md)。
+
+## 0. 先に読むこと：設計の原則
+
+ユーザーと合意した原則。以後の判断はこれに従う。
+
+1. **特定のゲームに合わせた調整はしない。** ゲームの形式は環境ごとに大きく違う。公開ゲーム（ls20・vc33・ft09）の成績を上げる個別の修正ではなく、**プレイしながらスキルを正しく作り、正しく修正する一般的な仕組み**を作る。評価も、ゲームの進み具合ではなく、仕組みの指標（予測の的中率、修正、LLM を呼ばずに実行できた手数）で行う。
+2. **プログラムと LLM の役割を分ける。** プログラムが計算できるボタン操作（経路など）は、プログラムがそのまま実行する。高速実行（LLM）の役割は、小目標の抽象的な動詞を解釈して、スキルに任せるかボタンを直接押すかを選ぶこと、そしてプログラムがやりきれない抽象的な操作（例：壁に着くまで歩く）を続けること。プログラムの答えを LLM にもう一度選ばせる設計は、遅くなり誤りを増やすだけなので避ける。
+3. **記憶の主役は、プログラムが測った事実。** モデルの解釈文を要約して繰り返し読ませると、誤りが固定化する（段階1で実際に起きた）。モデルの解釈は、上書き式の少数の仮説に限る。
+4. **ゴールの仮説は Qwen に出させ、実測で捨てる。** 温度を上げて複数の仮説を出させ、試行で絞る方針で合意済み（**未実装**、§7）。
+5. **検証はまず今の3環境で行う。** 環境を増やすのは成果が出てからにする。
+
+## 1. 現在の構成
+
+| 項目 | 内容 |
+|---|---|
+| ランタイム | `FocusedRuntime`（[focused_workflow.py](../agent/cognition/focused_workflow.py)）、記憶の形式は schema 16（`FocusedMemory`） |
+| 工程 | understand → backchain → candidates → ground → execute_step（高速）、結果の照合は reconcile。全遷移の定義は [machine.py](../agent/cognition/machine.py) |
+| モデル | Qwen3-VL-4B-Instruct Q4_K_M（llama-server）。n-gram 投機的デコーディングを有効化（§3） |
+| 判断時間 | 1観測あたり45秒（`COGNITION_DECISION_SECONDS`）、1ゲーム600秒（`COGNITION_SECONDS`）。**ゲームを終了させるのは全体の期限だけ**（§2） |
+| 規則とスキル | プログラムが実測から規則を学び（[rules.py](../agent/cognition/rules.py)）、ADK 2.0 のスキルとして LLM に渡す（[skill_library.py](../agent/cognition/skill_library.py)）。§6 |
+| テスト | 275件すべて成功（2026-09-30 時点） |
+
+## 2. 止まらない判断ループ（ベンチマークでほぼ手が進まなかった問題）
+
+改善前の評価（`outputs/evaluations/20260929T155706368979Z`）では、3ゲームの操作数が 1・3・0 だった。1手ごとに5工程（約40秒）をやり直して45秒の判断枠を使い切り、時間切れや出力の不正でゲーム全体を止めていた。
+
+| 変更 | 内容 |
+|---|---|
+| 停止しない | 判断時間切れ・出力不正（修復1回の後）・計画の停滞では、`fallback` 状態でプログラムが1手を送る。時間切れのときは実行中の手順を続け、それ以外は最も試していない操作を選ぶ |
+| 期限後の正しい出力を採用 | 同じ観測への有効な計画は、時間切れでも受け入れて実行する |
+| 出力をプログラムで直す | 重複した候補、長すぎる ID、存在しないスキルの「再利用」などは、差し戻さずに正規化する（`normalize_candidates`） |
+| 理解の引き継ぎ | 対象を追跡できていれば understand を省く |
+| 実測の明示 | 照合に `measured_outcome`（変化セル数、移動方向）を渡し、変化があったのに「効果なし」と書かないようにした |
+
+結果：操作数は 1・3・0 → 16・6・15。vc33 で初めてレベル1に到達した（1回の実行）。詳細は [visual-recognition-handoff-ja.md](visual-recognition-handoff-ja.md) の「停止しない判断ループ」。
+
+## 3. 推論の高速化（工程は変えない）
+
+- llama-server に `--spec-type ngram-simple --spec-ngram-simple-size-n 4 --spec-ngram-simple-size-m 16` を追加した。出力は、入力にある ID や対象名、スキーマのキーを写す部分が多く、下書きモデルなしで先読みが当たる。
+- 記録済みの15リクエストを再送した比較：114.3秒 → 85.1秒（−26%）。生成速度は毎秒約55トークンから75〜88トークンに上がった。
+- 設定は Kaggle 用の [model_runtime.py](../agent/model_runtime.py)（`SPECULATIVE_ARGS`）と `compose.yaml` で共通。一致はテスト（`tests/test_model_server_args.py`）で確認している。Kaggle に同梱している llama-server（commit bddf826）でも使えることを確認済み。
+- 効果がなかったもの：説明欄の上限短縮、FlashAttention の明示、ubatch の拡大。
+
+## 4. 記憶の再設計
+
+詳細：[memory-architecture-ja.md](memory-architecture-ja.md)。
+
+- **問題**：入力の半分以上は、同じ試行記録の重複だった。ground の入力が17.8kトークンになり、コンテキスト長の上限（16,384）を超えることもあった。
+- **段階1（工程ごとに必要な情報だけで入力を組み立てる）**：入力トークンは50〜70%減り、1回あたりの秒数は20〜45%減った。ただし、モデルの解釈文を要約して繰り返し読ませたことで、**作話が固定化した**。実測は変化0なのに「動いた」と書き、壁に当たった操作を10回以上繰り返した。
+- **段階2（プログラムが集計する操作ごとの効果＝`control_effects` と、モデル由来の文の削減）**：作話と無駄な繰り返しが0に戻り、トークンの削減はほぼ維持した。
+- 比較には [scripts/compare_memory_runs.py](../scripts/compare_memory_runs.py) を使う（2回以上の実行を並べて集計する）。
+
+## 5. 逆算計画（backchain）の精査と部品の検証
+
+詳細：[backchain-review-ja.md](backchain-review-ja.md)。
+
+- **現状**：backchain は逆算をしていない。156回中76%で、小目標が最終目標の文の写しだった。検査できるゴール条件、前提と効果を持つ因果規則、両者を比べる共通の状態表現がない。
+- **V1 因果スキーマ**（[verify_schema_prediction.py](../scripts/verify_schema_prediction.py)）：プログラムだけで規則を学び、1手先を予測できる。移動（ls20）は、既知の操作で F1 0.96。クリックは、効果が盤面の状態に依存するため弱かった。
+- **V2 状態の述語**：3ゲームのクリア条件は、位置の一致・同色／異色・隣接・属性の一致と「すべての〜について」の量化で書ける。ただし構造はゲームごとに違う。
+- **V3 ゴール仮説**（[verify_goal_hypotheses.py](../scripts/verify_goal_hypotheses.py)）：最初の画面だけでは、Qwen（4B）もプログラムも決め打ちできない。Qwen の自由記述は、正しい考え方を5回中1〜2回（2番目の仮説として）出した。一覧から選ばせる形式では、先頭3件に60%が偏った（ランダムなら約12%）。ゴールの最も確かな手がかりは、そのゲームでクリアした経験（クリアの瞬間に成立した関係はプログラムで特定できる）。
+
+## 6. 実測した規則を ADK スキルにする
+
+詳細：[skills-design-ja.md](skills-design-ja.md)。
+
+- **ADK 2.0 のスキル**：SKILL.md の構造で、L1（名前と説明）、L2（本文、`load_skill` で読む）、L3（資料とスクリプト）。スクリプトの実行器はドキュメント上 Gemini 専用のクラウド実行しかなく、今の盤面も参照できない。そのため、座標や経路の計算は `additional_tools` の関数ツールで提供する。
+- **V5**（[verify_skill_tools.py](../scripts/verify_skill_tools.py)）：規則をスキルにし、関数ツール `plan_path` を添えると、壁を回り込む経路の計画が 0/10 → 4/10（任意で使わせた場合）→ **10/10**（最初はスキルの読み込みだけ、以後も毎回ツールの呼び出しを必須にした場合）になった。4B モデルは手順を自由にさせると読み込みを飛ばすので、手順は呼び出しの制約で強制する必要がある。
+- **組み込んだ仕組み**（原則1・2に沿って再設計したもの）
+  - **予測と照合**：操作を実行する前に規則で結果を予測し、実行後に実測と照合する。外れた遷移は反例として記録し、版を上げ、そのレベルの過去の遷移の再現率（再生検証、Twin と同じ考え方）で状態を決める。成績と反例は、スキルの L1 と L2 に載る。
+  - **条件で分けるクリックの規則**：効果が変わったら上書きせず、盤面の条件と組で記録する。初めての状況で効果が食い違うときは予測を控える。
+  - **スキルのプログラム実行**：高速実行の選択肢に、到達できる目的地ごとの移動のスキルを示す。LLM が選ぶと、以後はプログラムが予測を確かめながら押す（LLM は呼ばない）。外れたら止めて照合に戻る。
+  - **効果のない操作の見直し**：同じ手順で物体に効果のない操作が3回続いたら、照合に戻す。
+  - backchain は `SkillToolset` で、規則の詳細と反例を任意で読める。
+- **結果**（3ゲーム×2回、`outputs/program-skills-comparison2.md`）
+  - 予測の的中：ls20 32/35、ft09 26/26、vc33 25/25。最後の再生検証の一貫性は、全6回で1.00。
+  - ls20 で、スキルがプログラムにより8手実行された。7手は予測どおりで、最後の1手の外れで止まり、修正された。予測 → 実行 → 外れたら修正、の流れが実際のプレイで最後まで動いた。
+  - 記録済みの全ログのオフラインでの再生検証（[verify_rule_consistency.py](../scripts/verify_rule_consistency.py)）：ls20 0.99、vc33 0.97、ft09 0.91。
+
+## 7. 未解決の課題と次の候補
+
+| 優先 | 課題 | 状況と手がかり |
+|---|---|---|
+| 高 | **高速実行がスキルをほとんど選ばない** | スキルの選択肢が示された回の選択は、「次の段階へ」14回、ボタン13回、スキル1回。V3 で見つかった「先頭の選択肢を選びやすい偏り」が影響している可能性がある。並び順（先頭に置く、ランダムにする）で変わるかを確かめる |
+| 高 | **ゴール仮説の仕組み（合意済み・未実装）** | 温度を上げた複数回のサンプリングで仮説を出し、実測で捨てる。クリアできたら、その瞬間に成立した関係を、同じゲームの次の面の最有力仮説にする |
+| 中 | 逆算の本体 | 述語で書いたゴールと、前提・効果を持つスキーマをつなぎ、差分から「不足している因果関係」を特定して試す（backchain-review §4 の①〜⑤） |
+| 中 | 離れた場所の色の変化 | ft09 のような「クリックでまわりのマスの色が変わる」効果を、クリックの規則で表せない |
+| 中 | クリック型のゲームで実行できるスキル | 今は移動のスキルだけ。例：対象が目的の色になるまでクリックする |
+| 低 | understand の知覚結果の重複 | 物体索引と領域一覧が、同じ領域を二重に並べている（1回約1.5万文字）。認識の質に直結するので、別に検証する |
+| 低 | 手順の強制の設定 | `LocalVisionLlm` の `protocol_first_tools`・`require_tool_calls` は、V5 で効果を確認した仕組みだが、今は使っていない |
+
+## 8. 使い方
+
+```bash
+# テスト（275件）
+docker compose exec -T -e USER=prog -e LOGNAME=prog dev python -m unittest discover -s tests
+
+# 3ゲームのベンチマーク（30手・600秒、1回約30分）
+docker compose exec -T -e USER=prog -e LOGNAME=prog dev python scripts/benchmark_local.py \
+  --games ls20,vc33,ft09 --steps 30 --levels 1 --seconds 600 --hard-seconds 660
+
+# 複数回の実行を比べる（ラベル=評価ディレクトリ,評価ディレクトリ）
+python3 scripts/compare_memory_runs.py before=outputs/evaluations/A,outputs/evaluations/B after=outputs/evaluations/C,outputs/evaluations/D
+
+# 記録済みログで、規則の予測と再生検証をオフラインで測る（モデル不要）
+python3 scripts/verify_rule_consistency.py outputs/evaluations/*/
+```
+
+- 提出用ノートブックは `make notebook` で作り直す（`agent/` の変更を反映させるため）。
+- ローカルの VLM サーバーは、投機的デコーディングの設定で起動している（`docker compose --profile vlm up -d vlm`）。
+- **評価は1ゲーム1回ではばらつきが大きい**。比較するときは、条件ごとに2回以上流す。
+- ADK のドキュメントは https://adk.dev/llms.txt で読める。Claude Code から MCP で参照する手順は、ADK 公式の「Coding with AI」のページにある（このマシンにはまだ `uvx` がなく、未設定）。
+
+## 9. 検証の成果物
+
+| 内容 | 場所 |
+|---|---|
+| 評価ログ（各ゲームの判断・モデルの入出力・記録） | `outputs/evaluations/<時刻>/` |
+| 記憶の段階比較 | `outputs/memory-stage1-comparison.md`、`outputs/memory-stage2-comparison.md`、`outputs/memory-stage2fix-comparison.md` |
+| V1〜V3 | `outputs/v1-schema-prediction.md`、`outputs/v3-goal/` |
+| V5（スキルと関数ツール） | `outputs/v5-skills/` |
+| スキルのプログラム実行 | `outputs/program-skills-comparison.md`、`outputs/program-skills-comparison2.md` |
+| 推論の高速化の計測 | `outputs/speed-test/` |

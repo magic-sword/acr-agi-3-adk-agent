@@ -2,7 +2,7 @@
 
 更新：2026-09-30。9月30日〜10月1日午前のマイルストーンでは、既存のSAM ViT-B・画素追跡・対象仮説を使い、選んだ現在マスク内からクリック点を決める。SAM 3は承認後の別実験に留め、完成条件にしない。
 
-この文書を現行方針の入口とする。[比較実験の一覧と判断](click-selection-evidence-ja.md)、[整理前の引き継ぎ](history/milestone-20260930/handoff-before-consolidation-ja.md)から詳細を辿れる。
+**最新の引き継ぎは [handoff-20260930-ja.md](handoff-20260930-ja.md)（止まらない判断ループ、推論の高速化、記憶の再設計、実測スキルの作成と修正）。そちらを先に読むこと。** 以下は、SAM マスクによるクリックの方針の記録である。[比較実験の一覧と判断](click-selection-evidence-ja.md)、[整理前の引き継ぎ](history/milestone-20260930/handoff-before-consolidation-ja.md)から詳細を辿れる。
 
 ## 状態遷移と実装
 
