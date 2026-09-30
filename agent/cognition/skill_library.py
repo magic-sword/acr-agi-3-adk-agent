@@ -96,6 +96,17 @@ def build_skills(rules, stats=None):
             instructions=('Measured effect of the last click on this appearance: ' + '; '.join(effects) + '. '
                           'The effect may depend on the board state; predict_effect(control="CLICK", object_id=...) '
                           'returns the learned effect for a current object.\n' + validation)))
+    for (sa, oa), (sb, ob), moved in rules.inverse_pairs():
+        what = ', '.join(f"the {color_name(m[0])} object by {d}" for m, d in moved.items())
+        skills.append(models.Skill(
+            frontmatter=models.Frontmatter(
+                name=_kebab(f"opposite-{color_name(sa[0])}-{color_name(sb[0])}-controls-{oa[0]}-{oa[1]}"),
+                description=(f"A pair of opposite controls: clicking the {color_name(sa[0])} object at {oa} moves {what}; "
+                             f"clicking the {color_name(sb[0])} object at {ob} moves them back by the opposite amount."),
+                metadata={'adk_additional_tools': ['predict_effect']}),
+            instructions=('Measured per object, not per appearance: objects that look the same can act in opposite '
+                          'directions. Use the pair to move the affected object back and forth, for example to '
+                          'align it with a mark; the program plans the number of clicks.')))
     if rules.ticks():
         skills.append(models.Skill(
             frontmatter=models.Frontmatter(

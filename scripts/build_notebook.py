@@ -18,7 +18,7 @@ SOURCES.update({
     "agents/templates/my_agent.py": ROOT / "agent" / "my_agent.py",
 })
 
-COMP = "/kaggle/input/competitions/arc-prize-2026-arc-agi-3"
+COMP_SLUG = "arc-prize-2026-arc-agi-3"
 
 
 def code(source: str) -> dict:
@@ -77,14 +77,31 @@ def build() -> dict:
         import subprocess
         import sys
 
-        wheel_dir = Path("{COMP}/arc_agi_3_wheels")
-        if wheel_dir.is_dir():
+        # Kaggle has mounted competition data both at /kaggle/input/<slug> and
+        # /kaggle/input/competitions/<slug>; later cells reuse comp_dir.
+        kaggle_input = Path("/kaggle/input")
+        comp_dir = None
+        if kaggle_input.is_dir():
+            markers = ("arc_agi_3_wheels", "ARC-AGI-3-Agents")
+            candidates = [kaggle_input / "competitions" / "{COMP_SLUG}", kaggle_input / "{COMP_SLUG}"]
+            candidates += sorted({{p.parent for m in markers for p in (*kaggle_input.glob(f"*/{{m}}"),
+                                                                     *kaggle_input.glob(f"*/*/{{m}}"))}})
+            comp_dir = next((p for p in candidates if p.is_dir()), None)
+            if comp_dir is None:
+                mounted = sorted(str(p) for p in (*kaggle_input.glob("*"), *kaggle_input.glob("*/*")))
+                raise FileNotFoundError(
+                    "Competition data for {COMP_SLUG} is not mounted; attach it via competition_sources. "
+                    f"Mounted under /kaggle/input: {{mounted}}"
+                )
+            print(f"Competition data: {{comp_dir}}")
+        wheel_dir = comp_dir / "arc_agi_3_wheels" if comp_dir is not None else None
+        if wheel_dir is not None and wheel_dir.is_dir():
             subprocess.run([
                 sys.executable, "-m", "pip", "install", "--no-index",
                 "--find-links", str(wheel_dir), "arc-agi", "python-dotenv",
             ], check=True)
         else:
-            # The development image already includes these packages.
+            # The development image (and the local smoke container) already includes these packages.
             import arc_agi
             import dotenv
             print("Local ARC dependencies: OK")
@@ -103,7 +120,7 @@ def build() -> dict:
         from agent.model_runtime import find_bundle, start
 
         model_process = None
-        if Path("{COMP}").is_dir():
+        if comp_dir is not None:
             from agent.submission_runtime import configure_sam
             configure_sam({sam_manifest!r})
             os.environ['VLM_API_BASE'] = 'http://127.0.0.1:8080/v1'
@@ -142,7 +159,7 @@ def build() -> dict:
                 raise RuntimeError("ARC gateway did not become available")
 
             root = Path("/kaggle/working/ARC-AGI-3-Agents")
-            shutil.copytree("{COMP}/ARC-AGI-3-Agents", root, dirs_exist_ok=True)
+            shutil.copytree(comp_dir / "ARC-AGI-3-Agents", root, dirs_exist_ok=True)
             shutil.copytree("/tmp/arc_adk/agent", root / "agent", dirs_exist_ok=True)
             shutil.copyfile("/tmp/arc_adk/agents/templates/my_agent.py", root / "agents/templates/my_agent.py")
             (root / "agents/__init__.py").write_text(
@@ -176,7 +193,7 @@ def build() -> dict:
     dummy = dedent(f'''\
         import os
         from pathlib import Path
-        if Path("{COMP}").is_dir() and not os.environ.get("KAGGLE_IS_COMPETITION_RERUN"):
+        if comp_dir is not None and not os.environ.get("KAGGLE_IS_COMPETITION_RERUN"):
             import subprocess
             # Save & Run validates both models on GPU before producing the placeholder.
             # Its worker exits here; hidden reruns have a separate, persistent worker.

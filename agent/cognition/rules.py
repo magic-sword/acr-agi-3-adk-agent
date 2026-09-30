@@ -95,6 +95,10 @@ class RuleLearner:
         self.click_moves = {}                 # clicked sig -> {moved sig: delta} (last observed, for description)
         self.click_outcomes = defaultdict(list)  # clicked sig -> [(context, moves, recolor)]: conditioned, never overwritten
         self.click_affects = defaultdict(set)    # clicked sig -> appearances its clicks have moved
+        # (clicked sig, origin) -> outcomes of that very object: same-looking buttons or tiles can act
+        # differently by position (vc33's two blue buttons move the marker opposite ways; in ft09 only
+        # one group of identical tiles reacts), so a rule generalises by appearance only when they agree.
+        self.click_at = defaultdict(list)
         self.recolor = {}                     # (clicked shape, colour) -> colour after
         self.tick_seen = Counter()
         self.tick_rows, self.tick_cols = Counter(), Counter()   # edge lines with unexplained changes
@@ -133,9 +137,10 @@ class RuleLearner:
                 outcome = (context, dict(real), recolor)
                 # The latest observation goes last: predictions use the most recent outcome in a context,
                 # so an outcome seen again must supersede one seen in between.
-                if outcome in self.click_outcomes[clicked['sig']]:
-                    self.click_outcomes[clicked['sig']].remove(outcome)
-                self.click_outcomes[clicked['sig']].append(outcome)
+                for seen in (self.click_outcomes[clicked['sig']], self.click_at[(clicked['sig'], clicked['origin'])]):
+                    if outcome in seen:
+                        seen.remove(outcome)
+                    seen.append(outcome)
                 explained |= clicked['cells']
         else:
             self.tries[action] += 1
@@ -220,6 +225,44 @@ class RuleLearner:
     def state_dependent(self, sig):
         return len({(tuple(sorted(m.items())), r) for _, m, r in self.click_outcomes[sig]}) > 1
 
+    def position_dependent(self, sig):
+        """Objects of this appearance, clicked at different places, had different latest effects."""
+        effects = {(tuple(sorted(o[-1][1].items())), o[-1][2]) for (s, _), o in self.click_at.items() if s == sig and o}
+        return len(effects) > 1
+
+    def inverse_pairs(self):
+        """Pairs of clicked objects whose latest effects move the same objects by opposite amounts."""
+        latest = {k: o[-1][1] for k, o in self.click_at.items() if o and o[-1][1]}
+        keys = sorted(latest)
+        out = []
+        for i, a in enumerate(keys):
+            for b in keys[i+1:]:
+                common = set(latest[a]) & set(latest[b])
+                if common and all(latest[a][m] == tuple(-v for v in latest[b][m]) for m in common):
+                    out.append((a, b, {m: latest[a][m] for m in common}))
+        return out
+
+    def click_rule(self, sig, origin, context):
+        """(moves, recolor) expected from clicking the object of this appearance at origin, or None.
+
+        The object's own record comes first; the appearance's record stands in only when every
+        object of that appearance clicked so far agreed. Within a record, an outcome seen in the
+        same context wins; a record with differing outcomes predicts only in a context it has seen.
+        """
+        outcomes = self.click_at.get((sig, origin))
+        if not outcomes:
+            if self.position_dependent(sig):
+                return None
+            outcomes = self.click_outcomes.get(sig)
+        if not outcomes:
+            return None
+        match = [o for o in outcomes if o[0] == context]
+        if match:
+            return match[-1][1], match[-1][2]
+        if len({(tuple(sorted(m.items())), r) for _, m, r in outcomes}) == 1:
+            return outcomes[-1][1], outcomes[-1][2]
+        return None
+
     def predict_outcome(self, grid, action, xy=None):
         """What the learned rules expect from one action, or None when no rule applies.
 
@@ -229,17 +272,10 @@ class RuleLearner:
         if action == 'ACTION6':
             comps = components(grid)
             c = next((c for c in comps if xy in c['cells']), None)
-            outcomes = self.click_outcomes.get(c['sig']) if c else None
-            if not outcomes:
+            rule = self.click_rule(c['sig'], c['origin'], self.click_context(comps, c['sig'])) if c else None
+            if rule is None:
                 return None
-            context = self.click_context(comps, c['sig'])
-            match = [o for o in outcomes if o[0] == context]
-            if match:
-                _, moved, recolor = match[-1]
-            elif not self.state_dependent(c['sig']):
-                _, moved, recolor = outcomes[-1]
-            else:
-                return None
+            moved, recolor = rule
             return dict(kind='click', clicked=c['sig'], moves=dict(moved), recolor=recolor)
         predicted = self.predict(grid, action)
         return dict(kind='move', moves=predicted) if predicted else None

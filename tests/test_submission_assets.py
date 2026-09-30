@@ -80,6 +80,6 @@ class SubmissionAssetsTests(unittest.TestCase):
              patch('subprocess.run', side_effect=RuntimeError('GPU failure')), \
              patch('pathlib.Path.write_text', side_effect=AssertionError('must not write')):
             with self.assertRaisesRegex(RuntimeError, 'GPU failure'):
-                exec(cell, {'model_process': process, 'sys': __import__('sys')})
+                exec(cell, {'model_process': process, 'sys': __import__('sys'), 'comp_dir': Path('/kaggle/input/competitions/x')})
         process.terminate.assert_called_once()
         process.wait.assert_called_once()

@@ -5,7 +5,7 @@ from unittest.mock import patch
 from agent.cognition.explorer import Explorer
 from agent.cognition.goal_planner import Planner
 from agent.cognition.goal_runtime import GoalRuntime
-from agent.cognition.predicates import holds
+from agent.cognition.predicates import describe, holds
 from agent.cognition.rules import RuleLearner, components
 from agent.local_vlm import LocalVisionLlm
 from runtime_helpers import obs, context, token
@@ -113,6 +113,41 @@ class PlannerTests(unittest.TestCase):
         # (9 - 4) / 2 rounded up: three clicks put the two-cell slider under column 9.
         self.assertEqual([a for a, _ in plan], ['ACTION6'] * 3)
 
+    def test_reachable_relations_list_what_the_rules_can_make_true(self):
+        rules = RuleLearner()
+        rules.learn(slider(1), slider(3), 'ACTION6', (1, 10))
+        grid = slider(3)
+        objects = {'slider': cells_of(grid, 11), 'mark': cells_of(grid, 8), 'button': cells_of(grid, 9)}
+        found = {describe(a): n for a, n in Planner(rules, grid, objects, ['ACTION6']).reachable()}
+        self.assertEqual(found['same_column(slider, mark)'], 3)
+        self.assertNotIn('same_row(slider, mark)', found)          # clicks move the slider sideways only
+        self.assertNotIn('same_column(mark, slider)', found)       # the mark does not move
+        self.assertTrue(all(k.split('(')[1].startswith('slider') for k in found))
+
+    def test_same_looking_buttons_with_opposite_effects_are_kept_apart(self):
+        def twins(x):
+            # Two identical blue buttons: the left one moves the slider left, the right one right.
+            g = [[3]*12 for _ in range(12)]
+            g[10][1] = g[10][2] = 9
+            g[10][8] = g[10][9] = 9
+            g[4][x] = g[4][x+1] = 11
+            g[1][2] = 8
+            return g
+        rules = RuleLearner()
+        rules.learn(twins(5), twins(7), 'ACTION6', (8, 10))    # right button: +2
+        rules.learn(twins(7), twins(5), 'ACTION6', (1, 10))    # left button: -2
+        self.assertTrue(rules.position_dependent(next(iter(rules.click_outcomes))))
+        moves = lambda xy: list(rules.predict_outcome(twins(5), 'ACTION6', xy)['moves'].values())
+        self.assertEqual((moves((1, 10)), moves((8, 10))), ([(-2, 0)], [(2, 0)]))
+        self.assertEqual(len(rules.inverse_pairs()), 1)
+        grid = twins(5)
+        objects = {'slider': cells_of(grid, 11), 'mark': cells_of(grid, 8)}
+        planner = Planner(rules, grid, objects, ['ACTION6'])
+        plan = planner.plan([dict(relation='same_column', a='slider', b='mark')])
+        self.assertEqual([planner.click_point(i) for _, i in plan], [(1, 10)] * 2)   # the left button, twice
+        from agent.cognition.skill_library import build_skills
+        self.assertTrue(any(k.name.startswith('opposite-blue-blue') for k in build_skills(rules)))
+
     def test_unaffected_conditions_are_the_missing_links(self):
         rules, pos = trained()
         grid = board(pos)
@@ -197,6 +232,9 @@ class GoalRuntimeTests(unittest.TestCase):
             r.decide(self.frame(0, board(pos)))
         self.assertEqual(len(calls), 3)
         self.assertEqual([g['atoms'][0]['relation'] for g in r.goals], ['inside', 'same_column'])
+        # V10: only the first sample sees what the rules can produce; the others judge from the screen.
+        self.assertTrue(any(x.startswith('same_column(') for x in calls[0]['achievable_relations']))
+        self.assertNotIn('achievable_relations', calls[1])
 
     def test_already_true_hypotheses_are_dropped_individually(self):
         r = self.runtime()

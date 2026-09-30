@@ -38,6 +38,7 @@ ORIENT_DIRECTIONS = 4               # every untried direction once, even after s
 HYPOTHESIS_SAMPLES = 3              # sampled hypothesis sets; conditions proposed in more samples rank first
 ATOM_GOALS = 6                      # single-condition goals kept from one hypothesis round
 EXPERIMENTS_WITHOUT_NEW_FACTS = 8   # experiments before asking again although nothing new was measured
+ACHIEVABLE_LISTED = 40              # relations the rules can produce, shown to one sample (V10)
 
 HYPOTHESIZE = '''You play an unknown turn-based puzzle game. Nobody tells you the rules or the goal.
 Look at the first screen of this level and propose up to three distinct hypotheses
@@ -62,6 +63,15 @@ Before proposing, look at the image and decide:
 Fill roles first, then write hypotheses that use those roles. If a falsified hypothesis held on the
 screen without winning, keep what it got right and add the condition that was missing.
 Submit submit_goal_hypotheses.'''
+
+# V10: shown to every sample, the list pulled screen-driven guesses toward near, trivial relations
+# (ls20 9/10 -> 5/10); for a goal the screen does not reveal it helped (vc33 0/10 -> 7/10). So one
+# sample of each round sees it and the others judge from the screen alone.
+ACHIEVABLE = '''
+achievable_relations lists relations that the program can already make true with the measured
+rules (nearest first, with the number of actions). The win condition is often one of them or a
+combination of them: prefer hypotheses built from achievable relations when they fit what the
+screen shows, and propose other relations only when the screen clearly suggests them.'''
 
 PROBE = '''The program cannot reach the goal hypothesis with the rules measured so far: the listed
 conditions depend on objects no known action has affected. Choose the one untested item most
@@ -132,6 +142,7 @@ class GoalRuntime(FocusedRuntime):
         self._evidence_asked = None     # measured-rule key when hypotheses were last asked or retried
         self._experiments = 0           # experiments since then
         self._visited = set()           # visit keys already used as experiments in this level
+        self.knowhow = []               # patterns found in earlier levels of this game (carried, not reset)
         self.hypothesis_samples = None   # tests may set 1
         self._tracks, self._objects, self._objects_for, self._track_serial = [], [], None, 0
 
@@ -247,16 +258,21 @@ class GoalRuntime(FocusedRuntime):
             ids = sorted({i for s in movers if s in by_sig for i in [self._owner(by_sig[s]['cells'])] if i})
             for action, delta in sorted(self.rules.direction_deltas(movers).items()):
                 facts.append(f"{ACTION_TO_BUTTON.get(action, action)} moves {', '.join(ids) or 'the controllable object'} by {delta}")
-        for sig, outcomes in self.rules.click_outcomes.items():
-            if sig not in by_sig:
+        # Per clicked object: same-looking objects may act differently by place.
+        at = {(c['sig'], c['origin']): c for c in comps}
+        name = lambda key: (self._owner(at[key]['cells']) if key in at else None) or COLORS[key[0][0]]
+        for key, outcomes in self.rules.click_at.items():
+            if key not in at:
                 continue
-            clicked = self._owner(by_sig[sig]['cells'])
             for _, moved, recolor in outcomes[-2:]:
                 parts = [f"moved {self._owner(by_sig[m]['cells']) or COLORS[m[0]]} by {d}" for m, d in moved.items() if m in by_sig]
                 if recolor is not None:
                     parts.append(f'turned it {COLORS[recolor]}')
-                facts.append(f"clicking {clicked or COLORS[sig[0]]} ({COLORS[sig[0]]}): " + ('; '.join(parts) or 'no visible effect'))
-        return facts[:10]
+                facts.append(f"clicking {name(key)} ({COLORS[key[0][0]]}): " + ('; '.join(parts) or 'no visible effect'))
+        for a, b, _ in self.rules.inverse_pairs():
+            facts.insert(0, f"{name(a)} and {name(b)} are opposite controls: they move the same objects in opposite directions")
+        facts += [f'known from earlier levels: {k}' for k in self.knowhow]
+        return facts[:12]
 
     def _orient_step(self):
         """Next orientation test, or None when the level's controls are understood enough."""
@@ -266,6 +282,13 @@ class GoalRuntime(FocusedRuntime):
             # Each control once: which object moves, which way and how far is the cheapest strong clue.
             return dict(action={'action': untried[0]}, expected_effect='orientation: what does this control move?')
         effective = any(self.rules.effective[k] for k in self.rules.tries if isinstance(k, tuple))
+        if 'ACTION6' in available and self._orient_clicks < ORIENT_CLICKS and effective:
+            # A twin of an effective control may be its counterpart (for instance the opposite direction):
+            # one click on an unclicked object of the same appearance tells.
+            twin = self._twin_click()
+            if twin:
+                self._orient_clicks += 1
+                return twin
         if 'ACTION6' in available and self._orient_clicks < ORIENT_CLICKS and not effective:
             job = self._random_click('orientation')
             if job:
@@ -273,10 +296,21 @@ class GoalRuntime(FocusedRuntime):
                 return job
         return None
 
+    def _twin_click(self):
+        effective = {s for (s, _), o in self.rules.click_at.items() if any(m or r is not None for _, m, r in o)}
+        tested = {s for s in effective if sum(1 for (t, _) in self.rules.click_at if t == s) > 1}
+        for c in self._click_targets():
+            if c['sig'] in effective - tested and (c['sig'], c['origin']) not in self.rules.click_at:
+                x, y = min(c['cells'], key=lambda p: (p[1], p[0]))
+                return dict(action={'action': 'ACTION6', 'x': x, 'y': y},
+                            expected_effect=f'orientation: does this twin of an effective {COLORS[c["color"]]} control act the same?')
+        return None
+
     def _random_click(self, purpose):
         """Click a never-clicked object in random order (V9: a biased guess cost more clicks)."""
-        clicked = {k[1] for k in self.rules.tries if isinstance(k, tuple)}
-        comps = [c for c in self._click_targets() if c['sig'] not in clicked]
+        # Per object, not per appearance: identical-looking objects may act differently by place (V9, vc33).
+        clicked = set(self.rules.click_at)
+        comps = [c for c in self._click_targets() if (c['sig'], c['origin']) not in clicked]
         if not comps:
             return None
         c = self._orient_rng.choice(sorted(comps, key=lambda c: (c['origin'][1], c['origin'][0])))
@@ -318,6 +352,7 @@ class GoalRuntime(FocusedRuntime):
                 # click in another context is not a new kind of fact.
                 frozenset((sig, frozenset(self.rules.click_affects[sig])) for sig, o in self.rules.click_outcomes.items()
                           if any(m or r is not None for _, m, r in o)),
+                frozenset(k for k, o in self.rules.click_at.items() if any(m or r is not None for _, m, r in o)),
                 frozenset(self.rules.blocking_colors(movers)) if movers else frozenset())
 
     def _experiment_step(self):
@@ -405,6 +440,7 @@ class GoalRuntime(FocusedRuntime):
         samples, votes, first_seen, roles = [], Counter(), {}, []
         atom_votes, atom_first = Counter(), {}
         planned = HYPOTHESIS_SAMPLES if self.hypothesis_samples is None else self.hypothesis_samples
+        achievable = self._achievable() if planned > 1 else []
         n, repaired = 0, False
         while n < planned or (not samples and not repaired and self.rejection):
             if self.time_left() <= 0:
@@ -415,14 +451,22 @@ class GoalRuntime(FocusedRuntime):
                 context = self._context('hypothesize')
                 parts = self._visual_parts(True) + [{'type': 'text', 'text': json.dumps(context, separators=(',', ':'))}]
             n += 1
+            system, user = self.stage_instructions['hypothesize'], parts
+            listed = n == 1 and bool(achievable) and not repaired
+            if listed:
+                # First, so that its conditions win ties in the vote order.
+                system += ACHIEVABLE
+                user = parts[:-1] + [{'type': 'text', 'text': json.dumps(dict(context, achievable_relations=achievable),
+                                                                          separators=(',', ':'))}]
             payload = {'model': 'qwen3-vl-4b-instruct', 'temperature': self.stage_temperature['hypothesize'],
                        'seed': random.randrange(2**31), 'max_tokens': 1400, 'stream': False,
                        'response_format': {'type': 'json_schema', 'json_schema': {'name': 'goals', 'schema': schema}},
-                       'messages': [{'role': 'system', 'content': self.stage_instructions['hypothesize']},
-                                    {'role': 'user', 'content': parts}]}
+                       'messages': [{'role': 'system', 'content': system},
+                                    {'role': 'user', 'content': user}]}
             self.calls += 1
             self.memory.model_calls += 1
             record = dict(state='DECIDE', work='hypothesize', call_index=self.calls, sample=n, repair=repaired,
+                          achievable_listed=len(achievable) if listed else 0,
                           context=context)
             started = time.monotonic()
             try:
@@ -594,6 +638,10 @@ class GoalRuntime(FocusedRuntime):
 
     def _on_observation(self, boundary):
         winner = self._active() if boundary == 'level' else None
+        if boundary == 'level' and self.rules.inverse_pairs():
+            note = 'same-looking buttons can come in pairs that move an object in opposite directions'
+            if note not in self.knowhow:
+                self.knowhow.append(note)
         kept = (self.rules, self.memory.skill_stats) if boundary == 'reset' else None
         super()._on_observation(boundary)
         if not boundary:
@@ -640,7 +688,7 @@ class GoalRuntime(FocusedRuntime):
         if 'ACTION6' in available:
             from .rules import components
             comps = components(self.obs['grid'])
-            clicked = {k[1] for k in self.rules.tries if isinstance(k, tuple)}
+            clicked = set(self.rules.click_at)
             for ident in order:
                 obj = self._current_object(ident)
                 try:
@@ -648,9 +696,9 @@ class GoalRuntime(FocusedRuntime):
                 except ValueError:
                     continue
                 comp = next((c for c in comps if xy in c['cells']), None)
-                key = ('click', comp['sig']) if comp else None
+                key = ('click', comp['sig'], comp['origin']) if comp else None
                 # The component under the actual click cell decides whether this was tried.
-                if comp and comp['sig'] not in clicked and key not in probed and key not in {u.get('key') for u in items}:
+                if comp and (comp['sig'], comp['origin']) not in clicked and key not in probed and key not in {u.get('key') for u in items}:
                     items.append(dict(kind='click', object_id=ident, key=key,
                                       what=f"click {ident} ({', '.join(rows[ident]['colors'])}, never clicked)"))
                 if len(items) >= 8:
@@ -881,6 +929,11 @@ class GoalRuntime(FocusedRuntime):
                 break
         if self.result is None and self.job is None and self.time_left() <= 0:
             self._fallback('decision_time_exhausted')
+
+    def _achievable(self):
+        """Relations the measured rules can make true now, nearest first (Planner.reachable)."""
+        planner = Planner(self.rules, self.obs['grid'], self._object_cells(), self.obs['available_actions'])
+        return [f'{describe(a)} in {n}' for a, n in planner.reachable()[:ACHIEVABLE_LISTED]]
 
     def _plan(self, planner, goal):
         """Plan the goal while keeping conditions already reached (a win may need them together)."""

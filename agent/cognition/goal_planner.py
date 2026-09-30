@@ -7,7 +7,7 @@ goal conditions no known operator can affect (the missing causal links to probe)
 from collections import deque
 
 from .perception import COLORS
-from .predicates import holds
+from .predicates import box, describe, holds
 from .rules import MAX_OBJECT_CELLS, bbox, components
 
 
@@ -86,21 +86,16 @@ class Planner:
 
     def _click(self, state, i):
         sig = self.sig(state, i)
-        outcomes = self.rules.click_outcomes.get(sig)
-        if not outcomes:
-            return None
         affected = self.rules.click_affects[sig]
         context = tuple(sorted((self.sig(state, j)[0], len(self.comps[j]['cells']),
                                 (self.comps[j]['origin'][0]+self._get(state, j)[0],
                                  self.comps[j]['origin'][1]+self._get(state, j)[1]))
                                for j in range(len(self.comps)) if self.sig(state, j) in affected))
-        match = [o for o in outcomes if o[0] == context]
-        if match:
-            _, moved, recolor = match[-1]
-        elif not self.rules.state_dependent(sig):
-            _, moved, recolor = outcomes[-1]
-        else:
+        dx, dy, _ = self._get(state, i)
+        rule = self.rules.click_rule(sig, (self.comps[i]['origin'][0]+dx, self.comps[i]['origin'][1]+dy), context)
+        if rule is None:
             return None
+        moved, recolor = rule
         s = list(state)
         for msig, (mx, my) in moved.items():
             for j in self.mutable:
@@ -161,3 +156,68 @@ class Planner:
     def click_point(self, i):
         """A cell of component i in the current frame (plans are executed one step at a time)."""
         return min(self.comps[i]['cells'], key=lambda c: (c[1], c[0]))
+
+    def reachable(self, max_states=2000):
+        """Relations the measured rules can make true that are false now: [(atom, steps)], nearest first.
+
+        A breadth-first pass over the same states as plan(): each changeable object is compared
+        with every object by bounding box (inside, overlaps, same_column, same_row), contact
+        (adjacent) and colour (same_color, color_is). Shapes are not changed by the known rules.
+        """
+        start = self.start()
+        full = self.view(start)
+        moving = [ident for ident, idx in self.members.items() if any(i in self.mutable for i in idx)]
+        if not moving:
+            return []
+        boxes = {ident: box(cells) for ident, (cells, _) in full.items() if cells}
+        found = {}
+
+        def relations(view, bxs):
+            out = []
+            for a in moving:
+                if a not in bxs:
+                    continue
+                ca, cola = view[a]
+                ax0, ay0, ax1, ay1 = bxs[a]
+                if len(cola) == 1:
+                    out.append(dict(relation='color_is', a=a, b=None, color=next(iter(cola))))
+                for b, (bx0, by0, bx1, by1) in bxs.items():
+                    if b == a:
+                        continue
+                    cb, colb = view[b]
+                    if bx0 <= ax0 and by0 <= ay0 and ax1 <= bx1 and ay1 <= by1:
+                        out.append(dict(relation='inside', a=a, b=b, color=None))
+                    if ax0 <= bx1 and bx0 <= ax1 and ay0 <= by1 and by0 <= ay1:
+                        out.append(dict(relation='overlaps', a=a, b=b, color=None))
+                    if ax0 <= bx1 and bx0 <= ax1:
+                        out.append(dict(relation='same_column', a=a, b=b, color=None))
+                    if ay0 <= by1 and by0 <= ay1:
+                        out.append(dict(relation='same_row', a=a, b=b, color=None))
+                    if ax0 - 1 <= bx1 and bx0 - 1 <= ax1 and ay0 - 1 <= by1 and by0 - 1 <= ay1 and any(
+                            (x+dx, y+dy) in cb for x, y in ca for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))):
+                        out.append(dict(relation='adjacent', a=a, b=b, color=None))
+                    if cola == colb:
+                        out.append(dict(relation='same_color', a=a, b=b, color=None))
+            return out
+
+        now = {describe(a) for a in relations(full, boxes)}
+        prev, depth, queue = {start}, {start: 0}, deque([start])
+        while queue:
+            state = queue.popleft()
+            if state != start:
+                view = dict(full)
+                view.update(self.view(state, set(moving)))
+                bxs = dict(boxes)
+                bxs.update({i: box(view[i][0]) for i in moving if view[i][0]})
+                for atom in relations(view, bxs):
+                    key = describe(atom)
+                    if key not in now and key not in found:
+                        found[key] = (atom, depth[state])
+            if depth[state] >= self.max_depth or len(prev) >= max_states:
+                continue
+            for _, nxt in self.actions(state):
+                if nxt not in prev:
+                    prev.add(nxt)
+                    depth[nxt] = depth[state] + 1
+                    queue.append(nxt)
+        return sorted(found.values(), key=lambda f: f[1])
