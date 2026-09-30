@@ -92,3 +92,10 @@ services:
       - "16384"
       - --parallel
       - "1"
+      # Same prompt-lookup drafting as agent/model_runtime.py SPECULATIVE_ARGS.
+      - --spec-type
+      - ngram-simple
+      - --spec-ngram-simple-size-n
+      - "4"
+      - --spec-ngram-simple-size-m
+      - "16"

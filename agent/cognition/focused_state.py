@@ -48,6 +48,8 @@ class FocusedMemory(Memory):
     trial_ledger: list[dict] = Field(default_factory=list)
     supported_skills: dict = Field(default_factory=dict)
     causal_knowledge: list[dict] = Field(default_factory=list)
+    # Host-measured semantic memory: one tally per control (and click object), never model text.
+    control_effects: dict = Field(default_factory=dict)
     object_memory: dict = Field(default_factory=empty)
     active_target_binding: dict | None = None
 

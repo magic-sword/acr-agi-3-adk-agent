@@ -9,6 +9,11 @@ from pathlib import Path
 
 MODEL = "Qwen3VL-4B-Instruct-Q4_K_M.gguf"
 PROJECTOR = "mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf"
+# Stage outputs copy IDs, target names and schema keys from the prompt. Prompt-lookup
+# drafting needs no draft model; replayed stages ran 26% faster (114.3s -> 85.1s).
+# Keep compose.yaml's vlm command in sync.
+SPECULATIVE_ARGS = ["--spec-type", "ngram-simple", "--spec-ngram-simple-size-n", "4",
+                    "--spec-ngram-simple-size-m", "16"]
 
 
 def find_bundle() -> Path:
@@ -41,6 +46,7 @@ def start(bundle: Path) -> subprocess.Popen:
         "--alias", "qwen3-vl-4b-instruct",
         "--host", "127.0.0.1", "--port", "8080",
         "--n-gpu-layers", "99", "--ctx-size", "16384", "--parallel", "1", "--jinja",
+        *SPECULATIVE_ARGS,
     ]
     with Path("/kaggle/working/llama-server.log").open("w") as log:
         return subprocess.Popen(command, env=env, stdout=log,

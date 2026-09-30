@@ -146,7 +146,8 @@ class FocusedWorkflowTests(unittest.TestCase):
     def test_ground_has_only_three_inputs_and_no_raw_history_or_coordinates(self):
         r = self.runtime(); self.prepare(r)
         c = r._context('ground')
-        self.assertEqual(set(c), {'work', 'observation_id', 'purpose', 'candidates', 'evidence'})
+        self.assertEqual(set(c), {'work', 'observation_id', 'purpose', 'candidates', 'object_facts', 'evidence'})
+        self.assertEqual(set(c['purpose']), {'desired_state', 'intent', 'question', 'expected_observation'})
         self.assertNotIn('candidate_refs', c['candidates'][0])
         self.assertNotIn('white square', str(c))
         self.assertNotIn('x', r._trial(dict(action=dict(action='ACTION6', x=15, y=15)))['action'])
@@ -545,6 +546,41 @@ class FocusedWorkflowTests(unittest.TestCase):
         self.assertEqual(works[-4:], ['reconcile', 'candidates', 'ground', 'execute_step'])
         self.assertEqual(r.memory.understanding['observation_id'], r.obs['observation_id'])
 
+    def test_control_effects_tally_streaks_untried_controls_and_demote_at_level(self):
+        r = self.runtime(); works = []
+        a = obs(); a['available_actions'] = ['ACTION1', 'ACTION2', 'ACTION6']
+        moved = [[0]*6]; moved[0][2] = 3
+        with patch.object(LocalVisionLlm, '_complete', self.response(works, intent='probe')):
+            r.decide(a); ack(r)
+            b = obs(1, moved); b['available_actions'] = a['available_actions']
+            r.decide(b); ack(r)
+            c = obs(2, moved); c['available_actions'] = a['available_actions']
+            r.decide(c)
+        entry = r.memory.control_effects['UP']
+        self.assertEqual((entry['tries'], entry['changed'], entry['no_change_streak']), (2, 1, 1))
+        self.assertIn('1 cells changed', entry['last_effect'])
+        view = r._context('backchain')['evidence']['control_effects']
+        self.assertEqual(view['untried_controls'], ['DOWN'])
+        self.assertTrue(view['tallies'][0].startswith('UP: 2 tries, 1 changed the board; last 1 in a row'))
+        self.assertIn('control_effects', r._context('understand'))
+        r._on_observation('level')
+        self.assertEqual(r.memory.control_effects['UP']['tries'], 0)
+        self.assertIn('1/2 changed', r.memory.control_effects['UP']['previous_level'])
+        self.assertIn('previous level', r._control_view()['tallies'][0])
+
+    def test_malformed_skill_reuse_is_repaired_without_a_model_retry(self):
+        from agent.cognition.focused_workflow import normalize_candidates
+        card = dict(name='press', target_query='the red switch', effect='The door opens.', target_object_ids=['e1o2'])
+        base = dict(verb='activate', expected_effect='x', rationale='r', candidate_refs=[])
+        out = normalize_candidates([
+            dict(base, id='a', target_query='red switch', source='reuse', skill_name='press', object_refs=['e1o2']),
+            dict(base, id='b', target_query='blue switch', source='reuse', skill_name='press', object_refs=['e1o9']),
+            dict(base, id='c', target_query='green switch', source='proposed', skill_name='press', object_refs=['e1o3'])], [card])
+        self.assertEqual((out[0]['source'], out[0]['target_query'], out[0]['expected_effect']),
+                         ('reuse', 'the red switch', 'The door opens.'))
+        self.assertEqual((out[1]['source'], out[1]['skill_name']), ('proposed', None))  # other object: new trial
+        self.assertIsNone(out[2]['skill_name'])
+
     def test_measured_outcome_names_directions_and_changes(self):
         from agent.cognition.focused_workflow import measured_outcome
         trial = dict(acknowledged=True, action={'action': 'ACTION1'}, changed_cell_count=52,
@@ -608,12 +644,18 @@ class FocusedWorkflowTests(unittest.TestCase):
             verb='activate', evidence='Unrelated object trial.') for _ in range(4)])
         data = scene(r._context('understand')); data['targets'][0]['object_id'] = ident
         r._accept_stage('understand', Scene.model_validate(data))
-        target = r._context('candidates')['targets'][0]
-        self.assertEqual(target['related_history']['trials'][0]['correspondence'], 'tracked')
+        facts = r._context('candidates')['object_facts']
+        self.assertEqual(facts[ident][0]['correspondence'], 'tracked')
         data = batch(r._context('candidates')); data['candidates'][0]['object_refs'] = [ident]
+        data['candidates'].append({**data['candidates'][0], 'id': 'inspect-exit', 'verb': 'inspect'})
         r._accept_stage('candidates', CandidateBatch.model_validate(data))
-        card = r._context('ground')['candidates'][0]
-        self.assertEqual(card['related_history']['trials'][0]['trial']['target_object_ids'], [ident])
+        ground = r._context('ground')
+        # Two candidates on one object share a single copy of its episodes.
+        self.assertNotIn('related_history', str(ground['candidates']))
+        self.assertEqual(list(ground['object_facts']), [ident])
+        self.assertEqual(ground['object_facts'][ident][0]['target_object_ids'], [ident])
+        self.assertEqual(ground['object_facts'][ident][0]['did'], 'move_to(The marked exit.)')
+        self.assertLessEqual(len(r._context('backchain')['evidence']['episodes']), 6)
         self.assertNotIn('mask_runs', str(r._context('ground')))
         self.assertNotIn('mask_runs', str(r._context('understand')))
 

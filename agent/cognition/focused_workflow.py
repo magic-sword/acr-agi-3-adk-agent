@@ -27,8 +27,13 @@ MIN_MOVEMENT_PROBE_ACTIONS = 3
 DIRECTIONS = {(0, -1): 'up', (0, 1): 'down', (-1, 0): 'left', (1, 0): 'right'}
 
 
-def normalize_candidates(candidates, reusable=()):
-    """Host repairs that need no model retry: repeated proposals, unusable IDs, unknown reuse."""
+def normalize_candidates(candidates, skills=()):
+    """Host repairs that need no model retry: repeated proposals, unusable IDs, malformed reuse.
+
+    skills are the offered skill cards. Reuse keeps a skill's exact target and effect; reuse
+    on other objects is a new trial, as the validator requires.
+    """
+    cards = {card['name']: card for card in skills}
     kept, keys, ids = [], set(), set()
     for c in candidates:
         key = (c.get('verb'), c.get('target_query')) if isinstance(c, dict) else None
@@ -42,9 +47,14 @@ def normalize_candidates(candidates, reusable=()):
                 ident, n = f'{base}-{n}', n+1
             ids.add(ident)
             c = {**c, 'id': ident}
-            # Reuse of a skill that is not offered is only a new proposal.
-            if c.get('source') == 'reuse' and c.get('skill_name') not in reusable:
+            card = cards.get(c.get('skill_name'))
+            if c.get('source') != 'reuse':
+                c['skill_name'] = None
+            elif card is None or (card['target_object_ids'] and
+                                  sorted(c.get('object_refs') or []) != sorted(card['target_object_ids'])):
                 c.update(source='proposed', skill_name=None)
+            else:
+                c.update(target_query=card['target_query'], expected_effect=card['effect'])
         kept.append(c)
     return kept
 
@@ -74,11 +84,64 @@ def measured_outcome(trial, target_ids=()):
     return '; '.join(notes[:6]) + '.'
 
 
+EPISODE_HEADLINES = 6
+PURPOSE_KEYS = ('desired_state', 'intent', 'question', 'expected_observation')
+
+
+def episode_card(trial):
+    """Compact episodic view: what was done and what the host measured.
+
+    Model-written evidence is left out on purpose: re-reading an old interpretation
+    re-asserted it as a memory even after measurements stopped supporting it.
+    """
+    return dict(did=f"{trial.get('verb')}({trial.get('target_query')})",
+                target_object_ids=list(trial.get('target_object_ids', [])),
+                execution=trial.get('execution_status'), assessment=trial.get('assessment'),
+                measured=[a['measured_outcome'] for a in trial.get('actual_trials', []) if a.get('measured_outcome')][:4])
+
+
+def episode_headline(trial):
+    measured = next((a['measured_outcome'] for a in trial.get('actual_trials', []) if a.get('measured_outcome')), '')
+    return f"{trial.get('verb')}({trial.get('target_query')}) -> {trial.get('assessment')}: {measured}"[:240]
+
+
+def control_key(action, binding=None):
+    from agent.controls import ACTION_TO_BUTTON
+    button = ACTION_TO_BUTTON.get(action, action)
+    return f"{button} {binding['object_id']}" if button == 'CLICK' and binding else button
+
+
+def record_control_effect(table, key, trial, step):
+    """Consolidate one acknowledged action into its control tally (complementary to episodes)."""
+    entry = table.setdefault(key, dict(tries=0, changed=0, no_change_streak=0, last_effect=None,
+                                       last_step=None, previous_level=None))
+    entry['tries'] += 1
+    entry['last_step'] = step
+    if trial.get('changed_cell_count'):
+        entry['changed'] += 1
+        entry['no_change_streak'] = 0
+        entry['last_effect'] = trial['measured_outcome'][:200]
+    else:
+        entry['no_change_streak'] += 1
+
+
+def demote_control_effects(table):
+    """A new level keeps only a hypothesis from the previous one, not its counts."""
+    for key, entry in list(table.items()):
+        if entry['tries']:
+            summary = f"{entry['changed']}/{entry['tries']} changed; last effect: {entry['last_effect'] or 'none'}"
+            table[key] = dict(tries=0, changed=0, no_change_streak=0, last_effect=None, last_step=None,
+                              previous_level=summary[:240])
+
+
+def purpose_view(subgoal):
+    return {k: subgoal[k] for k in PURPOSE_KEYS if subgoal and k in subgoal} or None
+
+
 class FocusedTool(StageTool):
     async def run_async(self, *, args, tool_context):
         if self.work == 'candidates' and isinstance(args.get('candidates'), list):
-            reusable = [card['name'] for card in self.runtime._skill_cards()]
-            kept = normalize_candidates(args['candidates'], reusable)
+            kept = normalize_candidates(args['candidates'], self.runtime._skill_cards())
             if kept != args['candidates']:
                 self.runtime._record('artifacts', 'candidates_normalized',
                                      submitted=len(args['candidates']), kept=len(kept))
@@ -235,7 +298,9 @@ result. Otherwise choose achieve and question="". No full goal tree or optimal s
 Unknown effects, uncertain goals and a static initial image call for a probe of a
 visible target using an available control. Do not wait for spontaneous movement.
 Ask what changes after an intervention; compare changed AND unchanged outcomes.
-Past skills/effects have scoped evidence, not universal truth. Submit submit_subgoal.''',
+Past skills/effects have scoped evidence, not universal truth. evidence.control_effects
+is the host's exact tally per control: do not plan a control whose recent tries changed
+nothing unless the scene changed; test untried controls. Submit submit_subgoal.''',
         'candidates': '''Generate up to three distinct verb + target candidates serving purpose.
 Use temporally extended semantic actions such as move_to(the right wall), activate(the
 left switch), attack(the obstacle), or a composite skill. Do not substitute a button
@@ -243,8 +308,8 @@ press for an abstract action. Each candidate needs an expected observable effect
 New candidates are source=proposed, skill_name=null. Reuse only a supplied supported
 skill with its exact target query and effect, with source=reuse and skill_name.
 Bind references only to the current targets. Use object_refs for target IDs and
-candidate_refs for an acted part if needed. related_history includes correspondence
-uncertainty and original conditions; a part's result does not apply to the whole.
+candidate_refs for an acted part if needed. object_facts lists past episodes per object
+with correspondence uncertainty; a part's result does not apply to the whole.
 Missing effects can be probed; ambiguous grouping can motivate inspect with a
 discriminating expected observation. Inspect means an intervention on one visible
 target followed by comparison, not merely looking at the same image again. Unknown
@@ -252,6 +317,8 @@ effects are not missing targets. Missing targets should produce an empty list
 with missing_info only when no current target can be tested with the available controls.
 An already-described scene is not a completed game. When intervention_required is
 true, propose at least one useful intervention even if its effect is unknown.
+evidence.control_effects counts what each control measurably did; prefer untried or
+recently effective controls over ones that repeatedly changed nothing.
 Submit submit_candidates.''',
         'ground': '''Use only purpose, candidates and evidence to choose one candidate and
 implement it as a short procedure. Compare relevant past failures and results with
@@ -327,9 +394,46 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
         targets = deepcopy(scene.get('targets', []))
         for t in targets:
             t['part_refs'] = sorted(objects.allowed_refs(self.memory.object_memory, t.get('object_id')))
-            t['related_history'] = objects.history(self.memory.object_memory, self.memory.trial_ledger,
-                                                   [t['object_id']] if t.get('object_id') else [])
         return targets
+
+    def _object_facts(self, ids):
+        """Past episodes once per object, however many candidates or targets refer to it."""
+        facts = {}
+        for ident in dict.fromkeys(i for i in ids if i):
+            found = objects.history(self.memory.object_memory, self.memory.trial_ledger, [ident])
+            if found['trials']:
+                facts[ident] = [dict(episode_card(x['trial']), correspondence=x['correspondence'])
+                                for x in found['trials']]
+        return facts
+
+    def _control_view(self):
+        """Exact per-control tallies this level; the first thing every planning stage sees."""
+        from agent.controls import ACTION_TO_BUTTON
+        table = self.memory.control_effects
+        rows = []
+        for key, e in sorted(table.items(), key=lambda kv: -(kv[1]['last_step'] or -1)):
+            if e['tries']:
+                rows.append(f"{key}: {e['tries']} tries, {e['changed']} changed the board; "
+                            f"last {e['no_change_streak']} in a row changed nothing; last effect: {e['last_effect'] or 'none'}")
+            elif e['previous_level']:
+                rows.append(f"{key}: untried this level; previous level: {e['previous_level']}")
+        buttons = [ACTION_TO_BUTTON[a] for a in self.obs.get('available_actions', []) if a in ACTION_TO_BUTTON and a != 'RESET']
+        untried = [b for b in buttons if b != 'CLICK' and not table.get(b, {}).get('tries')]
+        return dict(tallies=rows[:10], untried_controls=untried,
+                    note='Host-measured counts. A control whose recent tries changed nothing needs a reason to repeat.')
+
+    def _rules(self):
+        """Stage-1 semantic memory: one latest interpretation per (verb, target), not an append log."""
+        rules = {}
+        for k in self.memory.causal_knowledge:
+            key = (k.get('verb'), k.get('target_query'), tuple(k.get('target_object_ids', [])))
+            prior = rules.get(key, {})
+            counts = dict(prior.get('assessments', {}))
+            counts[k.get('assessment')] = counts.get(k.get('assessment'), 0) + 1
+            rules[key] = dict(rule=f'{key[0]}({key[1]})', target_object_ids=list(key[2]),
+                              interpretation=(k.get('interpretation') or '')[:200], assessments=counts,
+                              episode=k.get('episode'), status='conditional_model_interpretation')
+        return list(rules.values())[-6:]
 
     def _route_perception(self):
         m = self.memory
@@ -373,13 +477,13 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
                     'after_id': (c.get('after') or {}).get('id')}
                    for c in sensor.get('changes', [])[:8]]
         scene = m.understanding or {}
-        return dict(current=dict(observation_id=self.obs['observation_id'],
+        return dict(control_effects=self._control_view(), current=dict(observation_id=self.obs['observation_id'],
             scene=scene.get('observed') if scene.get('observation_id') == self.obs['observation_id'] else None,
             measured_status=sensor.get('status'), changed_pixels=sensor.get('changed_pixels'),
             changes=changes, changes_omitted=max(0, len(sensor.get('changes', []))-8),
             requires_review=sensor.get('requires_review')),
-            past_trials=[objects.trial_card(t) for t in m.trial_ledger[-3:]],
-            conditional_knowledge=deepcopy(m.causal_knowledge[-3:]),
+            episodes=[episode_headline(t) for t in m.trial_ledger[-EPISODE_HEADLINES:]],
+            rules=self._rules()[-2:],
             available_actions=self.obs['available_actions'])
 
     def _skill_cards(self):
@@ -404,15 +508,17 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
             common.update(final_goal=GAME_OBJECTIVE,
                           measured_objects=context_record(self.perception, inventory=True) if self.perception else None,
                           object_index=objects.index(m.object_memory),
-                          previous_trial=[objects.trial_card(t) for t in m.trial_ledger[-1:]], question=m.handoff_question)
+                          previous_trial=[episode_card(t) for t in m.trial_ledger[-1:]], question=m.handoff_question,
+                          control_effects=self._control_view())
         elif work == 'backchain':
             common.update(final_goal=m.final_goal, current_scene=m.understanding,
                           evidence=self._evidence(), known_skills=self._skill_cards())
             if self._unexecuted_returns:
                 common['unexecuted_procedure'] = m.handoff_question
         elif work == 'candidates':
-            common.update(purpose=m.subgoal, goal_id=m.selected_goal_id,
-                          targets=self._targets(),
+            targets = self._targets()
+            common.update(purpose=purpose_view(m.subgoal), goal_id=m.selected_goal_id,
+                          targets=targets, object_facts=self._object_facts(t.get('object_id') for t in targets),
                           intervention_required=self._intervention_possible(),
                           evidence=self._evidence(), known_skills=self._skill_cards())
         elif work == 'ground':
@@ -422,16 +528,16 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
                 c['targets'] = [{k: t[k] for k in ('object_id', 'concept', 'appearance', 'role_hypothesis') if k in t}
                                 for t in (m.understanding or {}).get('targets', [])
                                 if t.get('object_id') in c.get('object_refs', [])]
-                c['related_history'] = objects.history(m.object_memory, m.trial_ledger, c.get('object_refs', []), c['verb'])
                 if c['source'] == 'reuse':
                     c['procedure'] = self._retained_skills()[c['skill_name']]
-            common.update(purpose=m.subgoal, candidates=cards, evidence=self._evidence())
+            common.update(purpose=purpose_view(m.subgoal), candidates=cards,
+                          object_facts=self._object_facts(i for c in cards for i in c.get('object_refs', [])),
+                          evidence=self._evidence())
         elif work == 'reconcile':
-            common.update(purpose=m.subgoal, plan=m.plan, candidate=m.selected_candidate,
+            common.update(purpose=purpose_view(m.subgoal), plan=m.plan, candidate=m.selected_candidate,
                           review=m.review, attempt_results=self._attempt_results(),
                           evidence=self._evidence(), semantic_answers=self.semantic_answers)
-            common['target_history'] = objects.history(m.object_memory, m.trial_ledger,
-                (m.selected_candidate or {}).get('object_refs', []), (m.selected_candidate or {}).get('verb'))
+            common['object_facts'] = self._object_facts((m.selected_candidate or {}).get('object_refs', []))
         else:
             active = m.active_skill
             procedure = m.skills[active['name']]
@@ -767,6 +873,7 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
             m.goals.clear(); m.goal_status.clear(); m.trial_ledger.clear()
             self.recent_trials.clear()
             self._action_counts.clear()
+            demote_control_effects(m.control_effects)
             self._after_scene = 'backchain'
             m.phase = 'understand'
         elif self.outcome:
@@ -778,6 +885,8 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
             if self.outcome['acknowledged']:
                 key = (self.outcome['action']['action'], (self.outcome.get('binding') or {}).get('object_id'))
                 self._action_counts[key] = self._action_counts.get(key, 0) + 1
+                record_control_effect(m.control_effects, control_key(*key[:1], self.outcome.get('binding')),
+                                      dict(trial, measured_outcome=measured_outcome(trial)), self.obs['step'])
                 self.recent_trials = (self.recent_trials + [trial])[-8:]
                 if self._current_result():
                     m.active_skill['action_count'] += 1
