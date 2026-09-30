@@ -46,6 +46,22 @@ def game_metrics(run):
             g[f"fallback.{r['reason']}"] += 1
         elif event == 'understanding_carried':
             g['understanding_carried'] += 1
+        elif event == 'skills_offered':
+            g['skills_offered'] += 1
+        elif event == 'skill_tool_called':
+            g[f"tool.{r['tool']}"] += 1
+        elif event == 'rule_prediction':
+            g['predictions'] += 1
+            g['prediction_hits'] += bool(r['hit'])
+            g['last_replay_consistency'] = r['replay'] if r['replay'] is not None else g.get('last_replay_consistency', 0)
+        elif event == 'skill_options':
+            g['skill_option_offers'] += 1
+        elif event == 'skill_macro_started':
+            g['skill_runs'] += 1
+        elif event == 'skill_macro_press':
+            g['program_presses'] += 1
+        elif event == 'skill_macro_stopped':
+            g[f"skill_stop.{r['reason']}"] += 1
         elif event == 'action_feedback':
             trial = r['trial']
             key = (trial['action'].get('action'), trial['action'].get('x'), trial['action'].get('y'))
@@ -74,6 +90,7 @@ def game_metrics(run):
         g['actions'] = result.get('actions', result.get('action_count', 0))
         g['levels'] = result.get('levels_completed', 0)
         g['wall_seconds'] = result.get('wall_seconds', 0)
+        g['model_calls_per_action'] = result.get('model_calls', 0) / max(1, g['actions'])
         log = Path(run) / game / 'worker.log'
         # llama-server rejects over-long prompts with HTTP 400 (context size exceeded).
         g['context_overflow'] = log.read_text(errors='replace').count('HTTP Error 400') if log.exists() else 0
@@ -98,7 +115,10 @@ def main(argv):
     tables = {label: summary(dirs) for label, dirs in labelled.items()}
     games = sorted({g for t in tables.values() for g in t})
     headline = ['actions', 'levels', 'planned_actions', 'fallback_actions', 'context_overflow',
-                'repeated_no_change', 'reconcile_contradicts_measurement', 'reconcile_claims_unmeasured_change', 'understanding_carried']
+                'repeated_no_change', 'reconcile_contradicts_measurement', 'reconcile_claims_unmeasured_change', 'understanding_carried',
+                'skills_offered', 'tool.plan_path', 'predictions', 'prediction_hits', 'last_replay_consistency',
+                'skill_option_offers', 'skill_runs', 'program_presses', 'skill_stop.reached', 'skill_stop.prediction_mismatch',
+                'skill_stop.unreachable', 'model_calls_per_action']
     for game in games:
         print(f'\n## {game}')
         print('|metric|' + '|'.join(labelled) + '|')

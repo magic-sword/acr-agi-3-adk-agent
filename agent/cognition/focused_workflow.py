@@ -11,8 +11,15 @@ from copy import deepcopy
 from google.genai import types
 
 from agent.controls import controller_context
+from google.adk.agents import LlmAgent
+from google.adk.tools import FunctionTool
+from google.adk.tools.skill_toolset import ListSkillsTool, SkillToolset
+
+from agent.controls import ACTION_TO_BUTTON, BUTTON_TO_ACTION
 from .candidates import CandidateBatch, CandidateGenerator, ModelCandidateGenerator, DEFAULT_VERBS
-from .deliberation import StageTool, unique
+from .deliberation import StageTool, unique, MEASUREMENT_INSTRUCTION
+from .rules import RuleLearner, components
+from .skill_library import build_skills, color_name, skill_name_for, move_skill_name
 from .focused_state import FocusedMemory, Scene, Subgoal, PlanChoice, FastSelection
 from .perception import context_record
 from .state import Reconciliation
@@ -24,6 +31,7 @@ from . import object_memory as objects
 GAME_OBJECTIVE = 'Complete the current game level, then the remaining levels to win the game.'
 # One movement rarely shows where repeated movement leads; plan a short run before review.
 MIN_MOVEMENT_PROBE_ACTIONS = 3
+NO_EFFECT_REVIEW = 3
 DIRECTIONS = {(0, -1): 'up', (0, 1): 'down', (-1, 0): 'left', (1, 0): 'right'}
 
 
@@ -136,6 +144,20 @@ def demote_control_effects(table):
 
 def purpose_view(subgoal):
     return {k: subgoal[k] for k in PURPOSE_KEYS if subgoal and k in subgoal} or None
+
+
+SKILL_READING = """
+measured_rules lists skills the program built from measured transitions, with their prediction
+record. load_skill shows a skill's table and counterexamples; plan_path tells whether an object is
+reachable by the controllable block. Use them when a causal link of the subgoal depends on them."""
+MACRO_PRESS_LIMIT = 24
+
+
+class PromptListedSkills(SkillToolset):
+    """L1 skill list in the prompt instead of a list_skills request (docs/skills-design-ja.md)."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._tools = [t for t in self._tools if not isinstance(t, ListSkillsTool)]
 
 
 class FocusedTool(StageTool):
@@ -275,7 +297,9 @@ Return one offered digit. Use 7 only when the specified step is complete and off
 Use 8 if target/control grounding is invalid or this step was already satisfied
 before this invocation acted. Unknown effects alone do not justify
 returning: probes must act to obtain evidence. A prior invocation does not prove this
-one complete. Repetition is allowed while useful. Pixel change alone is not success.''',
+one complete. Repetition is allowed while useful. Pixel change alone is not success.
+An option of kind skill hands a movement the program can compute to that skill: the program then
+presses and checks each prediction itself. Choose buttons when the step needs judgment.''',
         'understand': '''Describe only the current relations and at most four useful targets.
 Use concept as a short object name; do not build a concept taxonomy. Roles are hypotheses.
 The supplied final_goal is the game objective. goal_hypothesis is a revisable
@@ -362,6 +386,7 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
         self._unexecuted_returns = 0
         self._stage_failed = None
         self._action_counts = {}
+        self.rules = RuleLearner()
         super().__init__(*args, **kwargs)
         self.memory = FocusedMemory(**self.memory.model_dump(exclude={'schema_version', 'phase'}))
         self.recent_trials = []
@@ -442,6 +467,12 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
                 and m.active_skill['action_count'] >= m.plan['probe_action_limit']):
             self._queue_review('probe_result', 'The planned probe action limit was reached; assess its result including no change.',
                                'probe_observed')
+        elif (m.phase == 'execute_step' and m.active_skill
+                and m.active_skill.get('no_effect_streak', 0) >= NO_EFFECT_REVIEW):
+            # Achieve procedures have no action limit; repeated presses without any object effect
+            # (a blocked move, an inert click) must not continue unreviewed.
+            self._queue_review('no_effect_streak', f'{NO_EFFECT_REVIEW} actions in a row affected no object.',
+                               'no_effect_review')
 
     @staticmethod
     def _trial(t, target_ids=()):
@@ -512,7 +543,8 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
                           control_effects=self._control_view())
         elif work == 'backchain':
             common.update(final_goal=m.final_goal, current_scene=m.understanding,
-                          evidence=self._evidence(), known_skills=self._skill_cards())
+                          evidence=self._evidence(), known_skills=self._skill_cards(),
+                          measured_rules=[dict(name=k.name, description=k.description) for k in build_skills(self.rules)])
             if self._unexecuted_returns:
                 common['unexecuted_procedure'] = m.handoff_question
         elif work == 'candidates':
@@ -873,6 +905,9 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
             m.goals.clear(); m.goal_status.clear(); m.trial_ledger.clear()
             self.recent_trials.clear()
             self._action_counts.clear()
+            self.rules = RuleLearner()
+            m.skill_stats = {}
+            m.macro = None
             demote_control_effects(m.control_effects)
             self._after_scene = 'backchain'
             m.phase = 'understand'
@@ -887,6 +922,17 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
                 self._action_counts[key] = self._action_counts.get(key, 0) + 1
                 record_control_effect(m.control_effects, control_key(*key[:1], self.outcome.get('binding')),
                                       dict(trial, measured_outcome=measured_outcome(trial)), self.obs['step'])
+                before, after = self.previous.get('grid'), self.obs.get('grid')
+                if before and after and len(before) == len(after) and len(before[0]) == len(after[0]):
+                    act = self.outcome['action']
+                    xy = (act.get('x'), act.get('y'))
+                    prediction = self.rules.predict_outcome(before, act['action'], xy)
+                    effect = self.rules.learn(before, after, act['action'], xy)
+                    if prediction is not None:
+                        self._score_prediction(prediction, before, after, act['action'], xy)
+                    if self._current_result():
+                        active = m.active_skill
+                        active['no_effect_streak'] = 0 if effect else active.get('no_effect_streak', 0) + 1
                 self.recent_trials = (self.recent_trials + [trial])[-8:]
                 if self._current_result():
                     m.active_skill['action_count'] += 1
@@ -1008,12 +1054,28 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
                 continue
             active = m.active_skill
             step = m.skills[active['name']]['steps'][active['index']]
-            options = {str(i+1):dict(kind='action', **o) for i,o in enumerate(step['options'])}
-            if active['step_action_count'] > 0:
-                options['7'] = dict(kind='advance', meaning='The current step done_when is satisfied')
-            choice = await self._fast(options)
-            if choice is None:
-                continue
+            if m.macro:
+                outcome = self._macro_press()
+                if outcome == 'pressed':
+                    break
+                if outcome == 'done':
+                    choice = dict(kind='advance')
+                else:
+                    continue
+            else:
+                options = {str(i+1):dict(kind='action', **o) for i,o in enumerate(step['options'])}
+                options.update(self._skill_options(len(step['options']) + 1))
+                if active['step_action_count'] > 0:
+                    options['7'] = dict(kind='advance', meaning='The current step done_when is satisfied')
+                choice = await self._fast(options)
+                if choice is None:
+                    continue
+                if choice['kind'] == 'skill':
+                    m.macro = dict(skill=choice['skill'], target=choice['target'], presses=0,
+                                   invocation_id=active['invocation_id'], started=self.obs['observation_id'])
+                    self._record('artifacts', 'skill_macro_started', macro=m.macro)
+                    self._machine_transition('skill_started')
+                    continue
             if choice['kind'] == 'action':
                 binding_started = False
                 try:
@@ -1055,6 +1117,168 @@ subgoal, understand for a changed interpretation. Submit submit_reconciliation.'
                 confirmation_scope='inside_current_mask', target_contact='unknown')
             self._record('artifacts', 'click_mask_bound', binding=job['binding'])
         return job
+
+    # --- measured-rule skills and their program tools (docs/skills-design-ja.md) -------------
+    def _current_object(self, ident):
+        return next((o for o in self.memory.object_memory['objects'] if o['object_id'] == ident
+                     and o['observation_id'] == self.obs['observation_id']), None)
+
+    def plan_path(self, target_object_id: str) -> dict:
+        """Exact press sequence that brings the controllable block onto the object, computed by the program from learned moves and walls."""
+        obj = self._current_object(target_object_id)
+        if obj is None:
+            ids = [o['object_id'] for o in self.memory.object_memory['objects']
+                   if o['observation_id'] == self.obs['observation_id']]
+            return {'error': f'unknown current object {target_object_id}', 'object_ids': ids[:24]}
+        available = self.obs['available_actions']
+        try:
+            path = self.rules.plan_path(self.obs['grid'], tuple(obj['bbox']), available=available)
+        except ValueError as exc:
+            self._record('artifacts', 'skill_tool_called', tool='plan_path', target=target_object_id, error=str(exc))
+            return {'error': f'{target_object_id} is (part of) the controllable block itself; choose another object'}
+        self._record('artifacts', 'skill_tool_called', tool='plan_path', target=target_object_id, path=path)
+        if path is None:
+            return {'error': 'no route under the learned rules; a probe may be needed'}
+        assumed = sorted(ACTION_TO_BUTTON[a] for a in self.rules.assumed_deltas(self.rules.movers(), available))
+        return {'presses': [ACTION_TO_BUTTON[a] for a in path], 'count': len(path),
+                'assumed_untried_controls': assumed}
+
+    def predict_effect(self, control: str, object_id: str = '') -> dict:
+        """Learned effect of one press (UP, DOWN, LEFT, RIGHT) or of CLICK on object_id, from the current frame."""
+        button = control.strip().upper()
+        grid = self.obs['grid']
+        if button == 'CLICK':
+            obj = self._current_object(object_id)
+            if obj is None:
+                return {'error': f'unknown current object {object_id}'}
+            x, y = click_point(obj, self.obs)
+            comp = next((c for c in components(grid) if (x, y) in c['cells']), None)
+            moved = self.rules.click_moves.get(comp['sig']) if comp else None
+            if moved is None:
+                return {'learned': False, 'note': 'This appearance has not been clicked in this level.'}
+            recolor = self.rules.recolor.get((comp['sig'][1], comp['sig'][0]))
+            return {'learned': True, 'moves': [f"{color_name(s[0])} object by {d}" for s, d in moved.items()],
+                    'clicked_object_becomes': color_name(recolor) if recolor is not None else None}
+        action = BUTTON_TO_ACTION.get(button)
+        if action is None:
+            return {'error': f'unknown control {control}'}
+        predicted = self.rules.predict(grid, action)
+        if not predicted:
+            return {'learned': False, 'note': f'{button} has not moved anything measurable yet.'}
+        return {'learned': True, 'objects': [dict(object=f"{color_name(s[0])} ({len(s[1])} cells)",
+                                                  moves_by=d if d else 'blocked') for s, d in predicted.items()]}
+
+    def _agent(self, work):
+        if work == 'backchain':
+            skills = build_skills(self.rules, self.memory.skill_stats)
+            if skills:
+                return self._skill_agent(work, skills)
+        return super()._agent(work)
+
+    def _skill_agent(self, work, skills):
+        """Stage agent that may read measured-rule skills (optional: deliberation decides)."""
+        tool_name = self.stage_tasks[work][0]
+        toolset = PromptListedSkills(skills=skills, additional_tools=[FunctionTool(self.plan_path),
+                                                                      FunctionTool(self.predict_effect)])
+        model = LocalVisionLlm(model='qwen3-vl-4b-instruct', api_base=os.getenv('VLM_API_BASE', 'http://vlm:8080/v1'),
+                               max_output_tokens=self.stage_tokens[work], max_requests=3, completion_tools=(tool_name,))
+        self._record('artifacts', 'skills_offered', work=work, skills=[k.name for k in skills])
+        return LlmAgent(name=work, include_contents='none', model=model,
+                        instruction=self.stage_instructions[work] + MEASUREMENT_INSTRUCTION + SKILL_READING,
+                        tools=[self.stage_tool(self, work), toolset], before_tool_callback=self._before_tool,
+                        after_tool_callback=self._after_tool, on_tool_error_callback=self._tool_error)
+
+    def _score_prediction(self, prediction, before, after, action, xy):
+        """Every acknowledged action tests the rule that predicted it; misses become counterexamples."""
+        m = self.memory
+        hit, misses = self.rules.check(prediction, before, after, action, xy)
+        name = skill_name_for(self.rules, prediction) or 'unnamed'
+        entry = m.skill_stats.setdefault(name, dict(version=1, predictions=0, hits=0, counterexamples=[],
+                                                    status='unverified', replay=None))
+        entry['predictions'] += 1
+        entry['hits'] += hit
+        if not hit:
+            detail = '; '.join(f"{color_name(x['object'])} ({x['cells']} cells): predicted "
+                               f"{x.get('predicted', x.get('predicted_color'))}, measured "
+                               f"{x.get('measured', x.get('measured_color'))}" for x in misses)[:240]
+            entry['counterexamples'] = (entry['counterexamples'] + [dict(step=self.obs['step'],
+                control=ACTION_TO_BUTTON.get(action, action), detail=detail)])[-4:]
+            entry['version'] += 1  # the learner has already absorbed this transition
+        entry['replay'] = self.rules.replay_consistency()
+        entry['status'] = 'verified' if entry['replay'] == 1 else 'revised' if not hit else entry['status']
+        if hit and entry['status'] == 'unverified' and entry['replay'] == 1:
+            entry['status'] = 'verified'
+        self._record('artifacts', 'rule_prediction', skill=name, hit=hit, misses=misses[:4],
+                     version=entry['version'], replay=entry['replay'], macro=bool(m.macro))
+        if not hit and m.macro:
+            self._stop_macro('prediction_mismatch', detail=misses[:4])
+
+    def _stop_macro(self, reason, **detail):
+        m = self.memory
+        self._record('artifacts', 'skill_macro_stopped', reason=reason, macro=m.macro, **detail)
+        m.macro = None
+        if reason != 'reached':
+            self._queue_review('skill_' + reason, f'Program skill stopped: {reason}. Reconsider with the counterexample.',
+                               'skill_mismatch')
+
+    def _skill_options(self, first_label):
+        """Movement skill offered once per reachable destination; the model picks the destination.
+
+        Candidates name the moved object and the destination with the same object_refs, so the
+        destination is left to fast-mode judgment over the subgoal (never the mover itself).
+        """
+        name = move_skill_name(self.rules)
+        if not name:
+            return {}
+        m = self.memory
+        refs = list((m.selected_candidate or {}).get('object_refs', []))
+        concepts = {t.get('object_id'): t.get('concept') for t in (m.understanding or {}).get('targets', [])}
+        refs += [ident for ident in concepts if ident and ident not in refs]
+        stats = m.skill_stats.get(name) or {}
+        record = f"{stats.get('hits', 0)}/{stats.get('predictions', 0)} predictions correct" if stats else 'not yet validated'
+        offers, label = {}, first_label
+        for ident in refs:
+            obj = self._current_object(ident)
+            if label > 6 or len(offers) >= 3 or obj is None:
+                break
+            try:
+                path = self.rules.plan_path(self.obs['grid'], tuple(obj['bbox']), available=self.obs['available_actions'])
+            except ValueError:
+                continue  # the mover itself is not a destination
+            if not path:
+                continue
+            offers[str(label)] = dict(kind='skill', skill=name, target=ident,
+                meaning=f"Run skill {name}: the program moves the block to {ident} ({concepts.get(ident) or 'object'}; "
+                        f"{len(path)} presses expected; {record}), stopping on any prediction mismatch")
+            label += 1
+        if offers:
+            self._record('artifacts', 'skill_options', options=offers)
+        return offers
+
+    def _macro_press(self):
+        """One program press of the running skill; 'pressed', 'done', or 'stopped'."""
+        m = self.memory
+        macro = m.macro
+        obj = self._current_object(macro['target'])
+        if obj is None:
+            self._stop_macro('target_lost')
+            return 'stopped'
+        try:
+            path = self.rules.plan_path(self.obs['grid'], tuple(obj['bbox']), available=self.obs['available_actions'])
+        except ValueError:
+            path = None
+        if path == []:
+            self._stop_macro('reached')
+            return 'done'
+        if not path or macro['presses'] >= MACRO_PRESS_LIMIT:
+            self._stop_macro('unreachable' if not path else 'press_limit')
+            return 'stopped'
+        macro['presses'] += 1
+        self.job = dict(action={'action': path[0]},
+                        expected_effect=f"skill {macro['skill']}: press {ACTION_TO_BUTTON[path[0]]} toward {macro['target']}",
+                        skill_macro=dict(skill=macro['skill'], press=macro['presses']))
+        self._record('artifacts', 'skill_macro_press', macro=macro, action=path[0], remaining=len(path))
+        return 'pressed'
 
     def _stage_invalid(self, work):
         # One malformed stage costs its remaining turn, not the game.

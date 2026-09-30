@@ -50,6 +50,9 @@ class FocusedMemory(Memory):
     causal_knowledge: list[dict] = Field(default_factory=list)
     # Host-measured semantic memory: one tally per control (and click object), never model text.
     control_effects: dict = Field(default_factory=dict)
+    # Prediction record per measured-rule skill (docs/skills-design-ja.md), and a running program skill.
+    skill_stats: dict = Field(default_factory=dict)
+    macro: dict | None = None
     object_memory: dict = Field(default_factory=empty)
     active_target_binding: dict | None = None
 

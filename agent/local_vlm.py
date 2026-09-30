@@ -48,6 +48,10 @@ class LocalVisionLlm(BaseLlm):
     max_output_tokens: int = 1600
     max_requests: int = MAX_REQUESTS_PER_INVOCATION
     completion_tools: tuple[str, ...] = ()
+    # Skill protocol (docs/skills-design-ja.md): the first request may only call these tools,
+    # and require_tool_calls forbids free-text rounds that exhaust the output budget.
+    protocol_first_tools: tuple[str, ...] = ()
+    require_tool_calls: bool = False
     _last_metrics: dict = PrivateAttr(default_factory=dict)
     _exchanges: list = PrivateAttr(default_factory=list)
     _request_count: int = PrivateAttr(default=0)
@@ -161,6 +165,12 @@ class LocalVisionLlm(BaseLlm):
         payload = self._payload(llm_request)
         remaining = self.max_requests - self._request_count
         if payload.get('tools'):
+            if self._request_count == 0 and self.protocol_first_tools and remaining > 1:
+                payload['tools'] = [tool for tool in payload['tools']
+                                    if tool['function']['name'] in self.protocol_first_tools] or payload['tools']
+                payload['tool_choice'] = 'required'
+            elif self.require_tool_calls:
+                payload['tool_choice'] = 'required'
             if remaining == 1 and self.completion_tools:
                 payload['tools'] = [tool for tool in payload['tools']
                                     if tool['function']['name'] in self.completion_tools]
