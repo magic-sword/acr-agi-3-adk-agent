@@ -9,7 +9,7 @@ LABELS = {'act':'結果解釈＋次の1操作'}
 
 def read_structure(root):
     root = Path(root)
-    paths = [root/'agent/cognition'/name for name in ('workflow.py','deliberation.py','execution.py','state.py','machine.py','perception.py','geometry.py','simple_workflow.py','focused_workflow.py','focused_state.py','candidates.py')]
+    paths = [root/'agent/cognition'/name for name in ('workflow.py','deliberation.py','execution.py','state.py','machine.py','perception.py','geometry.py','simple_workflow.py','focused_workflow.py','focused_state.py','candidates.py','goal_runtime.py','goal_state.py')]
     sources = {str(p.relative_to(root)):p.read_text() for p in paths if p.is_file()}
     if 'agent/cognition/workflow.py' not in sources:
         raise ValueError('この場所には実装ソースが保存されていません')
@@ -29,13 +29,28 @@ def read_structure(root):
         tree = ast.parse(source)
         classes = {n.name:n for n in ast.parse(sources.get('agent/cognition/state.py','')).body if isinstance(n,ast.ClassDef)}
         classes.update({n.name:n for n in tree.body if isinstance(n,ast.ClassDef)})
-        for filename in ('focused_state.py', 'candidates.py'):
+        for filename in ('focused_state.py', 'candidates.py', 'goal_state.py'):
             classes.update({n.name:n for n in ast.parse(sources.get('agent/cognition/'+filename,'')).body if isinstance(n,ast.ClassDef)})
         runtime = next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name in ('FocusedRuntime', 'SimpleRuntime'))
         overrides = {n.targets[0].id:n.value for n in runtime.body if isinstance(n,ast.Assign) and isinstance(n.targets[0],ast.Name)}
         registry = overrides['stage_tasks']
         instructions = ast.literal_eval(overrides['stage_instructions'])
         entries = {ast.literal_eval(k):v for k,v in zip(registry.keys,registry.values)}
+        goal_source = sources.get('agent/cognition/goal_runtime.py')
+        if goal_source:
+            # The goal pipeline adds its stages with {**FocusedRuntime.stage_tasks, ...}.
+            goal_tree = ast.parse(goal_source)
+            constants = {n.targets[0].id: n.value for n in goal_tree.body
+                         if isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Name)}
+            goal = next(n for n in goal_tree.body if isinstance(n, ast.ClassDef) and n.name == 'GoalRuntime')
+            goal_overrides = {n.targets[0].id: n.value for n in goal.body
+                              if isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Name)}
+            for k, v in zip(goal_overrides['stage_tasks'].keys, goal_overrides['stage_tasks'].values):
+                if k is not None:
+                    entries[ast.literal_eval(k)] = v
+            for k, v in zip(goal_overrides['stage_instructions'].keys, goal_overrides['stage_instructions'].values):
+                if k is not None:
+                    instructions[ast.literal_eval(k)] = ast.literal_eval(constants[v.id] if isinstance(v, ast.Name) else v)
         for name,value in entries.items():
             if not isinstance(value,ast.Tuple) or len(value.elts)!=2 or not isinstance(value.elts[1],ast.Name):
                 raise ValueError('未対応のタスク宣言です: '+str(name))

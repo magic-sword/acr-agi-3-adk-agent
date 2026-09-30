@@ -7,6 +7,8 @@ from collections import Counter, defaultdict, deque
 
 # Components larger than this are backgrounds and walls, not movable objects.
 MAX_OBJECT_CELLS = 400
+# Status bars sit along the frame edge; lines this close to it may be masked as counters.
+EDGE_BAND = 4
 # ARC-AGI-3 convention for direction controls; used only as a prior for untried ones.
 DIRECTION_PRIOR = {'ACTION1': (0, -1), 'ACTION2': (0, 1), 'ACTION3': (-1, 0), 'ACTION4': (1, 0)}
 
@@ -95,8 +97,13 @@ class RuleLearner:
         self.click_affects = defaultdict(set)    # clicked sig -> appearances its clicks have moved
         self.recolor = {}                     # (clicked shape, colour) -> colour after
         self.tick_seen = Counter()
+        self.tick_rows, self.tick_cols = Counter(), Counter()   # edge lines with unexplained changes
+        self.shape = None
         self.tick_steps = self.ticked = 0
         self.transitions = deque(maxlen=64)   # (before, action, xy, after) for replay validation
+        # (action, mover top-left) where a learned move did nothing: a wall the colours cannot tell
+        # (walls and floor may share a colour), so the position itself is the condition.
+        self.stuck = set()
 
     # --- learning -----------------------------------------------------------------
     def learn(self, before, after, action, xy=None):
@@ -124,14 +131,23 @@ class RuleLearner:
                     recolor = after[y][x]
                     self.recolor[(clicked['sig'][1], clicked['color'])] = recolor
                 outcome = (context, dict(real), recolor)
-                if outcome not in self.click_outcomes[clicked['sig']]:
-                    self.click_outcomes[clicked['sig']].append(outcome)
+                # The latest observation goes last: predictions use the most recent outcome in a context,
+                # so an outcome seen again must supersede one seen in between.
+                if outcome in self.click_outcomes[clicked['sig']]:
+                    self.click_outcomes[clicked['sig']].remove(outcome)
+                self.click_outcomes[clicked['sig']].append(outcome)
                 explained |= clicked['cells']
         else:
             self.tries[action] += 1
             effect = bool(real)
             self.effective[action] += effect
             by = {c['sig']: c for c in comps}
+            place = self._mover_origin(comps)
+            if place is not None and any((action, s) in self.move_delta for s in self.movers()):
+                if any(s in real for s in self.movers()):
+                    self.stuck.discard((action, place))
+                else:
+                    self.stuck.add((action, place))
             for sig, d in real.items():
                 self.move_delta[(action, sig)] = d
                 self.enter[(action, sig)] |= destination_colors(before, by[sig]['cells'], d)
@@ -142,6 +158,9 @@ class RuleLearner:
         self.tick_steps += 1
         self.ticked += bool(residual)
         self.tick_seen.update(residual)
+        self.shape = (len(before[0]), len(before))
+        self.tick_rows.update({y for _, y in residual})
+        self.tick_cols.update({x for x, _ in residual})
         return effect
 
     # --- derived knowledge ------------------------------------------------------------
@@ -169,8 +188,22 @@ class RuleLearner:
         return set().union(*(self.enter[(a, s)] for (a, s) in self.move_delta if s in sigs)) - {'edge'}
 
     def tick_region(self):
-        """Cells that keep changing whatever the action (a counter); never a click effect."""
-        return {c for c, n in self.tick_seen.items() if n >= 2}
+        """Cells that keep changing whatever the action (a counter); never a click effect.
+
+        A shrinking bar changes a different cell each step, so besides cells seen changing twice,
+        whole lines near the frame edge with unexplained changes in two transitions are masked
+        (status bars, as in Graph-Based Exploration for ARC-AGI-3).
+        """
+        out = {c for c, n in self.tick_seen.items() if n >= 2}
+        if self.shape:
+            w, h = self.shape
+            for y, n in self.tick_rows.items():
+                if n >= 2 and (y < EDGE_BAND or y >= h - EDGE_BAND):
+                    out |= {(x, y) for x in range(w)}
+            for x, n in self.tick_cols.items():
+                if n >= 2 and (x < EDGE_BAND or x >= w - EDGE_BAND):
+                    out |= {(x, y) for y in range(h)}
+        return out
 
     def ticks(self):
         return self.tick_steps >= 2 and self.ticked / self.tick_steps > 0.5
@@ -241,6 +274,11 @@ class RuleLearner:
         return hits / checked if checked else None
 
     # --- tools over a current frame ---------------------------------------------------
+    def _mover_origin(self, comps):
+        sigs = self.movers()
+        cells = [p for c in comps if c['sig'] in sigs for p in c['cells']]
+        return bbox(cells)[:2] if cells else None
+
     def mover_cells(self, grid):
         sigs = self.movers()
         return {cell for c in components(grid) if c['sig'] in sigs for cell in c['cells']}, sigs
@@ -249,13 +287,15 @@ class RuleLearner:
         """One press from the current frame: which learned objects move, or stay blocked."""
         comps = components(grid)
         out = {}
+        stuck = (action, self._mover_origin(comps)) in self.stuck
+        movers = self.movers()
         for c in comps:
             key = (action, c['sig'])
             d = self.move_delta.get(key)
             if d is None:
                 continue
             dest = destination_colors(grid, c['cells'], d)
-            if dest & self.block[key] or 'edge' in dest:
+            if dest & self.block[key] or 'edge' in dest or (stuck and c['sig'] in movers):
                 out[c['sig']] = None
             else:
                 out[c['sig']] = d
@@ -267,8 +307,9 @@ class RuleLearner:
         if not learned:
             return {}
         step = max(max(abs(dx), abs(dy)) for dx, dy in learned.values())
+        # Only never-pressed controls get the prior: a press that moved nothing refutes it.
         return {a: (dx*step, dy*step) for a, (dx, dy) in DIRECTION_PRIOR.items()
-                if a in available and a not in learned}
+                if a in available and a not in learned and not self.tries[a]}
 
     def plan_path(self, grid, target_box, limit=4000, available=()):
         """Shortest direction sequence that brings the mover inside (or over) target_box.
@@ -314,7 +355,7 @@ class RuleLearner:
                 return path[::-1]
             for a, (dx, dy) in deltas.items():
                 q = (p[0]+dx, p[1]+dy)
-                if q not in prev and free(*q):
+                if q not in prev and (a, (x0+p[0], y0+p[1])) not in self.stuck and free(*q):
                     prev[q] = (p, a)
                     queue.append(q)
         return None

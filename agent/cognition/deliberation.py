@@ -51,8 +51,10 @@ class DeliberationStages:
             self.planners[work]=LlmAgent(name=work,include_contents='none',
                 model=LocalVisionLlm(model='qwen3-vl-4b-instruct',
                     api_base=os.getenv('VLM_API_BASE','http://vlm:8080/v1'),
-                    max_output_tokens=self.stage_tokens[work],max_requests=1,completion_tools=(tool_name,)),
-                instruction=self.stage_instructions[work]+MEASUREMENT_INSTRUCTION,tools=[self.stage_tool(self,work)],
+                    max_output_tokens=self.stage_tokens[work],max_requests=1,completion_tools=(tool_name,),
+                    temperature=getattr(self,'stage_temperature',{}).get(work,0.0)),
+                instruction=self.stage_instructions[work]+(MEASUREMENT_INSTRUCTION if work not in getattr(
+                    self,'plain_stages',()) else ''),tools=[self.stage_tool(self,work)],
                 before_tool_callback=self._before_tool,after_tool_callback=self._after_tool,
                 on_tool_error_callback=self._tool_error)
         return self.planners[work]

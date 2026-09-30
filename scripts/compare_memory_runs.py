@@ -54,6 +54,18 @@ def game_metrics(run):
             g['predictions'] += 1
             g['prediction_hits'] += bool(r['hit'])
             g['last_replay_consistency'] = r['replay'] if r['replay'] is not None else g.get('last_replay_consistency', 0)
+        elif event == 'goal_hypotheses':
+            g['hypotheses_added'] += len(r.get('added', []))
+        elif event == 'hypothesis_discarded':
+            g[f"hypothesis.{r['status']}"] += 1
+        elif event == 'hypothesis_won':
+            g['hypothesis_won'] += 1
+        elif event == 'program_press':
+            g['goal_program_presses'] += 1
+        elif event == 'probe_press':
+            g['probe_presses'] += 1
+        elif event == 'missing_link':
+            g['missing_links'] += 1
         elif event == 'skill_options':
             g['skill_option_offers'] += 1
         elif event == 'skill_macro_started':
@@ -91,6 +103,7 @@ def game_metrics(run):
         g['levels'] = result.get('levels_completed', 0)
         g['wall_seconds'] = result.get('wall_seconds', 0)
         g['model_calls_per_action'] = result.get('model_calls', 0) / max(1, g['actions'])
+        g['seconds_per_action'] = g['wall_seconds'] / max(1, g['actions'])
         log = Path(run) / game / 'worker.log'
         # llama-server rejects over-long prompts with HTTP 400 (context size exceeded).
         g['context_overflow'] = log.read_text(errors='replace').count('HTTP Error 400') if log.exists() else 0
@@ -118,7 +131,9 @@ def main(argv):
                 'repeated_no_change', 'reconcile_contradicts_measurement', 'reconcile_claims_unmeasured_change', 'understanding_carried',
                 'skills_offered', 'tool.plan_path', 'predictions', 'prediction_hits', 'last_replay_consistency',
                 'skill_option_offers', 'skill_runs', 'program_presses', 'skill_stop.reached', 'skill_stop.prediction_mismatch',
-                'skill_stop.unreachable', 'model_calls_per_action']
+                'skill_stop.unreachable', 'hypotheses_added', 'hypothesis.falsified', 'hypothesis.blocked',
+                'hypothesis_won', 'goal_program_presses', 'probe_presses', 'missing_links', 'model_calls_per_action',
+                'seconds_per_action']
     for game in games:
         print(f'\n## {game}')
         print('|metric|' + '|'.join(labelled) + '|')

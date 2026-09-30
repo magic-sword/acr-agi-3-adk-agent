@@ -58,6 +58,33 @@ class RuleSkillTests(unittest.TestCase):
             self.assertFalse(any(board(pos)[y+j][x+i] == 4 for j in range(2) for i in range(2)), (a, x, y))
         self.assertEqual((x, y), (9, 1))
 
+    def test_invisible_wall_is_remembered_by_position(self):
+        # The wall at x=6 has the floor's colour: a press that moved nothing marks that place.
+        rules, pos = RuleLearner(), (1, 1)
+        for a in ['ACTION4', 'ACTION4', 'ACTION4', 'ACTION4']:
+            nxt = (pos[0]+1, pos[1])
+            after = pos if nxt[0]+1 >= 6 and pos[1] <= 8 else nxt
+            floor = lambda p: [[3 if c == 4 else c for c in row] for row in board(p)]
+            rules.learn(floor(pos), floor(after), a)
+            pos = after
+        self.assertEqual(pos, (4, 1))
+        self.assertEqual(rules.blocking_colors(rules.movers()), set())
+        grid = [[3 if c == 4 else c for c in row] for row in board(pos)]
+        self.assertEqual(rules.predict(grid, 'ACTION4'), {next(iter(rules.movers())): None})
+        path = rules.plan_path(grid, (9, 1, 10, 2), available=list(MOVES))
+        self.assertNotEqual(path[0], 'ACTION4')
+
+    def test_a_click_outcome_seen_again_supersedes_a_newer_one(self):
+        rules = RuleLearner()
+        g = [[0]*8 for _ in range(8)]
+        g[2][2] = 9
+        red = deepcopy(g)
+        red[2][2] = 8
+        rules.learn(g, g, 'ACTION6', (2, 2))      # no effect
+        rules.learn(g, red, 'ACTION6', (2, 2))    # once it turned red
+        rules.learn(g, g, 'ACTION6', (2, 2))      # no effect again: the latest outcome
+        self.assertIsNone(rules.predict_outcome(g, 'ACTION6', (2, 2))['recolor'])
+
     def test_self_target_is_rejected_and_untried_directions_are_assumed(self):
         rules = RuleLearner()
         rules.learn(board((1, 1)), board((1, 2)), 'ACTION2')  # only DOWN has been tried
@@ -115,6 +142,17 @@ class RuleSkillTests(unittest.TestCase):
         self.assertEqual(works.count('reconcile'), 1)
         # Review comes after the third press that affected nothing, before any further press.
         self.assertEqual(works[:works.index('reconcile')].count('execute_step'), 3)
+
+    def test_a_shrinking_status_bar_is_masked_as_a_whole_line(self):
+        def frame(length):
+            g = [[3]*12 for _ in range(12)]
+            g[0][:length] = [7]*length        # a bar that loses one cell per action
+            return g
+        rules = RuleLearner()
+        for n in (10, 9, 8):
+            rules.learn(frame(n), frame(n-1), 'ACTION1')
+        self.assertTrue({(x, 0) for x in range(12)} <= rules.tick_region())
+        self.assertFalse(any(y == 5 for _, y in rules.tick_region()))
 
     def test_click_rule_is_conditioned_not_overwritten(self):
         def frame(slider_x):

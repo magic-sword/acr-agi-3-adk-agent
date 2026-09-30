@@ -12,7 +12,10 @@ class StructureTests(unittest.TestCase):
     def test_registry_and_contracts_are_read_from_current_source(self):
         data=read_structure(ROOT)
         tasks={t['id']:t for t in data['tasks']}
-        self.assertEqual(set(tasks), {'understand','backchain','candidates','ground','execute_step','reconcile'})
+        self.assertEqual(set(tasks), {'understand','backchain','candidates','ground','execute_step','reconcile',
+                                      'hypothesize','probe'})
+        self.assertEqual(tasks['hypothesize']['tool'], 'submit_goal_hypotheses')
+        self.assertIn('hypotheses', tasks['hypothesize']['fields'])
         self.assertEqual(tasks['ground']['tool'], 'submit_plan_choice')
         self.assertIn('candidate_id', tasks['ground']['fields'])
         self.assertEqual(data['edges'][0],['START','DECIDE'])
@@ -110,6 +113,14 @@ class StructureTests(unittest.TestCase):
             (p/'workflow.py').write_text('')
             with self.assertRaisesRegex(ValueError,'最新'):
                 read_structure(root)
+
+    def test_every_model_stage_has_repair_and_invalid_transitions(self):
+        from agent.cognition.machine import TRANSITIONS
+        for task in read_structure(ROOT)['tasks']:
+            if task['id'] == 'execute_step':
+                continue  # one-token choice: no schema repair round
+            self.assertIn('repair_'+task['id'], TRANSITIONS)
+            self.assertIn('invalid_'+task['id'], TRANSITIONS)
 
     def test_runtime_routing_and_graph_share_transition_targets(self):
         from agent.cognition.machine import destination, TRANSITIONS

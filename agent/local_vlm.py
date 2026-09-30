@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import random
 import time
 import urllib.request
 from typing import AsyncGenerator
@@ -48,6 +49,7 @@ class LocalVisionLlm(BaseLlm):
     max_output_tokens: int = 1600
     max_requests: int = MAX_REQUESTS_PER_INVOCATION
     completion_tools: tuple[str, ...] = ()
+    temperature: float = 0.0
     # Skill protocol (docs/skills-design-ja.md): the first request may only call these tools,
     # and require_tool_calls forbids free-text rounds that exhaust the output budget.
     protocol_first_tools: tuple[str, ...] = ()
@@ -146,7 +148,9 @@ class LocalVisionLlm(BaseLlm):
                 if declaration is None:
                     raise ValueError(f'Tool has no function declaration: {name}')
                 declarations[name] = declaration
-        payload = {'model': self.model, 'messages': messages, 'temperature': 0,
+        payload = {'model': self.model, 'messages': messages, 'temperature': self.temperature,
+                   # The server's default seed is fixed: sampled stages would repeat the same output.
+                   **({'seed': random.randrange(2**31)} if self.temperature > 0 else {}),
                    'max_tokens': self.max_output_tokens, 'stream': False}
         if declarations:
             payload['tools'] = [{'type': 'function', 'function': {
